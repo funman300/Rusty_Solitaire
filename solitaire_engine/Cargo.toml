@@ -9,3 +9,4 @@ bevy_egui       = { workspace = true }
 bevy_kira_audio = { workspace = true }
 solitaire_core  = { workspace = true }
 solitaire_data  = { workspace = true }
+chrono          = { workspace = true }
