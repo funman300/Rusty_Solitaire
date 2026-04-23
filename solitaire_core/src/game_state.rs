@@ -17,16 +17,15 @@ pub enum DrawMode {
 }
 
 /// Snapshot of game state used for undo.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StateSnapshot {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StateSnapshot {
     piles: HashMap<PileType, Pile>,
     score: i32,
     move_count: u32,
-    stock_recycled: bool,
 }
 
 /// Full state of an in-progress Klondike Solitaire game.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
     pub piles: HashMap<PileType, Pile>,
     pub draw_mode: DrawMode,
@@ -36,10 +35,7 @@ pub struct GameState {
     pub seed: u64,
     pub is_won: bool,
     pub is_auto_completable: bool,
-    pub(crate) undo_stack: Vec<StateSnapshot>,
-    /// Whether the waste has already been recycled back to stock once.
-    /// A second recycle attempt returns `StockEmpty`.
-    stock_recycled: bool,
+    undo_stack: Vec<StateSnapshot>,
 }
 
 impl GameState {
@@ -69,7 +65,6 @@ impl GameState {
             is_won: false,
             is_auto_completable: false,
             undo_stack: Vec::new(),
-            stock_recycled: false,
         }
     }
 
@@ -83,7 +78,6 @@ impl GameState {
             piles: self.piles.clone(),
             score: self.score,
             move_count: self.move_count,
-            stock_recycled: self.stock_recycled,
         }
     }
 
@@ -95,6 +89,7 @@ impl GameState {
     }
 
     /// Draw cards from stock to waste. When stock is empty, recycles waste back to stock.
+    /// Recycling is unlimited: `StockEmpty` is only returned when both stock and waste are empty.
     pub fn draw(&mut self) -> Result<(), MoveError> {
         if self.is_won {
             return Err(MoveError::GameAlreadyWon);
@@ -104,22 +99,22 @@ impl GameState {
 
         if stock_len == 0 {
             let waste_len = self.piles[&PileType::Waste].cards.len();
-            if waste_len == 0 || self.stock_recycled {
+            if waste_len == 0 {
                 return Err(MoveError::StockEmpty);
             }
-            // Recycle: reverse waste back onto stock, face-down
+            // Recycle: snapshot so undo can reverse it, then move waste back to stock face-down
+            self.push_snapshot();
             let waste_cards: Vec<Card> = self.piles
                 .get_mut(&PileType::Waste)
-                .unwrap()
+                .ok_or(MoveError::InvalidSource)?
                 .cards
                 .drain(..)
                 .collect();
-            let stock = self.piles.get_mut(&PileType::Stock).unwrap();
+            let stock = self.piles.get_mut(&PileType::Stock).ok_or(MoveError::InvalidDestination)?;
             for mut card in waste_cards.into_iter().rev() {
                 card.face_up = false;
                 stock.cards.push(card);
             }
-            self.stock_recycled = true;
             return Ok(());
         }
 
@@ -134,12 +129,12 @@ impl GameState {
 
         let drawn: Vec<Card> = self.piles
             .get_mut(&PileType::Stock)
-            .unwrap()
+            .ok_or(MoveError::InvalidSource)?
             .cards
             .drain(drain_start..)
             .collect();
 
-        let waste = self.piles.get_mut(&PileType::Waste).unwrap();
+        let waste = self.piles.get_mut(&PileType::Waste).ok_or(MoveError::InvalidDestination)?;
         for mut card in drawn {
             card.face_up = true;
             waste.cards.push(card);
@@ -207,18 +202,23 @@ impl GameState {
         // Execute move
         let mut moved: Vec<Card> = self.piles
             .get_mut(&from)
-            .unwrap()
+            .ok_or(MoveError::InvalidSource)?
             .cards
             .split_off(move_start);
 
         // Flip the newly exposed top card of the source pile
-        if let Some(top) = self.piles.get_mut(&from).unwrap().cards.last_mut() {
+        if let Some(top) = self.piles
+            .get_mut(&from)
+            .ok_or(MoveError::InvalidSource)?
+            .cards
+            .last_mut()
+        {
             if !top.face_up {
                 top.face_up = true;
             }
         }
 
-        self.piles.get_mut(&to).unwrap().cards.append(&mut moved);
+        self.piles.get_mut(&to).ok_or(MoveError::InvalidDestination)?.cards.append(&mut moved);
 
         self.score = (self.score + score_delta).max(0);
         self.move_count += 1;
@@ -240,7 +240,6 @@ impl GameState {
         self.piles = snapshot.piles;
         self.score = (snapshot.score + scoring_undo()).max(0);
         self.move_count = snapshot.move_count;
-        self.stock_recycled = snapshot.stock_recycled;
         self.is_won = false;
         self.is_auto_completable = false;
         Ok(())
@@ -392,14 +391,11 @@ mod tests {
 
     #[test]
     fn draw_from_empty_stock_and_waste_returns_error() {
+        // The only stop condition for draw() is: both stock AND waste are
+        // simultaneously empty. Manually empty both, then verify the error.
         let mut g = new_game();
-        while !g.piles[&PileType::Stock].cards.is_empty() {
-            g.draw().unwrap();
-        }
-        g.draw().unwrap(); // recycle
-        while !g.piles[&PileType::Stock].cards.is_empty() {
-            g.draw().unwrap();
-        }
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
         assert_eq!(g.draw(), Err(MoveError::StockEmpty));
     }
 
