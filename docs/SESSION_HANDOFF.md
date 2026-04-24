@@ -106,10 +106,17 @@ See the full spec in the master prompt (originally pasted by the user) or in `AR
 ## Important Implementation Notes
 
 ### Versions (Cargo.toml workspace deps)
-- `bevy = "0.15"` (resolved to 0.15.3)
-- `bevy_egui = "0.30"` (0.30.1)
-- `bevy_kira_audio = "0.21"` (0.21.0)
+
+- `bevy = "0.15"` (resolved to 0.15.3) — UI via built-in `bevy::ui`, no bevy_egui
+- `kira = "0.9"` — audio via `kira` crate directly, no bevy_kira_audio or AssetServer
 - `rand = "0.8"` — note: `small_rng` feature is NOT enabled; use `StdRng`, not `SmallRng`
+
+### Asset strategy
+
+- No `AssetServer` — assets embedded at compile time using `include_bytes!()`
+- Fonts: `Font::try_from_bytes(include_bytes!("../assets/fonts/main.ttf"))`
+- Audio: load from `&[u8]` via `kira` `StaticSoundData::from_cursor()`
+- Card rendering: procedural (`bevy::prelude::Sprite` + `Text2d`) — no sprite sheets required
 
 ### Hard rules (from CLAUDE.md)
 - `solitaire_core` and `solitaire_sync` must NEVER gain Bevy or network dependencies

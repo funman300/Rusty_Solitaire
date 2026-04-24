@@ -6,7 +6,7 @@ See @ARCHITECTURE.md for full project design, crate responsibilities, data model
 
 ## Project Layout
 
-```
+```text
 solitaire_core/    # Pure Rust game logic — NO Bevy, NO network, NO I/O
 solitaire_sync/    # Shared API types — NO Bevy, serde/uuid/chrono only
 solitaire_data/    # Persistence + SyncProvider trait + server client
@@ -14,7 +14,7 @@ solitaire_engine/  # Bevy ECS systems, components, plugins
 solitaire_server/  # Axum sync server binary
 solitaire_gpgs/    # Google Play Games bridge — STUB ONLY until Android phase
 solitaire_app/     # Thin binary entry point
-assets/            # Loaded at runtime via Bevy AssetServer only
+assets/            # Source assets — embedded at compile time via include_bytes!()
 ```
 
 ---
@@ -48,7 +48,7 @@ cargo clippy -p solitaire_core -- -D warnings
 
 - `solitaire_core` and `solitaire_sync` must never gain Bevy or network dependencies.
 - No `unwrap()` or `panic!()` in game logic. All state transitions return `Result<_, MoveError>`.
-- No hardcoded bytes in source. All assets go through Bevy's `AssetServer`.
+- Assets are embedded at compile time using `include_bytes!()`. No runtime asset loading via `AssetServer`.
 - Atomic file writes only: write to `filename.json.tmp`, then `rename()`.
 - Passwords and tokens are stored in the OS keychain via the `keyring` crate — never in plaintext files or logs.
 - Sync runs on `AsyncComputeTaskPool` — never block the Bevy main thread.
@@ -75,7 +75,7 @@ cargo clippy -p solitaire_core -- -D warnings
 
 - One `Plugin` per major feature: `CardPlugin`, `AudioPlugin`, `AchievementPlugin`, `UIPlugin`, `SyncPlugin`.
 - Resources own shared state. Events communicate between systems. Components own per-entity data.
-- All egui screens live in `solitaire_engine::ui`. Never mix egui and Bevy spawn logic in the same system.
+- All UI screens are built with Bevy UI (`bevy::ui`). Never mix UI layout and game logic in the same system.
 - Layout is recomputed on `WindowResized` — never assume a fixed window size.
 
 ---

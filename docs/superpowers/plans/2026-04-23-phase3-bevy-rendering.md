@@ -2,7 +2,7 @@
 
 > Status: In progress (started 2026-04-23)
 > Crate: `solitaire_engine`
-> Depends on: `solitaire_core` (complete), `bevy = 0.15`, `bevy_egui = 0.30`
+> Depends on: `solitaire_core` (complete), `bevy = 0.15` (includes `bevy::ui`), `kira = 0.9` (audio — Phase 3F+)
 
 ---
 
@@ -11,6 +11,7 @@
 Make the game playable with a graphical interface. This phase takes `solitaire_engine` from an empty stub to a full Bevy rendering + input layer wired to `solitaire_core::GameState`.
 
 Out of scope (later phases):
+
 - Persistence (`StatsSnapshot`, file I/O) — Phase 4
 - Achievements toast content — Phase 5
 - Audio — Phase 7
@@ -136,7 +137,7 @@ Commit: `feat(engine): add drag-and-drop input with multi-card tableau support`
   - Component `CardAnim { start: Vec3, target: Vec3, elapsed: f32, duration: f32 }` — linear lerp 0.15s for moves
   - Flip: `CardFlip { elapsed: f32, duration: f32, flips_to_face_up: bool }` — scale-X 1→0→1 over 0.2s, toggle `face_up` at midpoint, fire `CardFlippedEvent`
   - Win cascade: on `GameWonEvent`, iterate foundation cards and schedule `CardAnim` to random off-screen targets with staggered 0.05s starts
-  - Toast component scaffold: egui popup placeholder, wired to `AchievementUnlockedEvent` (no content yet)
+  - Toast component scaffold: bevy_ui `Node`/`Text` overlay, wired to `AchievementUnlockedEvent` (no content yet)
 
 **Exit:** Valid moves animate smoothly; flipping a tableau card shows a flip; winning plays a cascade.
 
@@ -167,5 +168,5 @@ Commit: `feat(engine): add AnimationPlugin with slide, flip, and win cascade`
 ## Risks
 
 - Bevy 0.15 API drift from older tutorials — verify each API call as written.
-- `bevy_egui` 0.30 may require slightly different system ordering than earlier versions — pin to workspace versions, don't downgrade.
-- Procedural card text depends on Bevy's default font; if rendering is unreadable, drop in a `.ttf` to `assets/fonts/main.ttf` as a follow-up (still Phase 3, not 3F).
+- Procedural card text depends on Bevy's default font; if rendering is unreadable, embed a `.ttf` via `include_bytes!()` as a follow-up (still Phase 3, not 3F).
+- `kira` audio API is async-friendly but requires careful thread management — initialise the `AudioManager` once at startup and store it in a Bevy `NonSend` resource.

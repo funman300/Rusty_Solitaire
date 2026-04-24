@@ -187,6 +187,7 @@ fn follow_drag(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn end_drag(
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
