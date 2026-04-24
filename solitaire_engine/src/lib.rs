@@ -7,6 +7,7 @@ pub mod game_plugin;
 pub mod input_plugin;
 pub mod layout;
 pub mod resources;
+pub mod stats_plugin;
 pub mod table_plugin;
 
 pub use animation_plugin::{AnimationPlugin, CardAnim};
@@ -19,4 +20,5 @@ pub use game_plugin::{GameMutation, GamePlugin};
 pub use input_plugin::InputPlugin;
 pub use layout::{compute_layout, Layout, LayoutResource};
 pub use resources::{DragState, GameStateResource, SyncStatus, SyncStatusResource};
+pub use stats_plugin::{StatsPlugin, StatsResource, StatsScreen};
 pub use table_plugin::{PileMarker, TableBackground, TablePlugin};
