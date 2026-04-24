@@ -24,6 +24,11 @@ pub struct StatsResource(pub StatsSnapshot);
 #[derive(Resource, Debug, Clone)]
 pub struct StatsStoragePath(pub Option<PathBuf>);
 
+/// System set for the stats-mutating systems. Downstream plugins that read
+/// `StatsResource` after a win/abandon should run `.after(StatsUpdate)`.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StatsUpdate;
+
 /// Marker component on the stats overlay root node.
 #[derive(Component, Debug)]
 pub struct StatsScreen;
@@ -63,11 +68,17 @@ impl Plugin for StatsPlugin {
             .add_event::<NewGameRequestEvent>()
             // record_abandoned must read `move_count` BEFORE handle_new_game
             // clobbers it with a fresh game.
-            .add_systems(Update, update_stats_on_new_game.before(GameMutation))
             .add_systems(
                 Update,
-                (update_stats_on_win, toggle_stats_screen).after(GameMutation),
-            );
+                update_stats_on_new_game
+                    .before(GameMutation)
+                    .in_set(StatsUpdate),
+            )
+            .add_systems(
+                Update,
+                update_stats_on_win.after(GameMutation).in_set(StatsUpdate),
+            )
+            .add_systems(Update, toggle_stats_screen.after(GameMutation));
     }
 }
 

@@ -5,6 +5,7 @@
 
 use bevy::prelude::*;
 
+use crate::achievement_plugin::display_name_for;
 use crate::card_plugin::CardEntity;
 use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
@@ -126,7 +127,7 @@ fn handle_achievement_toast(
     for ev in events.read() {
         spawn_toast(
             &mut commands,
-            format!("Achievement: {}", ev.0),
+            format!("Achievement: {}", display_name_for(&ev.0)),
             ACHIEVEMENT_TOAST_SECS,
         );
     }
