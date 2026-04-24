@@ -37,6 +37,7 @@ impl Plugin for GamePlugin {
             .add_event::<StateChangedEvent>()
             .add_event::<GameWonEvent>()
             .add_event::<crate::events::CardFlippedEvent>()
+            .add_event::<crate::events::AchievementUnlockedEvent>()
             .add_systems(
                 Update,
                 (

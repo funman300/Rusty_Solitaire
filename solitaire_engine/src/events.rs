@@ -41,3 +41,9 @@ pub struct GameWonEvent {
 /// Fired when a card's face-up state changes during gameplay.
 #[derive(Event, Debug, Clone, Copy)]
 pub struct CardFlippedEvent(pub u32);
+
+/// Achievement unlocked notification — name of the achievement.
+///
+/// Uses `String` as a placeholder; replaced with `AchievementRecord` in Phase 5.
+#[derive(Event, Debug, Clone)]
+pub struct AchievementUnlockedEvent(pub String);

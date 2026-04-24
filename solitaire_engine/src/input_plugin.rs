@@ -511,8 +511,12 @@ mod tests {
         });
 
         let layout = compute_layout(Vec2::new(1280.0, 800.0));
-        // Click the middle card (Queen at stack index 1).
-        let pos = card_position(&game, &layout, PileType::Tableau(0), 1);
+        // The Queen's geometric center (index 1) is inside the Jack's bounding box
+        // (Jack fans 0.5h below base; its box spans [base-h, base]).  To hit the
+        // Queen we click in her visible strip: the 0.25h band above the Jack's top
+        // edge (base.y to base.y+0.25h).  Midpoint = queen_center + 0.375*card_h.
+        let queen_center = card_position(&game, &layout, PileType::Tableau(0), 1);
+        let pos = queen_center + Vec2::new(0.0, layout.card_size.y * 0.375);
         let (pile, start, ids) = find_draggable_at(pos, &game, &layout).expect("hit");
         assert_eq!(pile, PileType::Tableau(0));
         assert_eq!(start, 1);

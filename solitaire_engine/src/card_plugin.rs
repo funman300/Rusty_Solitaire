@@ -19,6 +19,7 @@ use solitaire_core::card::{Card, Rank, Suit};
 use solitaire_core::game_state::GameState;
 use solitaire_core::pile::PileType;
 
+use crate::animation_plugin::{CardAnim, SLIDE_SECS};
 use crate::events::StateChangedEvent;
 use crate::game_plugin::GameMutation;
 use crate::layout::{Layout, LayoutResource};
@@ -68,7 +69,7 @@ fn sync_cards_startup(
     commands: Commands,
     game: Res<GameStateResource>,
     layout: Option<Res<LayoutResource>>,
-    entities: Query<(Entity, &CardEntity)>,
+    entities: Query<(Entity, &CardEntity, &Transform)>,
 ) {
     if let Some(layout) = layout {
         sync_cards(commands, &game.0, &layout.0, &entities);
@@ -80,7 +81,7 @@ fn sync_cards_on_change(
     commands: Commands,
     game: Res<GameStateResource>,
     layout: Option<Res<LayoutResource>>,
-    entities: Query<(Entity, &CardEntity)>,
+    entities: Query<(Entity, &CardEntity, &Transform)>,
 ) {
     if events.read().next().is_none() {
         return;
@@ -94,20 +95,20 @@ fn sync_cards(
     mut commands: Commands,
     game: &GameState,
     layout: &Layout,
-    entities: &Query<(Entity, &CardEntity)>,
+    entities: &Query<(Entity, &CardEntity, &Transform)>,
 ) {
     let positions = card_positions(game, layout);
 
-    // Map card_id -> Entity for in-place updates.
-    let mut existing: HashMap<u32, Entity> = HashMap::new();
-    for (entity, marker) in entities.iter() {
-        existing.insert(marker.card_id, entity);
+    // Map card_id -> (Entity, current_translation) for in-place updates.
+    let mut existing: HashMap<u32, (Entity, Vec3)> = HashMap::new();
+    for (entity, marker, transform) in entities.iter() {
+        existing.insert(marker.card_id, (entity, transform.translation));
     }
 
     let live_ids: HashSet<u32> = positions.iter().map(|(c, _, _)| c.id).collect();
 
     // Despawn any entity whose card is no longer tracked.
-    for (card_id, entity) in &existing {
+    for (card_id, (entity, _)) in &existing {
         if !live_ids.contains(card_id) {
             commands.entity(*entity).despawn_recursive();
         }
@@ -116,7 +117,9 @@ fn sync_cards(
     // For each card in the current state: spawn or update its entity.
     for (card, position, z) in positions {
         match existing.get(&card.id) {
-            Some(&entity) => update_card_entity(&mut commands, entity, &card, position, z, layout),
+            Some(&(entity, cur)) => {
+                update_card_entity(&mut commands, entity, &card, position, z, layout, cur)
+            }
             None => spawn_card_entity(&mut commands, &card, position, z, layout),
         }
     }
@@ -206,6 +209,7 @@ fn update_card_entity(
     pos: Vec2,
     z: f32,
     layout: &Layout,
+    cur: Vec3,
 ) {
     let body_colour = if card.face_up {
         CARD_FACE_COLOUR
@@ -213,14 +217,34 @@ fn update_card_entity(
         CARD_BACK_COLOUR
     };
 
-    commands.entity(entity).insert((
-        Sprite {
-            color: body_colour,
-            custom_size: Some(layout.card_size),
-            ..default()
-        },
-        Transform::from_xyz(pos.x, pos.y, z),
-    ));
+    let target = Vec3::new(pos.x, pos.y, z);
+
+    // Always refresh the visual appearance.
+    commands.entity(entity).insert(Sprite {
+        color: body_colour,
+        custom_size: Some(layout.card_size),
+        ..default()
+    });
+
+    // Slide to the new position when it differs meaningfully; snap otherwise.
+    if (cur.truncate() - target.truncate()).length() > 1.0 {
+        let start = Vec3::new(cur.x, cur.y, z); // update Z immediately
+        commands
+            .entity(entity)
+            .insert(Transform::from_translation(start))
+            .insert(CardAnim {
+                start,
+                target,
+                elapsed: 0.0,
+                duration: SLIDE_SECS,
+                delay: 0.0,
+            });
+    } else {
+        commands
+            .entity(entity)
+            .remove::<CardAnim>()
+            .insert(Transform::from_xyz(pos.x, pos.y, z));
+    }
 
     // Despawn the old label child and respawn a fresh one, so rank/suit/
     // colour/visibility all stay in sync with the card's current state.
