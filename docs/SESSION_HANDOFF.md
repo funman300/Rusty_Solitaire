@@ -1,7 +1,8 @@
 # Solitaire Quest — Session Handoff
 
-> Last updated: 2026-04-21
+> Last updated: 2026-04-23
 > Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
+> Test count: **130 passing** (68 core + 13 data + 49 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
 
@@ -73,33 +74,35 @@ f84d7c5 fix(workspace): add derives/docs per code review, remove unused thiserro
 
 ---
 
+### Phase 3 — Bevy Rendering & Interaction ✅ COMPLETE
+
+All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin`, `InputPlugin`, `AnimationPlugin`. Full game playable — drag/drop with rule validation, keyboard shortcuts (U/N/D/Esc), animated slides, win cascade. UI via `bevy::ui`, no egui.
+
+### Phase 4 — Statistics Persistence ✅ COMPLETE
+
+- `solitaire_data::StatsSnapshot` with `update_on_win` / `record_abandoned` / `win_rate`
+- Atomic file I/O via `save_stats_to` (`.tmp` → rename)
+- `StatsPlugin` in `solitaire_engine` — loads on startup, persists on `GameWonEvent` (win) and `NewGameRequestEvent` (abandoned if move_count>0 and not won)
+- Full-window overlay toggled with `S` — games played/won, win rate, streak, best score, fastest, avg
+- `StatsPlugin::default()` for production, `StatsPlugin::headless()` for tests (no disk I/O)
+
 ## What Is Next
 
-### Phase 3 — Bevy Rendering & Interaction (`solitaire_engine`)
+### Phase 5 — Achievements
 
-This is the next phase to implement. Key tasks:
+- 20+ achievement definitions (`AchievementDef` in `solitaire_core`)
+- `AchievementRecord` persistence in `solitaire_data`
+- `AchievementPlugin` in `solitaire_engine` — evaluates unlock conditions on `GameWonEvent` / `StateChangedEvent`, emits `AchievementUnlockedEvent`, persists, shows toast
+- `AchievementUnlockedEvent` currently uses `String` placeholder in `events.rs` — replace with `AchievementRecord` when this phase starts
 
-- Add `GameStateResource`, `DragState`, `SyncStatusResource` Bevy resources
-- Add Bevy events: `MoveRequestEvent`, `DrawRequestEvent`, `UndoRequestEvent`, `NewGameRequestEvent`, `StateChangedEvent`, `GameWonEvent`
-- `CardPlugin` — spawn card entities with 2D sprites, drag-and-drop input
-- `TablePlugin` — pile markers, table background, layout calculation from window size
-- `AnimationPlugin` — card slide (lerp 0.15s), flip (scale X 0.2s), win cascade, toast
-- `GamePlugin` — wire `GameStateResource`, route input events to `solitaire_core::GameState`
-- Responsive layout: recalculate positions on `WindowResized`
-- Keyboard shortcuts: U=undo, N=new game, D=draw, Escape=pause
-
-See the full spec in the master prompt (originally pasted by the user) or in `ARCHITECTURE.md` section 5.
-
-### Phases 4–8 (in order after Phase 3)
+### Phases 6–8 (in order after Phase 5)
 
 | Phase | Scope |
 |---|---|
-| Phase 4 | Statistics (`StatsSnapshot`, persist to `stats.json`, stats screen in egui) |
-| Phase 5 | Achievements (20+ achievements, `AchievementPlugin`, toast queue) |
 | Phase 6 | XP/levels, daily challenges, weekly goals, special modes |
-| Phase 7 | Audio (`bevy_kira_audio`), polish, hints, onboarding, pause menu |
+| Phase 7 | Audio (`kira`), polish, hints, onboarding, pause menu |
 | Phase 8A–C | Local storage + `SyncProvider` + self-hosted Axum server + client |
-| Phase 8D | GPGS stub fully wired into settings UI (already compiles, just UI) |
+| Phase 8D | GPGS stub fully wired into settings UI |
 
 ---
 
@@ -150,12 +153,12 @@ For Phase 3 onwards, write a new plan using the `superpowers:writing-plans` skil
 # Check everything compiles
 cargo check --workspace
 
-# Run all tests (68 tests, all should pass)
+# Run all tests (130 tests, all should pass)
 cargo test --workspace
 
 # Lint (must be zero warnings)
 cargo clippy --workspace -- -D warnings
 
-# Run the game (blank window for now — rendering added in Phase 3)
+# Run the game
 cargo run -p solitaire_app --features bevy/dynamic_linking
 ```
