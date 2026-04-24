@@ -35,6 +35,9 @@ pub struct GameState {
     pub seed: u64,
     pub is_won: bool,
     pub is_auto_completable: bool,
+    /// Number of times `undo()` has been successfully invoked this game.
+    /// Used by achievement conditions like `no_undo`.
+    pub undo_count: u32,
     undo_stack: Vec<StateSnapshot>,
 }
 
@@ -64,6 +67,7 @@ impl GameState {
             seed,
             is_won: false,
             is_auto_completable: false,
+            undo_count: 0,
             undo_stack: Vec::new(),
         }
     }
@@ -242,6 +246,7 @@ impl GameState {
         self.move_count = snapshot.move_count;
         self.is_won = false;
         self.is_auto_completable = false;
+        self.undo_count = self.undo_count.saturating_add(1);
         Ok(())
     }
 
