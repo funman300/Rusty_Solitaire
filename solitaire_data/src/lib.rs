@@ -37,3 +37,6 @@ pub trait SyncProvider: Send + Sync {
 
 pub mod stats;
 pub use stats::StatsSnapshot;
+
+pub mod storage;
+pub use storage::{load_stats, load_stats_from, save_stats, save_stats_to, stats_file_path};
