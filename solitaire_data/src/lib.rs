@@ -40,3 +40,8 @@ pub use stats::StatsSnapshot;
 
 pub mod storage;
 pub use storage::{load_stats, load_stats_from, save_stats, save_stats_to, stats_file_path};
+
+pub mod achievements;
+pub use achievements::{
+    achievements_file_path, load_achievements_from, save_achievements_to, AchievementRecord,
+};
