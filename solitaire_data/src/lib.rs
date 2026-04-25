@@ -48,6 +48,6 @@ pub use achievements::{
 
 pub mod progress;
 pub use progress::{
-    level_for_xp, load_progress_from, progress_file_path, save_progress_to, xp_for_win,
-    PlayerProgress,
+    daily_seed_for, level_for_xp, load_progress_from, progress_file_path, save_progress_to,
+    xp_for_win, PlayerProgress,
 };

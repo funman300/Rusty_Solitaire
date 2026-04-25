@@ -20,6 +20,10 @@ pub struct AchievementContext {
     pub lifetime_score: u64,
     pub draw_three_wins: u32,
 
+    // Progression.
+    /// Current daily-challenge completion streak (consecutive days).
+    pub daily_challenge_streak: u32,
+
     // Last-win facts (GameWonEvent + GameState at win time).
     pub last_win_score: i32,
     pub last_win_time_seconds: u64,
@@ -95,6 +99,9 @@ fn early_bird(c: &AchievementContext) -> bool {
 }
 fn speed_and_skill(c: &AchievementContext) -> bool {
     c.last_win_time_seconds < 90 && !c.last_win_used_undo
+}
+fn daily_devotee(c: &AchievementContext) -> bool {
+    c.daily_challenge_streak >= 7
 }
 
 /// All currently-evaluable achievements. Order is stable so persistence files
@@ -198,6 +205,13 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         secret: true,
         condition: speed_and_skill,
     },
+    AchievementDef {
+        id: "daily_devotee",
+        name: "Daily Devotee",
+        description: "Complete the daily challenge 7 days in a row",
+        secret: false,
+        condition: daily_devotee,
+    },
 ];
 
 /// Return every `AchievementDef` whose condition is satisfied by `ctx`.
@@ -225,6 +239,7 @@ mod tests {
             best_single_score: 0,
             lifetime_score: 0,
             draw_three_wins: 0,
+            daily_challenge_streak: 0,
             last_win_score: 0,
             last_win_time_seconds: u64::MAX,
             last_win_used_undo: true,
@@ -308,6 +323,18 @@ mod tests {
         c.wall_clock_hour = Some(12);
         let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
         assert!(!ids.contains(&"night_owl"));
+    }
+
+    #[test]
+    fn daily_devotee_requires_7_day_streak() {
+        let mut c = ctx();
+        c.daily_challenge_streak = 6;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"daily_devotee"));
+
+        c.daily_challenge_streak = 7;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"daily_devotee"));
     }
 
     #[test]

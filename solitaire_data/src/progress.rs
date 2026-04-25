@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 const APP_DIR_NAME: &str = "solitaire_quest";
@@ -23,6 +23,15 @@ pub fn level_for_xp(xp: u64) -> u32 {
     } else {
         10 + ((xp - 5_000) / 1_000) as u32
     }
+}
+
+/// Deterministic seed derived from a date, identical for all players globally.
+/// Used as the RNG seed for the daily-challenge deal.
+pub fn daily_seed_for(date: NaiveDate) -> u64 {
+    let y = date.year() as u64;
+    let m = date.month() as u64;
+    let d = date.day() as u64;
+    y * 10_000 + m * 100 + d
 }
 
 /// XP awarded for winning a game.
@@ -85,6 +94,29 @@ impl PlayerProgress {
     /// `true` if a level-up just occurred (current level > `prev_level`).
     pub fn leveled_up_from(&self, prev_level: u32) -> bool {
         self.level > prev_level
+    }
+
+    /// Record a daily-challenge completion for `date`.
+    ///
+    /// - First completion ever, or a gap of more than one day: streak resets to 1.
+    /// - Completion the day after the previous: streak increments.
+    /// - Same day as the previous: no-op (idempotent — a player can't double-count).
+    ///
+    /// Returns `true` if this call recorded a fresh completion (i.e. it wasn't
+    /// the same-day no-op case).
+    pub fn record_daily_completion(&mut self, date: NaiveDate) -> bool {
+        match self.daily_challenge_last_completed {
+            Some(last) if last == date => return false,
+            Some(last) if last + Duration::days(1) == date => {
+                self.daily_challenge_streak = self.daily_challenge_streak.saturating_add(1);
+            }
+            _ => {
+                self.daily_challenge_streak = 1;
+            }
+        }
+        self.daily_challenge_last_completed = Some(date);
+        self.last_modified = Utc::now();
+        true
     }
 }
 
@@ -242,5 +274,62 @@ mod tests {
         let path = tmp_path("atomic");
         save_progress_to(&path, &PlayerProgress::default()).expect("save");
         assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    // --- Daily challenge ---
+
+    #[test]
+    fn daily_seed_is_deterministic_per_date() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 24).unwrap();
+        assert_eq!(daily_seed_for(d), daily_seed_for(d));
+    }
+
+    #[test]
+    fn daily_seed_differs_across_dates() {
+        let a = NaiveDate::from_ymd_opt(2026, 4, 24).unwrap();
+        let b = NaiveDate::from_ymd_opt(2026, 4, 25).unwrap();
+        assert_ne!(daily_seed_for(a), daily_seed_for(b));
+    }
+
+    #[test]
+    fn first_daily_completion_starts_streak_at_1() {
+        let mut p = PlayerProgress::default();
+        let d = NaiveDate::from_ymd_opt(2026, 4, 24).unwrap();
+        let recorded = p.record_daily_completion(d);
+        assert!(recorded);
+        assert_eq!(p.daily_challenge_streak, 1);
+        assert_eq!(p.daily_challenge_last_completed, Some(d));
+    }
+
+    #[test]
+    fn consecutive_days_increment_streak() {
+        let mut p = PlayerProgress::default();
+        let d1 = NaiveDate::from_ymd_opt(2026, 4, 24).unwrap();
+        let d2 = d1 + Duration::days(1);
+        let d3 = d2 + Duration::days(1);
+        p.record_daily_completion(d1);
+        p.record_daily_completion(d2);
+        p.record_daily_completion(d3);
+        assert_eq!(p.daily_challenge_streak, 3);
+    }
+
+    #[test]
+    fn skipped_day_resets_streak_to_1() {
+        let mut p = PlayerProgress::default();
+        let d1 = NaiveDate::from_ymd_opt(2026, 4, 24).unwrap();
+        let d3 = d1 + Duration::days(2); // skipped d2
+        p.record_daily_completion(d1);
+        p.record_daily_completion(d3);
+        assert_eq!(p.daily_challenge_streak, 1);
+    }
+
+    #[test]
+    fn same_day_completion_is_idempotent() {
+        let mut p = PlayerProgress::default();
+        let d = NaiveDate::from_ymd_opt(2026, 4, 24).unwrap();
+        p.record_daily_completion(d);
+        let recorded_again = p.record_daily_completion(d);
+        assert!(!recorded_again, "same-day completion must report no-op");
+        assert_eq!(p.daily_challenge_streak, 1);
     }
 }

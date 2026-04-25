@@ -10,12 +10,14 @@ use crate::card_plugin::CardEntity;
 use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
+use crate::progress_plugin::LevelUpEvent;
 
 /// Duration of a card slide (move) animation in seconds.
 pub const SLIDE_SECS: f32 = 0.15;
 
 const WIN_TOAST_SECS: f32 = 4.0;
 const ACHIEVEMENT_TOAST_SECS: f32 = 3.0;
+const LEVELUP_TOAST_SECS: f32 = 3.0;
 const CASCADE_STAGGER: f32 = 0.05;
 const CASCADE_DURATION: f32 = 0.5;
 
@@ -50,12 +52,14 @@ impl Plugin for AnimationPlugin {
         // is idempotent in Bevy.
         app.add_event::<GameWonEvent>()
             .add_event::<AchievementUnlockedEvent>()
+            .add_event::<LevelUpEvent>()
             .add_systems(
                 Update,
                 (
                     advance_card_anims,
                     handle_win_cascade,
                     handle_achievement_toast,
+                    handle_levelup_toast,
                     tick_toasts,
                 )
                     .after(GameMutation),
@@ -129,6 +133,16 @@ fn handle_achievement_toast(
             &mut commands,
             format!("Achievement: {}", display_name_for(&ev.0)),
             ACHIEVEMENT_TOAST_SECS,
+        );
+    }
+}
+
+fn handle_levelup_toast(mut commands: Commands, mut events: EventReader<LevelUpEvent>) {
+    for ev in events.read() {
+        spawn_toast(
+            &mut commands,
+            format!("Level Up! → {}", ev.new_level),
+            LEVELUP_TOAST_SECS,
         );
     }
 }

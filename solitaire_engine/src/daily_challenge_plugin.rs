@@ -1,0 +1,223 @@
+//! Tracks the per-date daily challenge: a deterministic seed every player
+//! sees on a given calendar day, plus completion bookkeeping.
+//!
+//! When the player wins a game whose seed matches today's daily seed and
+//! today's date hasn't been completed yet, this plugin:
+//!   - calls `PlayerProgress::record_daily_completion`
+//!   - awards a fixed XP bonus (`DAILY_BONUS_XP`)
+//!   - persists progress
+//!   - emits `DailyChallengeCompletedEvent`
+//!
+//! Pressing **C** fires a `NewGameRequestEvent` with today's daily seed so
+//! the player can start a fresh attempt.
+
+use bevy::input::ButtonInput;
+use bevy::prelude::*;
+use chrono::{Local, NaiveDate};
+use solitaire_data::{daily_seed_for, save_progress_to};
+
+use crate::events::{GameWonEvent, NewGameRequestEvent};
+use crate::game_plugin::GameMutation;
+use crate::progress_plugin::{ProgressResource, ProgressStoragePath, ProgressUpdate};
+use crate::resources::GameStateResource;
+
+/// Bonus XP awarded for completing today's daily challenge.
+pub const DAILY_BONUS_XP: u64 = 100;
+
+/// The active daily challenge — date + RNG seed for that date's deal.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct DailyChallengeResource {
+    pub date: NaiveDate,
+    pub seed: u64,
+}
+
+impl DailyChallengeResource {
+    pub fn for_today() -> Self {
+        let date = Local::now().date_naive();
+        Self {
+            date,
+            seed: daily_seed_for(date),
+        }
+    }
+}
+
+/// Fired when the player has just completed today's daily challenge.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct DailyChallengeCompletedEvent {
+    pub date: NaiveDate,
+    pub streak: u32,
+}
+
+pub struct DailyChallengePlugin;
+
+impl Plugin for DailyChallengePlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(DailyChallengeResource::for_today())
+            .add_event::<DailyChallengeCompletedEvent>()
+            .add_event::<GameWonEvent>()
+            .add_event::<NewGameRequestEvent>()
+            // record/award after the base ProgressUpdate so we don't fight
+            // ProgressPlugin's add_xp on the same frame.
+            .add_systems(Update, handle_daily_completion.after(ProgressUpdate))
+            .add_systems(Update, handle_start_daily_request.before(GameMutation));
+    }
+}
+
+fn handle_daily_completion(
+    mut wins: EventReader<GameWonEvent>,
+    daily: Res<DailyChallengeResource>,
+    game: Res<GameStateResource>,
+    mut progress: ResMut<ProgressResource>,
+    path: Res<ProgressStoragePath>,
+    mut completed: EventWriter<DailyChallengeCompletedEvent>,
+) {
+    for _ in wins.read() {
+        if game.0.seed != daily.seed {
+            continue;
+        }
+        if !progress.0.record_daily_completion(daily.date) {
+            // Already counted today — no-op.
+            continue;
+        }
+        progress.0.add_xp(DAILY_BONUS_XP);
+        if let Some(target) = &path.0 {
+            if let Err(e) = save_progress_to(target, &progress.0) {
+                warn!("failed to save progress after daily completion: {e}");
+            }
+        }
+        completed.send(DailyChallengeCompletedEvent {
+            date: daily.date,
+            streak: progress.0.daily_challenge_streak,
+        });
+    }
+}
+
+fn handle_start_daily_request(
+    keys: Res<ButtonInput<KeyCode>>,
+    daily: Res<DailyChallengeResource>,
+    mut new_game: EventWriter<NewGameRequestEvent>,
+) {
+    if keys.just_pressed(KeyCode::KeyC) {
+        new_game.send(NewGameRequestEvent {
+            seed: Some(daily.seed),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game_plugin::GamePlugin;
+    use crate::progress_plugin::ProgressPlugin;
+    use crate::table_plugin::TablePlugin;
+    use solitaire_core::game_state::{DrawMode, GameState};
+
+    fn headless_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(GamePlugin)
+            .add_plugins(TablePlugin)
+            .add_plugins(ProgressPlugin::headless())
+            .add_plugins(DailyChallengePlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.update();
+        app
+    }
+
+    #[test]
+    fn resource_uses_today() {
+        let app = headless_app();
+        let r = app.world().resource::<DailyChallengeResource>();
+        assert_eq!(r.date, Local::now().date_naive());
+        assert_eq!(r.seed, daily_seed_for(r.date));
+    }
+
+    #[test]
+    fn winning_with_daily_seed_completes_and_fires_event() {
+        let mut app = headless_app();
+        let daily_seed = app.world().resource::<DailyChallengeResource>().seed;
+
+        // Replace the GameState with one whose seed matches the daily seed.
+        app.world_mut().resource_mut::<GameStateResource>().0 =
+            GameState::new(daily_seed, DrawMode::DrawOne);
+
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 200,
+        });
+        app.update();
+
+        let progress = &app.world().resource::<ProgressResource>().0;
+        assert_eq!(progress.daily_challenge_streak, 1);
+        // +100 from the daily bonus
+        assert!(progress.total_xp >= DAILY_BONUS_XP);
+
+        let events = app.world().resource::<Events<DailyChallengeCompletedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).copied().collect();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].streak, 1);
+    }
+
+    #[test]
+    fn winning_with_unrelated_seed_does_not_complete_daily() {
+        let mut app = headless_app();
+        let daily_seed = app.world().resource::<DailyChallengeResource>().seed;
+        // Use a deliberately different seed.
+        app.world_mut().resource_mut::<GameStateResource>().0 =
+            GameState::new(daily_seed.wrapping_add(7777), DrawMode::DrawOne);
+
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 200,
+        });
+        app.update();
+
+        let progress = &app.world().resource::<ProgressResource>().0;
+        assert_eq!(progress.daily_challenge_streak, 0);
+
+        let events = app.world().resource::<Events<DailyChallengeCompletedEvent>>();
+        let mut cursor = events.get_cursor();
+        assert!(cursor.read(events).next().is_none());
+    }
+
+    #[test]
+    fn second_win_same_day_is_idempotent() {
+        let mut app = headless_app();
+        let daily_seed = app.world().resource::<DailyChallengeResource>().seed;
+        app.world_mut().resource_mut::<GameStateResource>().0 =
+            GameState::new(daily_seed, DrawMode::DrawOne);
+
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 200,
+        });
+        app.update();
+        // Re-send win.
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 200,
+        });
+        app.update();
+
+        let progress = &app.world().resource::<ProgressResource>().0;
+        assert_eq!(progress.daily_challenge_streak, 1, "streak does not double-count");
+    }
+
+    #[test]
+    fn pressing_c_fires_new_game_with_daily_seed() {
+        let mut app = headless_app();
+        let daily_seed = app.world().resource::<DailyChallengeResource>().seed;
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyC);
+        app.update();
+
+        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).copied().collect();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].seed, Some(daily_seed));
+    }
+}

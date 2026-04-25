@@ -3,6 +3,7 @@
 pub mod achievement_plugin;
 pub mod animation_plugin;
 pub mod card_plugin;
+pub mod daily_challenge_plugin;
 pub mod events;
 pub mod game_plugin;
 pub mod input_plugin;
@@ -13,6 +14,9 @@ pub mod stats_plugin;
 pub mod table_plugin;
 
 pub use achievement_plugin::{AchievementPlugin, AchievementsResource};
+pub use daily_challenge_plugin::{
+    DailyChallengeCompletedEvent, DailyChallengePlugin, DailyChallengeResource,
+};
 pub use progress_plugin::{LevelUpEvent, ProgressPlugin, ProgressResource, ProgressUpdate};
 pub use animation_plugin::{AnimationPlugin, CardAnim};
 pub use card_plugin::{CardEntity, CardLabel, CardPlugin};

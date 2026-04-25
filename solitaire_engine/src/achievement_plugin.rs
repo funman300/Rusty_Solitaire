@@ -18,6 +18,7 @@ use solitaire_data::{
 
 use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
+use crate::progress_plugin::{ProgressResource, ProgressUpdate};
 use crate::resources::GameStateResource;
 use crate::stats_plugin::{StatsResource, StatsUpdate};
 
@@ -66,20 +67,26 @@ impl Plugin for AchievementPlugin {
             .insert_resource(AchievementsStoragePath(self.storage_path.clone()))
             .add_event::<AchievementUnlockedEvent>()
             .add_event::<GameWonEvent>()
-            // Run after GameMutation (so GameWonEvent is available) and after
-            // StatsUpdate (so StatsResource already reflects this win).
+            // Run after GameMutation (so GameWonEvent is available), after
+            // StatsUpdate (so stats reflect this win), and after ProgressUpdate
+            // (so daily_challenge_streak is up to date for daily_devotee).
             .add_systems(
                 Update,
-                evaluate_on_win.after(GameMutation).after(StatsUpdate),
+                evaluate_on_win
+                    .after(GameMutation)
+                    .after(StatsUpdate)
+                    .after(ProgressUpdate),
             );
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn evaluate_on_win(
     mut wins: EventReader<GameWonEvent>,
     mut unlocks: EventWriter<AchievementUnlockedEvent>,
     game: Res<GameStateResource>,
     stats: Res<StatsResource>,
+    progress: Res<ProgressResource>,
     path: Res<AchievementsStoragePath>,
     mut achievements: ResMut<AchievementsResource>,
 ) {
@@ -94,6 +101,7 @@ fn evaluate_on_win(
         best_single_score: stats.0.best_single_score,
         lifetime_score: stats.0.lifetime_score,
         draw_three_wins: stats.0.draw_three_wins,
+        daily_challenge_streak: progress.0.daily_challenge_streak,
         last_win_score: ev.score,
         last_win_time_seconds: ev.time_seconds,
         last_win_used_undo: game.0.undo_count > 0,
@@ -149,6 +157,7 @@ mod tests {
             .add_plugins(GamePlugin)
             .add_plugins(TablePlugin)
             .add_plugins(StatsPlugin::headless())
+            .add_plugins(crate::progress_plugin::ProgressPlugin::headless())
             .add_plugins(AchievementPlugin::headless());
         // StatsPlugin's UI toggle system reads ButtonInput<KeyCode>; under
         // MinimalPlugins it isn't auto-registered.
