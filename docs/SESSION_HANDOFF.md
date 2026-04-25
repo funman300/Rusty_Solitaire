@@ -2,7 +2,7 @@
 
 > Last updated: 2026-04-24
 > Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
-> Test count: **148 passing** (76 core + 19 data + 53 engine), `cargo clippy --workspace -- -D warnings` clean
+> Test count: **168 passing** (76 core + 33 data + 59 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
 
@@ -96,19 +96,28 @@ All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin
 - New `StatsUpdate` system set lets `AchievementPlugin` order itself after stats are incremented
 - Deferred: `daily_devotee` (needs `PlayerProgress`), `comeback` (needs recycle counter), `zen_winner` (needs modes), `perfectionist` (needs max-score calc). Stubs can be added in later phases.
 
+### Phase 6 (part 1) — XP, Levels, ProgressPlugin ✅ COMPLETE
+
+- `solitaire_data::PlayerProgress` with `total_xp`, `level`, daily/weekly/unlock fields
+- `level_for_xp(xp)` and `xp_for_win(time, used_undo)` helpers (per ARCHITECTURE.md §13)
+- `add_xp(amount) -> prev_level` with `leveled_up_from(prev)` for level-up detection
+- Atomic `progress.json` persistence via `save_progress_to` / `load_progress_from`
+- `ProgressPlugin` — on `GameWonEvent`, awards XP (base 50 + speed bonus 10–50 + no-undo 25), persists, emits `LevelUpEvent`
+- `ProgressUpdate` system set for ordering downstream systems
+- `ProgressPlugin::default()` for production, `::headless()` for tests
+
 ## What Is Next
 
-### Phase 6 — Progression (XP, Levels, Daily Challenges, Modes)
+### Phase 6 (part 2) — Daily Challenges, Weekly Goals, Special Modes
 
-- `solitaire_data::PlayerProgress` (XP, level, daily challenge streak, unlocked card backs/backgrounds)
-- XP award on `GameWonEvent` — base + speed bonus + no-undo bonus
-- Level formula (from ARCHITECTURE.md §13)
-- Daily challenge seed generation + completion tracking
-- Weekly goals (rotating set of mini-objectives)
-- Time Attack / Challenge Mode / Zen Mode — unlocked at level 5
-- After this lands, the `daily_devotee` achievement can be wired up
+- Daily challenge seed generation (deterministic from date, same for all players globally)
+- Daily challenge completion tracking → `daily_challenge_streak` field
+- After this lands, wire up the `daily_devotee` achievement
+- Weekly goals (`weekly_goal_progress` HashMap is already in `PlayerProgress`)
+- Time Attack / Challenge / Zen modes (unlock at level 5)
+- LevelUp toast — connect `LevelUpEvent` to a toast in `AnimationPlugin`
 
-### Phases 7–8 (in order after Phase 6)
+### Phases 7–8 (in order after Phase 6 part 2)
 
 | Phase | Scope |
 |---|---|
@@ -165,7 +174,7 @@ For Phase 3 onwards, write a new plan using the `superpowers:writing-plans` skil
 # Check everything compiles
 cargo check --workspace
 
-# Run all tests (148 tests, all should pass)
+# Run all tests (168 tests, all should pass)
 cargo test --workspace
 
 # Lint (must be zero warnings)
