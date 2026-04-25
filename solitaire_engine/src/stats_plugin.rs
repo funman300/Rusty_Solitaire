@@ -10,10 +10,13 @@ use std::path::PathBuf;
 
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
-use solitaire_data::{load_stats_from, save_stats_to, stats_file_path, StatsSnapshot};
+use solitaire_data::{
+    load_stats_from, save_stats_to, stats_file_path, PlayerProgress, StatsSnapshot, WEEKLY_GOALS,
+};
 
 use crate::events::{GameWonEvent, NewGameRequestEvent};
 use crate::game_plugin::GameMutation;
+use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
 
 /// Bevy resource wrapping the current stats.
@@ -123,6 +126,7 @@ fn toggle_stats_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     stats: Res<StatsResource>,
+    progress: Option<Res<ProgressResource>>,
     screens: Query<Entity, With<StatsScreen>>,
 ) {
     if !keys.just_pressed(KeyCode::KeyS) {
@@ -131,11 +135,15 @@ fn toggle_stats_screen(
     if let Ok(entity) = screens.get_single() {
         commands.entity(entity).despawn_recursive();
     } else {
-        spawn_stats_screen(&mut commands, &stats.0);
+        spawn_stats_screen(&mut commands, &stats.0, progress.as_deref().map(|p| &p.0));
     }
 }
 
-fn spawn_stats_screen(commands: &mut Commands, stats: &StatsSnapshot) {
+fn spawn_stats_screen(
+    commands: &mut Commands,
+    stats: &StatsSnapshot,
+    progress: Option<&PlayerProgress>,
+) {
     let win_rate = stats
         .win_rate()
         .map_or("N/A".to_string(), |r| format!("{r:.1}%"));
@@ -150,7 +158,7 @@ fn spawn_stats_screen(commands: &mut Commands, stats: &StatsSnapshot) {
         format_duration(stats.avg_time_seconds)
     };
 
-    let lines = [
+    let mut lines: Vec<String> = vec![
         "=== Statistics ===".to_string(),
         format!("Games Played:  {}", stats.games_played),
         format!("Games Won:     {}", stats.games_won),
@@ -162,9 +170,34 @@ fn spawn_stats_screen(commands: &mut Commands, stats: &StatsSnapshot) {
         format!("Best Score:    {}", stats.best_single_score),
         format!("Fastest Win:   {fastest}"),
         format!("Avg Win Time:  {avg}"),
-        String::new(),
-        "Press S to close".to_string(),
     ];
+
+    if let Some(p) = progress {
+        lines.push(String::new());
+        lines.push("=== Progression ===".to_string());
+        lines.push(format!("Level:         {}", p.level));
+        lines.push(format!("Total XP:      {}", p.total_xp));
+        lines.push(format!(
+            "Daily Streak:  {}",
+            p.daily_challenge_streak
+        ));
+        lines.push(String::new());
+        lines.push("-- Weekly Goals --".to_string());
+        for goal in WEEKLY_GOALS {
+            let progress_value = p
+                .weekly_goal_progress
+                .get(goal.id)
+                .copied()
+                .unwrap_or(0);
+            lines.push(format!(
+                "  {}: {}/{}",
+                goal.description, progress_value, goal.target
+            ));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("Press S to close".to_string());
 
     commands
         .spawn((
@@ -219,6 +252,9 @@ mod tests {
         // MinimalPlugins doesn't register keyboard input — add it so the
         // toggle system can read ButtonInput<KeyCode> in tests.
         app.init_resource::<ButtonInput<KeyCode>>();
+        // ProgressResource is an optional dependency for the stats screen;
+        // include it so toggle tests exercise the progression panel.
+        app.add_plugins(crate::progress_plugin::ProgressPlugin::headless());
         app.update();
         app
     }

@@ -7,10 +7,12 @@ use bevy::prelude::*;
 
 use crate::achievement_plugin::display_name_for;
 use crate::card_plugin::CardEntity;
+use crate::daily_challenge_plugin::DailyChallengeCompletedEvent;
 use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
 use crate::progress_plugin::LevelUpEvent;
+use crate::weekly_goals_plugin::WeeklyGoalCompletedEvent;
 
 /// Duration of a card slide (move) animation in seconds.
 pub const SLIDE_SECS: f32 = 0.15;
@@ -18,6 +20,8 @@ pub const SLIDE_SECS: f32 = 0.15;
 const WIN_TOAST_SECS: f32 = 4.0;
 const ACHIEVEMENT_TOAST_SECS: f32 = 3.0;
 const LEVELUP_TOAST_SECS: f32 = 3.0;
+const DAILY_TOAST_SECS: f32 = 3.0;
+const WEEKLY_TOAST_SECS: f32 = 3.0;
 const CASCADE_STAGGER: f32 = 0.05;
 const CASCADE_DURATION: f32 = 0.5;
 
@@ -53,6 +57,8 @@ impl Plugin for AnimationPlugin {
         app.add_event::<GameWonEvent>()
             .add_event::<AchievementUnlockedEvent>()
             .add_event::<LevelUpEvent>()
+            .add_event::<DailyChallengeCompletedEvent>()
+            .add_event::<WeeklyGoalCompletedEvent>()
             .add_systems(
                 Update,
                 (
@@ -60,6 +66,8 @@ impl Plugin for AnimationPlugin {
                     handle_win_cascade,
                     handle_achievement_toast,
                     handle_levelup_toast,
+                    handle_daily_toast,
+                    handle_weekly_toast,
                     tick_toasts,
                 )
                     .after(GameMutation),
@@ -143,6 +151,32 @@ fn handle_levelup_toast(mut commands: Commands, mut events: EventReader<LevelUpE
             &mut commands,
             format!("Level Up! → {}", ev.new_level),
             LEVELUP_TOAST_SECS,
+        );
+    }
+}
+
+fn handle_daily_toast(
+    mut commands: Commands,
+    mut events: EventReader<DailyChallengeCompletedEvent>,
+) {
+    for ev in events.read() {
+        spawn_toast(
+            &mut commands,
+            format!("Daily Challenge Complete! (Streak: {})", ev.streak),
+            DAILY_TOAST_SECS,
+        );
+    }
+}
+
+fn handle_weekly_toast(
+    mut commands: Commands,
+    mut events: EventReader<WeeklyGoalCompletedEvent>,
+) {
+    for ev in events.read() {
+        spawn_toast(
+            &mut commands,
+            format!("Weekly Goal: {}", ev.description),
+            WEEKLY_TOAST_SECS,
         );
     }
 }
