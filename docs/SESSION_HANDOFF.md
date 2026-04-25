@@ -2,7 +2,7 @@
 
 > Last updated: 2026-04-24
 > Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
-> Test count: **196 passing** (77 core + 50 data + 69 engine), `cargo clippy --workspace -- -D warnings` clean
+> Test count: **202 passing** (80 core + 50 data + 72 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
 
@@ -125,16 +125,23 @@ All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin
 - `AnimationPlugin` now surfaces `DailyChallengeCompletedEvent` (shows streak) and `WeeklyGoalCompletedEvent` (shows goal description) as 3-second toasts.
 - Stats overlay (**S** key) appends a Progression section: level, total XP, daily streak, and a Weekly Goals list iterating `WEEKLY_GOALS` with `progress/target` for each.
 
+### Phase 6 (part 4a) — Elapsed Time + Zen Mode ✅ COMPLETE
+
+- `tick_elapsed_time` in `GamePlugin` ticks `GameState.elapsed_seconds` once per real-world second while not won; `advance_elapsed` is a pure helper for direct unit testing.
+- `GameMode` enum (`Classic` / `Zen`) added to `solitaire_core::game_state`. `GameState.mode` field; `GameState::new_with_mode` ctor. Zen suppresses scoring in `move_cards` and `undo`. Field is `#[serde(default)]` for backwards-compatible saved games.
+- `NewGameRequestEvent` carries an optional `mode`; `handle_new_game` falls back to the current game's mode when `None`.
+- `Z` key starts a fresh Zen game.
+
 ## What Is Next
 
-### Phase 6 (part 4) — Special Modes + Unlock UI
+### Phase 6 (part 4b) — Time Attack + Challenge + Unlock UI
 
-- Time Attack / Challenge / Zen modes (unlock at level 5). Add a `GameMode` enum in `solitaire_core::game_state`; `GameState` tracks its mode; Zen skips scoring, Challenge disables undo, Time Attack ends on timer.
-- Mode selector UI + keyboard shortcut (e.g. `Z` for Zen) + extend `NewGameRequestEvent` with an optional mode.
-- Card-back / background unlock UI for `unlocked_card_backs` / `unlocked_backgrounds`.
-- Elapsed-time tracking — currently `GameState.elapsed_seconds` stays at 0; wire a timer system.
+- **Time Attack mode**: 10-minute countdown, auto-deal a fresh game on win, score = total wins; on timer expiry show summary.
+- **Challenge mode**: pre-defined hard seeds, undo disabled, advance to next seed on win.
+- **Level-5 gate**: lock Time Attack/Challenge until `ProgressResource.0.level >= 5`.
+- **Card-back / background unlock UI** for `unlocked_card_backs` / `unlocked_backgrounds`.
 
-### Phases 7–8 (in order after Phase 6 part 4)
+### Phases 7–8 (in order after Phase 6 part 4b)
 
 | Phase | Scope |
 |---|---|
@@ -191,7 +198,7 @@ For Phase 3 onwards, write a new plan using the `superpowers:writing-plans` skil
 # Check everything compiles
 cargo check --workspace
 
-# Run all tests (196 tests, all should pass)
+# Run all tests (202 tests, all should pass)
 cargo test --workspace
 
 # Lint (must be zero warnings)
