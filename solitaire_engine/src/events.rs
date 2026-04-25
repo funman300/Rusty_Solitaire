@@ -1,6 +1,7 @@
 //! Cross-system events used by the engine's plugins.
 
 use bevy::prelude::Event;
+use solitaire_core::game_state::GameMode;
 use solitaire_core::pile::PileType;
 
 /// Request to move `count` cards from `from` to `to`. Fired by input systems,
@@ -21,9 +22,11 @@ pub struct DrawRequestEvent;
 pub struct UndoRequestEvent;
 
 /// Request to start a new game. `seed = None` uses a system-time seed.
+/// `mode = None` reuses the current game's `GameMode`.
 #[derive(Event, Debug, Clone, Copy, Default)]
 pub struct NewGameRequestEvent {
     pub seed: Option<u64>,
+    pub mode: Option<GameMode>,
 }
 
 /// Fired by `GamePlugin` after any successful state mutation. Rendering and

@@ -100,6 +100,7 @@ fn handle_start_daily_request(
     if keys.just_pressed(KeyCode::KeyC) {
         new_game.send(NewGameRequestEvent {
             seed: Some(daily.seed),
+            mode: None,
         });
     }
 }

@@ -103,7 +103,8 @@ fn handle_new_game(
     for ev in new_game.read() {
         let seed = ev.seed.unwrap_or_else(seed_from_system_time);
         let draw_mode = game.0.draw_mode.clone();
-        game.0 = GameState::new(seed, draw_mode);
+        let mode = ev.mode.unwrap_or(game.0.mode);
+        game.0 = GameState::new_with_mode(seed, draw_mode, mode);
         changed.send(StateChangedEvent);
     }
 }
@@ -253,7 +254,7 @@ mod tests {
             .map(|c| c.id)
             .collect();
 
-        app.world_mut().send_event(NewGameRequestEvent { seed: Some(999) });
+        app.world_mut().send_event(NewGameRequestEvent { seed: Some(999), mode: None });
         app.update();
 
         let after: Vec<u32> = app
@@ -292,11 +293,16 @@ mod tests {
     fn advance_elapsed_handles_subsecond_deltas_without_skipping() {
         let mut elapsed = 0;
         let mut acc = 0.0;
-        // 16ms × 60 frames/sec ≈ 1 second; should produce 1 tick.
-        for _ in 0..60 {
-            advance_elapsed(&mut elapsed, &mut acc, 1.0 / 60.0, false);
+        // 4 × 0.25 = 1.0 (exactly representable in f32) — must produce 1 tick.
+        for _ in 0..4 {
+            advance_elapsed(&mut elapsed, &mut acc, 0.25, false);
         }
-        assert!(elapsed == 1, "expected 1 second, got {elapsed}");
+        assert_eq!(elapsed, 1);
+        // Repeat once more for a total of 2 seconds.
+        for _ in 0..4 {
+            advance_elapsed(&mut elapsed, &mut acc, 0.25, false);
+        }
+        assert_eq!(elapsed, 2);
     }
 
     #[test]

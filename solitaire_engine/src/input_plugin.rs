@@ -69,7 +69,13 @@ fn handle_keyboard(
         undo.send(UndoRequestEvent);
     }
     if keys.just_pressed(KeyCode::KeyN) {
-        new_game.send(NewGameRequestEvent { seed: None });
+        new_game.send(NewGameRequestEvent::default());
+    }
+    if keys.just_pressed(KeyCode::KeyZ) {
+        new_game.send(NewGameRequestEvent {
+            seed: None,
+            mode: Some(solitaire_core::game_state::GameMode::Zen),
+        });
     }
     if keys.just_pressed(KeyCode::KeyD) {
         draw.send(DrawRequestEvent);

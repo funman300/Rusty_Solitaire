@@ -16,6 +16,17 @@ pub enum DrawMode {
     DrawThree,
 }
 
+/// Top-level game mode. Affects scoring and (eventually) timer behaviour.
+///
+/// - `Classic`: standard Klondike scoring and timer.
+/// - `Zen`: scoring suppressed (stays at 0); intended for relaxed play.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GameMode {
+    #[default]
+    Classic,
+    Zen,
+}
+
 /// Snapshot of game state used for undo.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StateSnapshot {
@@ -29,6 +40,10 @@ struct StateSnapshot {
 pub struct GameState {
     pub piles: HashMap<PileType, Pile>,
     pub draw_mode: DrawMode,
+    /// Top-level mode (Classic / Zen). Defaults to Classic for backwards
+    /// compatibility with older save files via `#[serde(default)]`.
+    #[serde(default)]
+    pub mode: GameMode,
     pub score: i32,
     pub move_count: u32,
     pub elapsed_seconds: u64,
@@ -42,8 +57,13 @@ pub struct GameState {
 }
 
 impl GameState {
-    /// Creates a new game dealt from the given seed and draw mode.
+    /// Creates a new Classic-mode game dealt from the given seed and draw mode.
     pub fn new(seed: u64, draw_mode: DrawMode) -> Self {
+        Self::new_with_mode(seed, draw_mode, GameMode::Classic)
+    }
+
+    /// Creates a new game with an explicit `GameMode`.
+    pub fn new_with_mode(seed: u64, draw_mode: DrawMode, mode: GameMode) -> Self {
         let mut deck = Deck::new();
         deck.shuffle(seed);
         let (tableau, stock) = deal_klondike(deck);
@@ -61,6 +81,7 @@ impl GameState {
         Self {
             piles,
             draw_mode,
+            mode,
             score: 0,
             move_count: 0,
             elapsed_seconds: 0,
@@ -200,7 +221,11 @@ impl GameState {
             start
         };
 
-        let score_delta = score_move(&from, &to);
+        let score_delta = if self.mode == GameMode::Zen {
+            0
+        } else {
+            score_move(&from, &to)
+        };
         self.push_snapshot();
 
         // Execute move
@@ -242,7 +267,11 @@ impl GameState {
         }
         let snapshot = self.undo_stack.pop().ok_or(MoveError::UndoStackEmpty)?;
         self.piles = snapshot.piles;
-        self.score = (snapshot.score + scoring_undo()).max(0);
+        self.score = if self.mode == GameMode::Zen {
+            0
+        } else {
+            (snapshot.score + scoring_undo()).max(0)
+        };
         self.move_count = snapshot.move_count;
         self.is_won = false;
         self.is_auto_completable = false;
@@ -506,6 +535,28 @@ mod tests {
             g.undo().unwrap();
         }
         assert!(g.score >= 0);
+    }
+
+    // --- GameMode: Zen ---
+
+    #[test]
+    fn zen_mode_score_stays_zero_after_undo() {
+        let mut g = GameState::new_with_mode(42, DrawMode::DrawOne, GameMode::Zen);
+        g.draw().unwrap();
+        g.undo().unwrap();
+        assert_eq!(g.score, 0);
+    }
+
+    #[test]
+    fn zen_mode_default_is_classic_via_default_trait() {
+        assert_eq!(GameMode::default(), GameMode::Classic);
+    }
+
+    #[test]
+    fn zen_mode_field_persists_through_construction() {
+        let g = GameState::new_with_mode(1, DrawMode::DrawThree, GameMode::Zen);
+        assert_eq!(g.mode, GameMode::Zen);
+        assert_eq!(g.draw_mode, DrawMode::DrawThree);
     }
 
     // --- Auto-complete ---
