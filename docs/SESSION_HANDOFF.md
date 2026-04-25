@@ -120,16 +120,21 @@ All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin
 - `PlayerProgress` — `weekly_goal_week_iso`, `roll_weekly_goals_if_new_week`, `record_weekly_progress`
 - `WeeklyGoalsPlugin` — on `GameWonEvent`, rolls week if needed, increments matching goals, awards `WEEKLY_GOAL_XP` (75) per completion, fires `WeeklyGoalCompletedEvent`
 
+### Phase 6 (part 3) — Completion Toasts + Progression Panel ✅ COMPLETE
+
+- `AnimationPlugin` now surfaces `DailyChallengeCompletedEvent` (shows streak) and `WeeklyGoalCompletedEvent` (shows goal description) as 3-second toasts.
+- Stats overlay (**S** key) appends a Progression section: level, total XP, daily streak, and a Weekly Goals list iterating `WEEKLY_GOALS` with `progress/target` for each.
+
 ## What Is Next
 
-### Phase 6 (part 3) — Special Modes + Status UI
+### Phase 6 (part 4) — Special Modes + Unlock UI
 
-- Time Attack / Challenge / Zen modes — unlock at level 5. Need a `GameMode` enum (likely in `solitaire_core`) + mode selector + per-mode rule overrides.
-- Toast for `DailyChallengeCompletedEvent` and `WeeklyGoalCompletedEvent` (currently fire but not surfaced).
-- Daily/weekly status panel in the stats overlay (today's challenge state, weekly goal progress bars).
+- Time Attack / Challenge / Zen modes (unlock at level 5). Add a `GameMode` enum in `solitaire_core::game_state`; `GameState` tracks its mode; Zen skips scoring, Challenge disables undo, Time Attack ends on timer.
+- Mode selector UI + keyboard shortcut (e.g. `Z` for Zen) + extend `NewGameRequestEvent` with an optional mode.
 - Card-back / background unlock UI for `unlocked_card_backs` / `unlocked_backgrounds`.
+- Elapsed-time tracking — currently `GameState.elapsed_seconds` stays at 0; wire a timer system.
 
-### Phases 7–8 (in order after Phase 6 part 3)
+### Phases 7–8 (in order after Phase 6 part 4)
 
 | Phase | Scope |
 |---|---|
