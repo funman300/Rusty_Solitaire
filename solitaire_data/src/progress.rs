@@ -67,6 +67,11 @@ pub struct PlayerProgress {
     pub weekly_goal_week_iso: Option<String>,
     pub unlocked_card_backs: Vec<usize>,
     pub unlocked_backgrounds: Vec<usize>,
+    /// Index of the next Challenge-mode seed the player will be served.
+    /// Increments on each Challenge-mode win. Out-of-range values wrap modulo
+    /// `CHALLENGE_SEEDS.len()` at lookup time.
+    #[serde(default)]
+    pub challenge_index: u32,
     pub last_modified: DateTime<Utc>,
 }
 
@@ -81,6 +86,7 @@ impl Default for PlayerProgress {
             weekly_goal_week_iso: None,
             unlocked_card_backs: vec![0],   // back #0 always available
             unlocked_backgrounds: vec![0],  // background #0 always available
+            challenge_index: 0,
             last_modified: DateTime::UNIX_EPOCH,
         }
     }

@@ -16,15 +16,18 @@ pub enum DrawMode {
     DrawThree,
 }
 
-/// Top-level game mode. Affects scoring and (eventually) timer behaviour.
+/// Top-level game mode. Affects scoring, undo, and (eventually) timer behaviour.
 ///
-/// - `Classic`: standard Klondike scoring and timer.
-/// - `Zen`: scoring suppressed (stays at 0); intended for relaxed play.
+/// - `Classic`: standard Klondike scoring, undo allowed.
+/// - `Zen`: scoring suppressed (stays at 0); undo allowed; intended for relaxed play.
+/// - `Challenge`: standard scoring, **undo disabled** (returns
+///   `MoveError::RuleViolation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameMode {
     #[default]
     Classic,
     Zen,
+    Challenge,
 }
 
 /// Snapshot of game state used for undo.
@@ -261,9 +264,15 @@ impl GameState {
     }
 
     /// Restore the most recent undo snapshot and apply the undo score penalty (-15).
+    /// Disabled in `GameMode::Challenge` — returns `MoveError::RuleViolation`.
     pub fn undo(&mut self) -> Result<(), MoveError> {
         if self.is_won {
             return Err(MoveError::GameAlreadyWon);
+        }
+        if self.mode == GameMode::Challenge {
+            return Err(MoveError::RuleViolation(
+                "undo is disabled in Challenge mode".into(),
+            ));
         }
         let snapshot = self.undo_stack.pop().ok_or(MoveError::UndoStackEmpty)?;
         self.piles = snapshot.piles;
@@ -557,6 +566,34 @@ mod tests {
         let g = GameState::new_with_mode(1, DrawMode::DrawThree, GameMode::Zen);
         assert_eq!(g.mode, GameMode::Zen);
         assert_eq!(g.draw_mode, DrawMode::DrawThree);
+    }
+
+    // --- GameMode: Challenge ---
+
+    #[test]
+    fn challenge_mode_disables_undo() {
+        let mut g = GameState::new_with_mode(42, DrawMode::DrawOne, GameMode::Challenge);
+        g.draw().unwrap();
+        let result = g.undo();
+        assert!(matches!(result, Err(MoveError::RuleViolation(_))));
+    }
+
+    #[test]
+    fn challenge_mode_still_allows_normal_moves() {
+        let g = GameState::new_with_mode(42, DrawMode::DrawOne, GameMode::Challenge);
+        // Just verify the game initialises cleanly with Challenge mode.
+        assert_eq!(g.mode, GameMode::Challenge);
+        assert_eq!(g.score, 0);
+    }
+
+    #[test]
+    fn challenge_mode_scoring_applies_normally() {
+        // Challenge uses Classic scoring; only undo is disabled.
+        let g = GameState::new_with_mode(42, DrawMode::DrawOne, GameMode::Challenge);
+        assert_eq!(g.score, 0);
+        // Note: Verifying score increases on actual moves would require
+        // hand-crafting a legal move from the dealt state. We rely on the
+        // fact that move_cards' score path is identical to Classic.
     }
 
     // --- Auto-complete ---

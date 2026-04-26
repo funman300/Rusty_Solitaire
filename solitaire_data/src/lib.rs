@@ -57,3 +57,6 @@ pub use weekly::{
     current_iso_week_key, weekly_goal_by_id, WeeklyGoalContext, WeeklyGoalDef, WeeklyGoalKind,
     WEEKLY_GOALS, WEEKLY_GOAL_XP,
 };
+
+pub mod challenge;
+pub use challenge::{challenge_count, challenge_seed_for, CHALLENGE_SEEDS};

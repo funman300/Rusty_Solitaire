@@ -3,6 +3,7 @@
 pub mod achievement_plugin;
 pub mod animation_plugin;
 pub mod card_plugin;
+pub mod challenge_plugin;
 pub mod daily_challenge_plugin;
 pub mod events;
 pub mod game_plugin;
@@ -15,6 +16,9 @@ pub mod table_plugin;
 pub mod weekly_goals_plugin;
 
 pub use achievement_plugin::{AchievementPlugin, AchievementsResource};
+pub use challenge_plugin::{
+    challenge_progress_label, ChallengeAdvancedEvent, ChallengePlugin, CHALLENGE_UNLOCK_LEVEL,
+};
 pub use daily_challenge_plugin::{
     DailyChallengeCompletedEvent, DailyChallengePlugin, DailyChallengeResource,
 };
