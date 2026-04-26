@@ -126,6 +126,7 @@ fn start_pull(
 /// 4. Sets [`SyncStatusResource`] to [`SyncStatus::LastSynced`].
 ///
 /// On failure, sets [`SyncStatusResource`] to [`SyncStatus::Error`].
+#[allow(clippy::too_many_arguments)]
 fn poll_pull_result(
     mut task_res: ResMut<PullTask>,
     mut status: ResMut<SyncStatusResource>,

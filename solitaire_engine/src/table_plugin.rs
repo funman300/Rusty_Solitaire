@@ -8,8 +8,10 @@ use bevy::prelude::*;
 use bevy::window::WindowResized;
 use solitaire_core::card::Suit;
 use solitaire_core::pile::PileType;
+use solitaire_data::settings::Theme;
 
 use crate::layout::{compute_layout, Layout, LayoutResource, TABLE_COLOUR};
+use crate::settings_plugin::SettingsChangedEvent;
 
 /// Z-depth used for the background — below everything.
 const Z_BACKGROUND: f32 = -10.0;
@@ -34,8 +36,18 @@ impl Plugin for TablePlugin {
         // tests. Under DefaultPlugins, bevy_window has already registered it
         // and this call is a no-op.
         app.add_event::<WindowResized>()
+            .add_event::<SettingsChangedEvent>()
             .add_systems(Startup, setup_table)
-            .add_systems(Update, on_window_resized);
+            .add_systems(Update, (on_window_resized, apply_theme_on_settings_change));
+    }
+}
+
+/// Returns the felt colour for a given theme.
+fn theme_colour(theme: &Theme) -> Color {
+    match theme {
+        Theme::Green => Color::srgb(TABLE_COLOUR[0], TABLE_COLOUR[1], TABLE_COLOUR[2]),
+        Theme::Blue  => Color::srgb(0.059, 0.196, 0.322),
+        Theme::Dark  => Color::srgb(0.08, 0.08, 0.10),
     }
 }
 
@@ -47,6 +59,7 @@ fn setup_table(
     mut commands: Commands,
     windows: Query<&Window>,
     existing_camera: Query<(), With<Camera>>,
+    settings: Option<Res<crate::settings_plugin::SettingsResource>>,
 ) {
     // Only spawn a camera if one does not already exist (e.g. a parent app
     // may have added one in tests).
@@ -61,24 +74,42 @@ fn setup_table(
         .unwrap_or(Vec2::new(1280.0, 800.0));
     let layout = compute_layout(window_size);
 
-    spawn_background(&mut commands, window_size);
+    let initial_colour = settings
+        .as_ref()
+        .map(|s| theme_colour(&s.0.theme))
+        .unwrap_or_else(|| Color::srgb(TABLE_COLOUR[0], TABLE_COLOUR[1], TABLE_COLOUR[2]));
+
+    spawn_background(&mut commands, window_size, initial_colour);
     spawn_pile_markers(&mut commands, &layout);
     commands.insert_resource(LayoutResource(layout));
 }
 
-fn spawn_background(commands: &mut Commands, window_size: Vec2) {
+fn spawn_background(commands: &mut Commands, window_size: Vec2, color: Color) {
     // Spawn a felt-coloured rectangle that always covers the window. We give
     // it the window size plus headroom so resizing up doesn't expose edges
     // before the resize handler runs.
     commands.spawn((
         Sprite {
-            color: Color::srgb(TABLE_COLOUR[0], TABLE_COLOUR[1], TABLE_COLOUR[2]),
+            color,
             custom_size: Some(window_size * 2.0),
             ..default()
         },
         Transform::from_xyz(0.0, 0.0, Z_BACKGROUND),
         TableBackground,
     ));
+}
+
+fn apply_theme_on_settings_change(
+    mut events: EventReader<SettingsChangedEvent>,
+    mut backgrounds: Query<&mut Sprite, With<TableBackground>>,
+) {
+    let Some(ev) = events.read().last() else {
+        return;
+    };
+    let colour = theme_colour(&ev.0.theme);
+    for mut sprite in &mut backgrounds {
+        sprite.color = colour;
+    }
 }
 
 fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {

@@ -178,14 +178,9 @@ mod tests {
     #[test]
     fn timer_expiry_fires_ended_event_and_clears_active() {
         let mut app = headless_app();
-        // Manually start a near-expired session.
-        *app.world_mut().resource_mut::<TimeAttackResource>() = TimeAttackResource {
-            active: true,
-            remaining_secs: 0.001,
-            wins: 5,
-        };
-        app.update();
-        // First update advances time slightly; force the timer past zero.
+        // Set the session to an already-expired state (remaining < 0).
+        // MinimalPlugins time delta is nonzero so we skip the intermediate
+        // 0.001-remaining step to avoid a double-fire.
         *app.world_mut().resource_mut::<TimeAttackResource>() = TimeAttackResource {
             active: true,
             remaining_secs: -1.0,

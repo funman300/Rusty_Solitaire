@@ -12,7 +12,8 @@
 use std::path::PathBuf;
 
 use bevy::prelude::*;
-use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, Settings};
+use solitaire_core::game_state::DrawMode;
+use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, Settings};
 
 /// Volume adjustment step applied by the `[` / `]` hotkeys.
 pub const SFX_STEP: f32 = 0.1;
@@ -37,15 +38,31 @@ pub struct SettingsChangedEvent(pub Settings);
 #[derive(Component, Debug)]
 struct SettingsPanel;
 
-/// Marks the `Text` node that displays the live SFX volume value.
+/// Marks the `Text` node showing the live SFX volume value.
 #[derive(Component, Debug)]
 struct SfxVolumeText;
+
+/// Marks the `Text` node showing the live music volume value.
+#[derive(Component, Debug)]
+struct MusicVolumeText;
+
+/// Marks the `Text` node showing the current draw mode.
+#[derive(Component, Debug)]
+struct DrawModeText;
+
+/// Marks the `Text` node showing the current theme.
+#[derive(Component, Debug)]
+struct ThemeText;
 
 /// Tags interactive buttons inside the Settings panel.
 #[derive(Component, Debug)]
 enum SettingsButton {
     SfxDown,
     SfxUp,
+    MusicDown,
+    MusicUp,
+    ToggleDrawMode,
+    ToggleTheme,
     Done,
 }
 
@@ -171,13 +188,17 @@ fn sync_settings_panel_visibility(
 }
 
 /// Reacts to button presses inside the Settings panel.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn handle_settings_buttons(
     interaction_query: Query<(&Interaction, &SettingsButton), Changed<Interaction>>,
     mut settings: ResMut<SettingsResource>,
     mut screen: ResMut<SettingsScreen>,
     path: Res<SettingsStoragePath>,
     mut changed: EventWriter<SettingsChangedEvent>,
-    mut volume_text: Query<&mut Text, With<SfxVolumeText>>,
+    mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
+    mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
+    mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>)>,
+    mut theme_text: Query<&mut Text, (With<ThemeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>)>,
 ) {
     for (interaction, button) in &interaction_query {
         if *interaction != Interaction::Pressed {
@@ -190,8 +211,8 @@ fn handle_settings_buttons(
                 if (before - after).abs() > f32::EPSILON {
                     persist(&path, &settings.0);
                     changed.send(SettingsChangedEvent(settings.0.clone()));
-                    if let Ok(mut text) = volume_text.get_single_mut() {
-                        **text = format!("{:.2}", after);
+                    if let Ok(mut t) = sfx_text.get_single_mut() {
+                        **t = format!("{:.2}", after);
                     }
                 }
             }
@@ -201,15 +222,75 @@ fn handle_settings_buttons(
                 if (before - after).abs() > f32::EPSILON {
                     persist(&path, &settings.0);
                     changed.send(SettingsChangedEvent(settings.0.clone()));
-                    if let Ok(mut text) = volume_text.get_single_mut() {
-                        **text = format!("{:.2}", after);
+                    if let Ok(mut t) = sfx_text.get_single_mut() {
+                        **t = format!("{:.2}", after);
                     }
+                }
+            }
+            SettingsButton::MusicDown => {
+                let before = settings.0.music_volume;
+                let after = settings.0.adjust_music_volume(-SFX_STEP);
+                if (before - after).abs() > f32::EPSILON {
+                    persist(&path, &settings.0);
+                    changed.send(SettingsChangedEvent(settings.0.clone()));
+                    if let Ok(mut t) = music_text.get_single_mut() {
+                        **t = format!("{:.2}", after);
+                    }
+                }
+            }
+            SettingsButton::MusicUp => {
+                let before = settings.0.music_volume;
+                let after = settings.0.adjust_music_volume(SFX_STEP);
+                if (before - after).abs() > f32::EPSILON {
+                    persist(&path, &settings.0);
+                    changed.send(SettingsChangedEvent(settings.0.clone()));
+                    if let Ok(mut t) = music_text.get_single_mut() {
+                        **t = format!("{:.2}", after);
+                    }
+                }
+            }
+            SettingsButton::ToggleDrawMode => {
+                settings.0.draw_mode = match settings.0.draw_mode {
+                    DrawMode::DrawOne => DrawMode::DrawThree,
+                    DrawMode::DrawThree => DrawMode::DrawOne,
+                };
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
+                if let Ok(mut t) = draw_text.get_single_mut() {
+                    **t = draw_mode_label(&settings.0.draw_mode);
+                }
+            }
+            SettingsButton::ToggleTheme => {
+                settings.0.theme = match settings.0.theme {
+                    Theme::Green => Theme::Blue,
+                    Theme::Blue => Theme::Dark,
+                    Theme::Dark => Theme::Green,
+                };
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
+                if let Ok(mut t) = theme_text.get_single_mut() {
+                    **t = theme_label(&settings.0.theme);
                 }
             }
             SettingsButton::Done => {
                 screen.0 = false;
             }
         }
+    }
+}
+
+fn draw_mode_label(mode: &DrawMode) -> String {
+    match mode {
+        DrawMode::DrawOne => "Draw 1".into(),
+        DrawMode::DrawThree => "Draw 3".into(),
+    }
+}
+
+fn theme_label(theme: &Theme) -> String {
+    match theme {
+        Theme::Green => "Green".into(),
+        Theme::Blue => "Blue".into(),
+        Theme::Dark => "Dark".into(),
     }
 }
 
@@ -262,7 +343,18 @@ fn spawn_settings_panel(commands: &mut Commands, settings: &Settings) {
                 // --- Audio section ---
                 section_label(card, "Audio");
 
-                // SFX volume row: label | value | [−] | [+]
+                // SFX volume row
+                volume_row(card, "SFX Volume", settings.sfx_volume, SfxVolumeText,
+                    SettingsButton::SfxDown, SettingsButton::SfxUp);
+
+                // Music volume row
+                volume_row(card, "Music Volume", settings.music_volume, MusicVolumeText,
+                    SettingsButton::MusicDown, SettingsButton::MusicUp);
+
+                // --- Gameplay section ---
+                section_label(card, "Gameplay");
+
+                // Draw mode row
                 card.spawn(Node {
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
@@ -271,39 +363,43 @@ fn spawn_settings_panel(commands: &mut Commands, settings: &Settings) {
                 })
                 .with_children(|row| {
                     row.spawn((
-                        Text::new("SFX Volume"),
-                        TextFont {
-                            font_size: 18.0,
-                            ..default()
-                        },
+                        Text::new("Draw Mode"),
+                        TextFont { font_size: 18.0, ..default() },
                         TextColor(Color::srgb(0.85, 0.85, 0.80)),
                     ));
                     row.spawn((
-                        SfxVolumeText,
-                        Text::new(format!("{:.2}", settings.sfx_volume)),
-                        TextFont {
-                            font_size: 18.0,
-                            ..default()
-                        },
+                        DrawModeText,
+                        Text::new(draw_mode_label(&settings.draw_mode)),
+                        TextFont { font_size: 18.0, ..default() },
                         TextColor(Color::WHITE),
                     ));
-                    icon_button(row, "−", SettingsButton::SfxDown);
-                    icon_button(row, "+", SettingsButton::SfxUp);
+                    icon_button(row, "⇄", SettingsButton::ToggleDrawMode);
                 });
-
-                coming_soon_row(card, "Music Volume");
-
-                // --- Gameplay section ---
-                section_label(card, "Gameplay");
-                coming_soon_row(card, "Draw Mode");
 
                 // --- Appearance section ---
                 section_label(card, "Appearance");
-                coming_soon_row(card, "Theme");
 
-                // --- Sync section ---
-                section_label(card, "Sync");
-                coming_soon_row(card, "Sync Backend");
+                // Theme row
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("Theme"),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(0.85, 0.85, 0.80)),
+                    ));
+                    row.spawn((
+                        ThemeText,
+                        Text::new(theme_label(&settings.theme)),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                    icon_button(row, "⇄", SettingsButton::ToggleTheme);
+                });
 
                 // Done button
                 card.spawn((
@@ -343,15 +439,37 @@ fn section_label(parent: &mut ChildBuilder, title: &str) {
     ));
 }
 
-fn coming_soon_row(parent: &mut ChildBuilder, label: &str) {
-    parent.spawn((
-        Text::new(format!("{label} — coming soon")),
-        TextFont {
-            font_size: 16.0,
+/// Generic volume row: `Label  0.80  [−]  [+]`
+fn volume_row<Marker: Component>(
+    parent: &mut ChildBuilder,
+    label: &str,
+    value: f32,
+    marker: Marker,
+    btn_down: SettingsButton,
+    btn_up: SettingsButton,
+) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(8.0),
             ..default()
-        },
-        TextColor(Color::srgb(0.45, 0.45, 0.45)),
-    ));
+        })
+        .with_children(|row| {
+            row.spawn((
+                Text::new(label.to_string()),
+                TextFont { font_size: 18.0, ..default() },
+                TextColor(Color::srgb(0.85, 0.85, 0.80)),
+            ));
+            row.spawn((
+                marker,
+                Text::new(format!("{:.2}", value)),
+                TextFont { font_size: 18.0, ..default() },
+                TextColor(Color::WHITE),
+            ));
+            icon_button(row, "−", btn_down);
+            icon_button(row, "+", btn_up);
+        });
 }
 
 fn icon_button(parent: &mut ChildBuilder, label: &str, action: SettingsButton) {

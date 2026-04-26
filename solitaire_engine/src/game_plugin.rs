@@ -105,10 +105,17 @@ fn handle_new_game(
     mut new_game: EventReader<NewGameRequestEvent>,
     mut game: ResMut<GameStateResource>,
     mut changed: EventWriter<StateChangedEvent>,
+    settings: Option<Res<crate::settings_plugin::SettingsResource>>,
 ) {
     for ev in new_game.read() {
         let seed = ev.seed.unwrap_or_else(seed_from_system_time);
-        let draw_mode = game.0.draw_mode.clone();
+        // Prefer the draw mode from Settings when starting a fresh game.
+        // Fall back to the current game's draw mode in headless/test contexts
+        // where SettingsPlugin is not installed.
+        let draw_mode = settings
+            .as_ref()
+            .map(|s| s.0.draw_mode.clone())
+            .unwrap_or_else(|| game.0.draw_mode.clone());
         let mode = ev.mode.unwrap_or(game.0.mode);
         game.0 = GameState::new_with_mode(seed, draw_mode, mode);
         changed.send(StateChangedEvent);

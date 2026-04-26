@@ -22,6 +22,7 @@ use bevy::prelude::*;
 use kira::manager::backend::DefaultBackend;
 use kira::manager::{AudioManager, AudioManagerSettings};
 use kira::sound::static_sound::StaticSoundData;
+use kira::track::{TrackBuilder, TrackHandle};
 use kira::tween::Tween;
 
 use crate::events::{
@@ -44,17 +45,33 @@ pub struct SoundLibrary {
 /// some platforms.
 pub struct AudioState {
     manager: Option<AudioManager<DefaultBackend>>,
+    /// Dedicated sub-track for sound effects. Volume controlled by `sfx_volume`.
+    sfx_track: Option<TrackHandle>,
+    /// Dedicated sub-track for ambient music. Volume controlled by `music_volume`.
+    /// No sounds are currently routed here; the track exists so future ambient
+    /// music can be added without changing the volume architecture.
+    music_track: Option<TrackHandle>,
 }
 
 pub struct AudioPlugin;
 
 impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
-        let manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
+        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
         if manager.is_none() {
             warn!("audio device unavailable; SFX disabled");
         }
-        app.insert_non_send_resource(AudioState { manager });
+
+        let (sfx_track, music_track) = match manager.as_mut() {
+            Some(mgr) => {
+                let sfx = mgr.add_sub_track(TrackBuilder::default()).ok();
+                let music = mgr.add_sub_track(TrackBuilder::default()).ok();
+                (sfx, music)
+            }
+            None => (None, None),
+        };
+
+        app.insert_non_send_resource(AudioState { manager, sfx_track, music_track });
 
         let library = build_library();
         if let Some(lib) = library {
@@ -116,26 +133,36 @@ fn play(audio: &mut AudioState, sound: &StaticSoundData) {
     let Some(manager) = audio.manager.as_mut() else {
         return;
     };
-    if let Err(e) = manager.play(sound.clone()) {
+    // Route SFX through the dedicated sfx_track so its volume is independent
+    // of the music_track volume.
+    let mut data = sound.clone();
+    if let Some(track) = &audio.sfx_track {
+        data.settings.output_destination = track.id().into();
+    }
+    if let Err(e) = manager.play(data) {
         warn!("failed to play SFX: {e}");
     }
 }
 
-fn set_main_track_volume(audio: &mut AudioState, volume: f32) {
-    let Some(manager) = audio.manager.as_mut() else {
-        return;
-    };
-    manager
-        .main_track()
-        .set_volume(volume.clamp(0.0, 1.0) as f64, Tween::default());
+fn set_sfx_volume(audio: &mut AudioState, volume: f32) {
+    if let Some(track) = audio.sfx_track.as_mut() {
+        track.set_volume(volume.clamp(0.0, 1.0) as f64, Tween::default());
+    }
+}
+
+fn set_music_volume(audio: &mut AudioState, volume: f32) {
+    if let Some(track) = audio.music_track.as_mut() {
+        track.set_volume(volume.clamp(0.0, 1.0) as f64, Tween::default());
+    }
 }
 
 fn apply_initial_volume(
     mut audio: NonSendMut<AudioState>,
     settings: Option<Res<SettingsResource>>,
 ) {
-    let volume = settings.map_or(1.0, |s| s.0.sfx_volume);
-    set_main_track_volume(&mut audio, volume);
+    let (sfx, music) = settings.map_or((1.0, 0.5), |s| (s.0.sfx_volume, s.0.music_volume));
+    set_sfx_volume(&mut audio, sfx);
+    set_music_volume(&mut audio, music);
 }
 
 fn apply_volume_on_change(
@@ -143,7 +170,8 @@ fn apply_volume_on_change(
     mut audio: NonSendMut<AudioState>,
 ) {
     for ev in events.read() {
-        set_main_track_volume(&mut audio, ev.0.sfx_volume);
+        set_sfx_volume(&mut audio, ev.0.sfx_volume);
+        set_music_volume(&mut audio, ev.0.music_volume);
     }
 }
 
