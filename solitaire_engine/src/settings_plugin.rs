@@ -15,6 +15,8 @@ use bevy::prelude::*;
 use solitaire_core::game_state::DrawMode;
 use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, Settings};
 
+use crate::resources::{SyncStatus, SyncStatusResource};
+
 /// Volume adjustment step applied by the `[` / `]` hotkeys.
 pub const SFX_STEP: f32 = 0.1;
 
@@ -53,6 +55,10 @@ struct DrawModeText;
 /// Marks the `Text` node showing the current theme.
 #[derive(Component, Debug)]
 struct ThemeText;
+
+/// Marks the `Text` node showing the live sync status.
+#[derive(Component, Debug)]
+struct SyncStatusText;
 
 /// Tags interactive buttons inside the Settings panel.
 #[derive(Component, Debug)]
@@ -109,7 +115,11 @@ impl Plugin for SettingsPlugin {
         if self.ui_enabled {
             app.add_systems(
                 Update,
-                (sync_settings_panel_visibility, handle_settings_buttons),
+                (
+                    sync_settings_panel_visibility,
+                    handle_settings_buttons,
+                    update_sync_status_text,
+                ),
             );
         }
     }
@@ -172,18 +182,58 @@ fn sync_settings_panel_visibility(
     panels: Query<Entity, With<SettingsPanel>>,
     mut commands: Commands,
     settings: Res<SettingsResource>,
+    sync_status: Option<Res<SyncStatusResource>>,
 ) {
     if !screen.is_changed() {
         return;
     }
     if screen.0 {
         if panels.is_empty() {
-            spawn_settings_panel(&mut commands, &settings.0);
+            let status_label = sync_status
+                .map(|s| sync_status_label(&s.0))
+                .unwrap_or_else(|| "Status: not configured".to_string());
+            spawn_settings_panel(&mut commands, &settings.0, &status_label);
         }
     } else {
         for entity in &panels {
             commands.entity(entity).despawn_recursive();
         }
+    }
+}
+
+/// Keeps the sync-status text node current while the panel is open.
+fn update_sync_status_text(
+    sync_status: Option<Res<SyncStatusResource>>,
+    mut text_nodes: Query<&mut Text, With<SyncStatusText>>,
+) {
+    let Some(status) = sync_status else {
+        return;
+    };
+    if !status.is_changed() {
+        return;
+    }
+    let label = sync_status_label(&status.0);
+    for mut text in &mut text_nodes {
+        **text = label.clone();
+    }
+}
+
+fn sync_status_label(status: &SyncStatus) -> String {
+    match status {
+        SyncStatus::Idle => "Status: idle".to_string(),
+        SyncStatus::Syncing => "Status: syncing…".to_string(),
+        SyncStatus::LastSynced(t) => {
+            let secs = chrono::Utc::now()
+                .signed_duration_since(*t)
+                .num_seconds()
+                .max(0);
+            if secs < 60 {
+                format!("Last synced: {secs}s ago")
+            } else {
+                format!("Last synced: {}m ago", secs / 60)
+            }
+        }
+        SyncStatus::Error(e) => format!("Sync error: {e}"),
     }
 }
 
@@ -298,7 +348,7 @@ fn theme_label(theme: &Theme) -> String {
 // UI construction
 // ---------------------------------------------------------------------------
 
-fn spawn_settings_panel(commands: &mut Commands, settings: &Settings) {
+fn spawn_settings_panel(commands: &mut Commands, settings: &Settings, sync_status: &str) {
     commands
         .spawn((
             SettingsPanel,
@@ -400,6 +450,15 @@ fn spawn_settings_panel(commands: &mut Commands, settings: &Settings) {
                     ));
                     icon_button(row, "⇄", SettingsButton::ToggleTheme);
                 });
+
+                // --- Sync section ---
+                section_label(card, "Sync");
+                card.spawn((
+                    SyncStatusText,
+                    Text::new(sync_status.to_string()),
+                    TextFont { font_size: 16.0, ..default() },
+                    TextColor(Color::srgb(0.65, 0.65, 0.70)),
+                ));
 
                 // Done button
                 card.spawn((
