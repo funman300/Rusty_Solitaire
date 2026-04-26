@@ -2,7 +2,7 @@
 
 > Last updated: 2026-04-24
 > Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
-> Test count: **202 passing** (80 core + 50 data + 72 engine), `cargo clippy --workspace -- -D warnings` clean
+> Test count: **214 passing** (83 core + 54 data + 77 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
 
@@ -132,16 +132,23 @@ All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin
 - `NewGameRequestEvent` carries an optional `mode`; `handle_new_game` falls back to the current game's mode when `None`.
 - `Z` key starts a fresh Zen game.
 
+### Phase 6 (part 4b) — Challenge Mode + Level-5 Gate ✅ COMPLETE
+
+- `GameMode::Challenge` variant in core; `undo()` returns `RuleViolation` in Challenge.
+- `solitaire_data::challenge` — `CHALLENGE_SEEDS` static list, `challenge_seed_for(index)` wrapping modulo length, `challenge_count()`.
+- `PlayerProgress.challenge_index` (serde-default) tracks progression.
+- `ChallengePlugin` advances the cursor on Challenge-mode wins, persists, fires `ChallengeAdvancedEvent`. **X** key starts a Challenge-mode game with the current seed.
+- Both **Z** (Zen) and **X** (Challenge) are gated to `level >= CHALLENGE_UNLOCK_LEVEL` (5).
+
 ## What Is Next
 
-### Phase 6 (part 4b) — Time Attack + Challenge + Unlock UI
+### Phase 6 (part 4c) — Time Attack + Unlock UI
 
-- **Time Attack mode**: 10-minute countdown, auto-deal a fresh game on win, score = total wins; on timer expiry show summary.
-- **Challenge mode**: pre-defined hard seeds, undo disabled, advance to next seed on win.
-- **Level-5 gate**: lock Time Attack/Challenge until `ProgressResource.0.level >= 5`.
-- **Card-back / background unlock UI** for `unlocked_card_backs` / `unlocked_backgrounds`.
+- **Time Attack mode**: 10-minute countdown, auto-deal a fresh game on win, score = total wins; on timer expiry show summary. Likely needs a `TimeAttackResource { remaining: f32, wins: u32 }` and a system that decrements `remaining` and ends the session.
+- **Card-back / background unlock UI** for `unlocked_card_backs` / `unlocked_backgrounds`. Achievement rewards already populate these vecs via the persisted `AchievementRecord.reward_granted` flag — UI just needs to surface what's available.
+- Optional: ChallengeAdvancedEvent → toast in `AnimationPlugin`.
 
-### Phases 7–8 (in order after Phase 6 part 4b)
+### Phases 7–8 (in order after Phase 6 part 4c)
 
 | Phase | Scope |
 |---|---|
@@ -198,7 +205,7 @@ For Phase 3 onwards, write a new plan using the `superpowers:writing-plans` skil
 # Check everything compiles
 cargo check --workspace
 
-# Run all tests (202 tests, all should pass)
+# Run all tests (214 tests, all should pass)
 cargo test --workspace
 
 # Lint (must be zero warnings)
