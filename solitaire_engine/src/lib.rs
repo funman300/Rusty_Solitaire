@@ -11,6 +11,7 @@ pub mod game_plugin;
 pub mod help_plugin;
 pub mod input_plugin;
 pub mod layout;
+pub mod onboarding_plugin;
 pub mod pause_plugin;
 pub mod settings_plugin;
 pub mod progress_plugin;
@@ -39,6 +40,7 @@ pub use events::{
 pub use game_plugin::{GameMutation, GamePlugin};
 pub use help_plugin::{HelpPlugin, HelpScreen};
 pub use input_plugin::InputPlugin;
+pub use onboarding_plugin::{OnboardingPlugin, OnboardingScreen};
 pub use pause_plugin::{PausePlugin, PauseScreen, PausedResource};
 pub use settings_plugin::{
     SettingsChangedEvent, SettingsPlugin, SettingsResource, SFX_STEP,

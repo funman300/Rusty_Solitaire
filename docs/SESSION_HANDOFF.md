@@ -2,7 +2,7 @@
 
 > Last updated: 2026-04-25
 > Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
-> Test count: **238 passing** (83 core + 60 data + 95 engine), `cargo clippy --workspace -- -D warnings` clean
+> Test count: **242 passing** (83 core + 60 data + 99 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
 
@@ -175,20 +175,28 @@ All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin
 - Help cheat sheet lists the **\[** / **\]** keys.
 - 4 plugin tests + 6 data tests added — defaults, clamping, round-trip persistence.
 
+### Phase 7 (part 5) — First-Run Onboarding ✅ COMPLETE
+
+- New `OnboardingPlugin`. At `PostStartup`, if `Settings.first_run_complete == false`, spawns a centered welcome banner pointing at the **H**/`?` cheat sheet (ZIndex 230). Any key or mouse-button press dismisses it, sets the flag, and persists `settings.json` — returning players never see it again.
+- 4 unit tests cover spawn-only-on-first-run, key dismiss, and click dismiss.
+
 ## What Is Next
 
-### Phase 7 (part 5+) — Final Polish
-
-- **Onboarding**: first-run banner pointing at the **H**/`?` cheat sheet, single-shot via `Settings.first_run_complete`.
-- **Ambient loop**: optional sixth WAV — needs taste, deferred until artwork phase.
-- **Block input while paused**: drag/hotkeys still work mid-pause; tightening this would make pause behave more like a true modal.
+Phase 7 polish slate is done. Phase 8 (sync) is next.
 
 ### Phase 8 — Sync
 
 | Phase | Scope |
 |---|---|
-| Phase 8A–C | Local storage + `SyncProvider` + self-hosted Axum server + client |
-| Phase 8D | GPGS stub fully wired into settings UI |
+| Phase 8A | Local storage scaffolding + `SyncProvider` plumbing in `solitaire_data` |
+| Phase 8B | Self-hosted Axum server (auth, sync endpoints, SQLite schema) |
+| Phase 8C | `SolitaireServerClient` (`SyncProvider` impl) + `SyncPlugin` lifecycle |
+| Phase 8D | GPGS stub fully wired into the settings UI (Android-only `cfg`-gated) |
+
+### Tiny optional polish (anytime)
+
+- **Ambient loop**: optional sixth WAV — needs taste, deferred until artwork phase.
+- **Block input while paused**: drag/hotkeys still work mid-pause; tightening this would make pause behave more like a true modal.
 
 ---
 
