@@ -18,6 +18,7 @@ use crate::events::{GameWonEvent, NewGameRequestEvent};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
+use crate::time_attack_plugin::TimeAttackResource;
 
 /// Bevy resource wrapping the current stats.
 #[derive(Resource, Debug, Clone)]
@@ -127,6 +128,7 @@ fn toggle_stats_screen(
     keys: Res<ButtonInput<KeyCode>>,
     stats: Res<StatsResource>,
     progress: Option<Res<ProgressResource>>,
+    time_attack: Option<Res<TimeAttackResource>>,
     screens: Query<Entity, With<StatsScreen>>,
 ) {
     if !keys.just_pressed(KeyCode::KeyS) {
@@ -135,7 +137,12 @@ fn toggle_stats_screen(
     if let Ok(entity) = screens.get_single() {
         commands.entity(entity).despawn_recursive();
     } else {
-        spawn_stats_screen(&mut commands, &stats.0, progress.as_deref().map(|p| &p.0));
+        spawn_stats_screen(
+            &mut commands,
+            &stats.0,
+            progress.as_deref().map(|p| &p.0),
+            time_attack.as_deref(),
+        );
     }
 }
 
@@ -143,6 +150,7 @@ fn spawn_stats_screen(
     commands: &mut Commands,
     stats: &StatsSnapshot,
     progress: Option<&PlayerProgress>,
+    time_attack: Option<&TimeAttackResource>,
 ) {
     let win_rate = stats
         .win_rate()
@@ -194,6 +202,27 @@ fn spawn_stats_screen(
                 goal.description, progress_value, goal.target
             ));
         }
+        lines.push(String::new());
+        lines.push("-- Unlocks --".to_string());
+        lines.push(format!(
+            "  Card Backs:    {}",
+            format_id_list(&p.unlocked_card_backs)
+        ));
+        lines.push(format!(
+            "  Backgrounds:   {}",
+            format_id_list(&p.unlocked_backgrounds)
+        ));
+    }
+
+    if let Some(ta) = time_attack {
+        if ta.active {
+            let mins = (ta.remaining_secs / 60.0).floor() as u64;
+            let secs = (ta.remaining_secs % 60.0).floor() as u64;
+            lines.push(String::new());
+            lines.push("=== Time Attack ===".to_string());
+            lines.push(format!("Remaining:     {mins}m {secs:02}s"));
+            lines.push(format!("Wins:          {}", ta.wins));
+        }
     }
 
     lines.push(String::new());
@@ -235,6 +264,22 @@ fn format_duration(secs: u64) -> String {
     let m = secs / 60;
     let s = secs % 60;
     format!("{m}m {s:02}s")
+}
+
+/// Renders a sorted, comma-separated list of unlock indexes for the overlay.
+/// Empty list shows as "None".
+fn format_id_list(ids: &[usize]) -> String {
+    if ids.is_empty() {
+        return "None".to_string();
+    }
+    let mut sorted: Vec<usize> = ids.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted
+        .iter()
+        .map(|i| format!("#{i}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]
@@ -368,5 +413,15 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn format_id_list_renders_empty_as_none() {
+        assert_eq!(format_id_list(&[]), "None");
+    }
+
+    #[test]
+    fn format_id_list_sorts_dedups_and_prefixes() {
+        assert_eq!(format_id_list(&[3, 1, 1, 2]), "#1, #2, #3");
     }
 }

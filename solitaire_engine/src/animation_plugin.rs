@@ -12,6 +12,7 @@ use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
 use crate::progress_plugin::LevelUpEvent;
+use crate::time_attack_plugin::TimeAttackEndedEvent;
 use crate::weekly_goals_plugin::WeeklyGoalCompletedEvent;
 
 /// Duration of a card slide (move) animation in seconds.
@@ -22,6 +23,7 @@ const ACHIEVEMENT_TOAST_SECS: f32 = 3.0;
 const LEVELUP_TOAST_SECS: f32 = 3.0;
 const DAILY_TOAST_SECS: f32 = 3.0;
 const WEEKLY_TOAST_SECS: f32 = 3.0;
+const TIME_ATTACK_TOAST_SECS: f32 = 5.0;
 const CASCADE_STAGGER: f32 = 0.05;
 const CASCADE_DURATION: f32 = 0.5;
 
@@ -59,6 +61,7 @@ impl Plugin for AnimationPlugin {
             .add_event::<LevelUpEvent>()
             .add_event::<DailyChallengeCompletedEvent>()
             .add_event::<WeeklyGoalCompletedEvent>()
+            .add_event::<TimeAttackEndedEvent>()
             .add_systems(
                 Update,
                 (
@@ -68,6 +71,7 @@ impl Plugin for AnimationPlugin {
                     handle_levelup_toast,
                     handle_daily_toast,
                     handle_weekly_toast,
+                    handle_time_attack_toast,
                     tick_toasts,
                 )
                     .after(GameMutation),
@@ -177,6 +181,19 @@ fn handle_weekly_toast(
             &mut commands,
             format!("Weekly Goal: {}", ev.description),
             WEEKLY_TOAST_SECS,
+        );
+    }
+}
+
+fn handle_time_attack_toast(
+    mut commands: Commands,
+    mut events: EventReader<TimeAttackEndedEvent>,
+) {
+    for ev in events.read() {
+        spawn_toast(
+            &mut commands,
+            format!("Time Attack: {} win{}", ev.wins, if ev.wins == 1 { "" } else { "s" }),
+            TIME_ATTACK_TOAST_SECS,
         );
     }
 }

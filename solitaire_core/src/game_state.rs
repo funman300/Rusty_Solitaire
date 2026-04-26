@@ -22,12 +22,16 @@ pub enum DrawMode {
 /// - `Zen`: scoring suppressed (stays at 0); undo allowed; intended for relaxed play.
 /// - `Challenge`: standard scoring, **undo disabled** (returns
 ///   `MoveError::RuleViolation`).
+/// - `TimeAttack`: standard scoring + undo; the engine wraps a 10-minute
+///   countdown around the session and auto-deals a fresh game on every win
+///   (see `solitaire_engine::TimeAttackPlugin`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameMode {
     #[default]
     Classic,
     Zen,
     Challenge,
+    TimeAttack,
 }
 
 /// Snapshot of game state used for undo.

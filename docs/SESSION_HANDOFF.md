@@ -1,8 +1,8 @@
 # Solitaire Quest — Session Handoff
 
-> Last updated: 2026-04-24
+> Last updated: 2026-04-25
 > Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
-> Test count: **214 passing** (83 core + 54 data + 77 engine), `cargo clippy --workspace -- -D warnings` clean
+> Test count: **222 passing** (83 core + 54 data + 85 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
 
@@ -140,19 +140,27 @@ All sub-phases (3A–3F) done. Plugins: `GamePlugin`, `TablePlugin`, `CardPlugin
 - `ChallengePlugin` advances the cursor on Challenge-mode wins, persists, fires `ChallengeAdvancedEvent`. **X** key starts a Challenge-mode game with the current seed.
 - Both **Z** (Zen) and **X** (Challenge) are gated to `level >= CHALLENGE_UNLOCK_LEVEL` (5).
 
+### Phase 6 (part 4c) — Time Attack + Unlock UI ✅ COMPLETE
+
+- `GameMode::TimeAttack` variant added to core (no scoring/undo changes — just a session marker).
+- `TimeAttackPlugin` (engine) — `TimeAttackResource { active, remaining_secs, wins }` (session-only, not persisted), `TimeAttackEndedEvent { wins }`. **T** starts a session (gated to level ≥ 5) and deals a TimeAttack-mode game; the timer (`TIME_ATTACK_DURATION_SECS = 600.0`) decrements each frame; wins during the active session bump the counter and auto-deal a fresh game.
+- `AnimationPlugin` surfaces `TimeAttackEndedEvent` as a 5-second summary toast.
+- `StatsPlugin` overlay (**S**) appends an "Unlocks" subsection (card backs / backgrounds, sorted/deduped, "None" when empty) and a live "Time Attack" panel showing remaining minutes/seconds + wins while a session is active.
+- Helper `format_id_list` factored out + tested.
+
 ## What Is Next
 
-### Phase 6 (part 4c) — Time Attack + Unlock UI
+### Phase 7 — Audio + Polish
 
-- **Time Attack mode**: 10-minute countdown, auto-deal a fresh game on win, score = total wins; on timer expiry show summary. Likely needs a `TimeAttackResource { remaining: f32, wins: u32 }` and a system that decrements `remaining` and ends the session.
-- **Card-back / background unlock UI** for `unlocked_card_backs` / `unlocked_backgrounds`. Achievement rewards already populate these vecs via the persisted `AchievementRecord.reward_granted` flag — UI just needs to surface what's available.
+- Audio (`kira`): card deal/flip/place/invalid SFX, win fanfare, ambient loop. Volume sliders in a Settings overlay.
+- Onboarding: first-run hint overlay (rules summary + key list).
+- Pause menu (Esc currently logs a placeholder).
 - Optional: ChallengeAdvancedEvent → toast in `AnimationPlugin`.
 
-### Phases 7–8 (in order after Phase 6 part 4c)
+### Phase 8 — Sync
 
 | Phase | Scope |
 |---|---|
-| Phase 7 | Audio (`kira`), polish, hints, onboarding, pause menu |
 | Phase 8A–C | Local storage + `SyncProvider` + self-hosted Axum server + client |
 | Phase 8D | GPGS stub fully wired into settings UI |
 

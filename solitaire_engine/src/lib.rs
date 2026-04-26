@@ -13,6 +13,7 @@ pub mod progress_plugin;
 pub mod resources;
 pub mod stats_plugin;
 pub mod table_plugin;
+pub mod time_attack_plugin;
 pub mod weekly_goals_plugin;
 
 pub use achievement_plugin::{AchievementPlugin, AchievementsResource};
@@ -36,3 +37,6 @@ pub use layout::{compute_layout, Layout, LayoutResource};
 pub use resources::{DragState, GameStateResource, SyncStatus, SyncStatusResource};
 pub use stats_plugin::{StatsPlugin, StatsResource, StatsScreen, StatsUpdate};
 pub use table_plugin::{PileMarker, TableBackground, TablePlugin};
+pub use time_attack_plugin::{
+    TimeAttackEndedEvent, TimeAttackPlugin, TimeAttackResource, TIME_ATTACK_DURATION_SECS,
+};
