@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::color::Color;
 use bevy::prelude::*;
 use solitaire_core::card::{Card, Rank, Suit};
-use solitaire_core::game_state::GameState;
+use solitaire_core::game_state::{DrawMode, GameState};
 use solitaire_core::pile::PileType;
 
 use crate::animation_plugin::{CardAnim, EffectiveSlideDuration};
@@ -199,15 +199,36 @@ fn card_positions(game: &GameState, layout: &Layout) -> Vec<(Card, Vec2, f32)> {
             continue;
         };
         let is_tableau = matches!(pile_type, PileType::Tableau(_));
+        let is_waste = matches!(pile_type, PileType::Waste);
 
         // Tableau uses a two-speed fan: face-down cards are packed tighter
         // than face-up cards so the visible (playable) portion stands out.
         // Non-tableau piles stack with a negligible offset.
+        //
+        // Waste pile: only the top N cards are rendered to prevent bleed-through
+        // while new cards animate in from the stock. Draw-One shows 1; Draw-Three
+        // shows up to 3 fanned in X (matching the standard Klondike presentation).
         let cards = &pile.cards;
+        let render_start = if is_waste {
+            let visible = match game.draw_mode {
+                DrawMode::DrawOne => 1_usize,
+                DrawMode::DrawThree => 3_usize,
+            };
+            cards.len().saturating_sub(visible)
+        } else {
+            0
+        };
+
         let mut y_offset = 0.0_f32;
-        for (i, card) in cards.iter().enumerate() {
-            let pos = Vec2::new(base.x, base.y + y_offset);
-            let z = 1.0 + (i as f32) * STACK_FAN_FRAC;
+        for (slot, card) in cards[render_start..].iter().enumerate() {
+            let x_offset = if is_waste && matches!(game.draw_mode, DrawMode::DrawThree) {
+                // Fan left→right; top card (last slot) is rightmost and playable.
+                slot as f32 * layout.card_size.x * 0.28
+            } else {
+                0.0
+            };
+            let pos = Vec2::new(base.x + x_offset, base.y + y_offset);
+            let z = 1.0 + (slot as f32) * STACK_FAN_FRAC;
             out.push((card.clone(), pos, z));
             if is_tableau {
                 let step = if card.face_up {
@@ -483,12 +504,78 @@ mod tests {
     }
 
     #[test]
-    fn card_positions_includes_all_52_cards() {
+    fn card_positions_includes_all_52_cards_at_game_start() {
+        // At game start waste is empty, so all 52 cards are across stock + tableau.
         let g = GameState::new(42, solitaire_core::game_state::DrawMode::DrawOne);
         let layout =
             crate::layout::compute_layout(Vec2::new(1280.0, 800.0));
         let positions = card_positions(&g, &layout);
         assert_eq!(positions.len(), 52);
+    }
+
+    #[test]
+    fn waste_draw_one_only_renders_top_card() {
+        use solitaire_core::game_state::DrawMode;
+        let mut g = GameState::new(42, DrawMode::DrawOne);
+        // Draw 3 cards so the waste pile has 3 cards.
+        for _ in 0..3 {
+            let _ = g.draw();
+        }
+        let waste_ids: std::collections::HashSet<u32> = g.piles[&PileType::Waste]
+            .cards
+            .iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(waste_ids.len(), 3);
+
+        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0));
+        let positions = card_positions(&g, &layout);
+
+        // Filter rendered positions to only waste cards (by card ID).
+        let waste_rendered: Vec<_> = positions
+            .iter()
+            .filter(|(card, _, _)| waste_ids.contains(&card.id))
+            .collect();
+        // Draw-One: only 1 waste card should be rendered regardless of pile depth.
+        assert_eq!(waste_rendered.len(), 1);
+        // The single rendered card must be the top (last) waste card.
+        let top_id = g.piles[&PileType::Waste].cards.last().unwrap().id;
+        assert_eq!(waste_rendered[0].0.id, top_id);
+    }
+
+    #[test]
+    fn waste_draw_three_renders_up_to_three_fanned_cards() {
+        use solitaire_core::game_state::DrawMode;
+        let mut g = GameState::new(42, DrawMode::DrawThree);
+        // 5 draw() calls in Draw-Three mode accumulates multiple waste cards.
+        for _ in 0..5 {
+            let _ = g.draw();
+        }
+        let waste_pile = &g.piles[&PileType::Waste].cards;
+        assert!(waste_pile.len() >= 3, "need at least 3 waste cards for this test");
+
+        let waste_ids: std::collections::HashSet<u32> =
+            waste_pile.iter().map(|c| c.id).collect();
+
+        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0));
+        let positions = card_positions(&g, &layout);
+
+        let mut waste_rendered: Vec<_> = positions
+            .iter()
+            .filter(|(card, _, _)| waste_ids.contains(&card.id))
+            .collect();
+        // Draw-Three: at most 3 waste cards rendered.
+        assert_eq!(waste_rendered.len(), 3);
+
+        // The three fanned cards must have strictly increasing X coordinates
+        // (left = oldest visible, right = top/playable).
+        waste_rendered.sort_by(|a, b| a.1.x.partial_cmp(&b.1.x).unwrap());
+        for w in waste_rendered.windows(2) {
+            assert!(w[1].1.x > w[0].1.x, "fanned waste cards must have distinct X positions");
+        }
+        // Top card (rightmost) must be the last card in the waste pile.
+        let top_id = waste_pile.last().unwrap().id;
+        assert_eq!(waste_rendered.last().unwrap().0.id, top_id);
     }
 
     #[test]
