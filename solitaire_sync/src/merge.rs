@@ -362,6 +362,80 @@ mod tests {
     }
 
     #[test]
+    fn stats_games_lost_takes_max() {
+        let mut local = default_payload();
+        local.stats.games_lost = 12;
+        let mut remote = default_payload();
+        remote.stats.games_lost = 8;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.games_lost, 12);
+    }
+
+    #[test]
+    fn stats_win_streak_best_takes_max() {
+        let mut local = default_payload();
+        local.stats.win_streak_best = 5;
+        let mut remote = default_payload();
+        remote.stats.win_streak_best = 10;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.win_streak_best, 10);
+    }
+
+    #[test]
+    fn stats_lifetime_score_takes_max() {
+        let mut local = default_payload();
+        local.stats.lifetime_score = 30_000;
+        let mut remote = default_payload();
+        remote.stats.lifetime_score = 45_000;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.lifetime_score, 45_000);
+    }
+
+    #[test]
+    fn stats_draw_mode_wins_take_max() {
+        let mut local = default_payload();
+        local.stats.draw_one_wins = 20;
+        local.stats.draw_three_wins = 5;
+        let mut remote = default_payload();
+        remote.stats.draw_one_wins = 15;
+        remote.stats.draw_three_wins = 8;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.draw_one_wins, 20);
+        assert_eq!(merged.stats.draw_three_wins, 8);
+    }
+
+    #[test]
+    fn stats_avg_time_recomputed_from_merged_totals() {
+        // local: 4 wins averaging 100s each (total = 400s)
+        // remote: 6 wins averaging 200s each (total = 1200s)
+        // merged_games_won = max(4, 6) = 6
+        // best_total = max(400, 1200) = 1200
+        // avg = 1200 / 6 = 200
+        let mut local = default_payload();
+        local.stats.games_won = 4;
+        local.stats.avg_time_seconds = 100;
+        let mut remote = default_payload();
+        remote.stats.games_won = 6;
+        remote.stats.avg_time_seconds = 200;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.games_won, 6);
+        assert_eq!(merged.stats.avg_time_seconds, 200);
+    }
+
+    #[test]
+    fn stats_avg_time_zero_when_no_wins() {
+        let local = default_payload();
+        let remote = default_payload();
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.avg_time_seconds, 0);
+    }
+
+    #[test]
     fn differing_win_streak_current_generates_conflict() {
         let mut local = default_payload();
         local.stats.win_streak_current = 3;
