@@ -80,6 +80,7 @@ fn evaluate_weekly_goals(
         let ctx = WeeklyGoalContext {
             time_seconds: ev.time_seconds,
             used_undo: game.0.undo_count > 0,
+            draw_mode: game.0.draw_mode.clone(),
         };
         for def in WEEKLY_GOALS {
             if !def.matches(&ctx) {
@@ -191,11 +192,16 @@ mod tests {
     fn completing_a_goal_fires_event_and_awards_bonus() {
         let mut app = headless_app();
         // Pre-set the weekly_3_fast goal to 2/3 so the next fast win completes it.
-        app.world_mut()
-            .resource_mut::<ProgressResource>()
-            .0
-            .weekly_goal_progress
-            .insert("weekly_3_fast".to_string(), 2);
+        // Also pre-complete weekly_1_under_five (target=1) and weekly_5_wins /
+        // weekly_3_no_undo at target so a 60-second win only completes weekly_3_fast,
+        // keeping the XP delta predictable.
+        {
+            let mut p = app.world_mut().resource_mut::<ProgressResource>();
+            p.0.weekly_goal_progress.insert("weekly_3_fast".to_string(), 2);
+            p.0.weekly_goal_progress.insert("weekly_1_under_five".to_string(), 1);
+            p.0.weekly_goal_progress.insert("weekly_5_wins".to_string(), 5);
+            p.0.weekly_goal_progress.insert("weekly_3_no_undo".to_string(), 3);
+        }
         // Match the current ISO week key so roll_weekly_goals doesn't clear it.
         let key = current_iso_week_key(Local::now().date_naive());
         app.world_mut()

@@ -4,6 +4,7 @@
 //! increments matching counters in `PlayerProgress::weekly_goal_progress`.
 
 use chrono::{Datelike, NaiveDate};
+use solitaire_core::game_state::DrawMode;
 
 /// XP awarded each time a weekly goal is just completed.
 pub const WEEKLY_GOAL_XP: u64 = 75;
@@ -17,6 +18,8 @@ pub enum WeeklyGoalKind {
     WinWithoutUndo,
     /// A win in strictly fewer than `seconds` seconds counts.
     WinUnder { seconds: u64 },
+    /// A win in Draw-3 mode counts.
+    WinDrawThree,
 }
 
 /// Static metadata for a single weekly goal.
@@ -29,10 +32,11 @@ pub struct WeeklyGoalDef {
 }
 
 /// Per-event facts a goal needs to decide whether it matched.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WeeklyGoalContext {
     pub time_seconds: u64,
     pub used_undo: bool,
+    pub draw_mode: DrawMode,
 }
 
 impl WeeklyGoalDef {
@@ -43,6 +47,7 @@ impl WeeklyGoalDef {
             WeeklyGoalKind::WinGame => true,
             WeeklyGoalKind::WinWithoutUndo => !ctx.used_undo,
             WeeklyGoalKind::WinUnder { seconds } => ctx.time_seconds < seconds,
+            WeeklyGoalKind::WinDrawThree => ctx.draw_mode == DrawMode::DrawThree,
         }
     }
 }
@@ -67,6 +72,18 @@ pub const WEEKLY_GOALS: &[WeeklyGoalDef] = &[
         target: 3,
         kind: WeeklyGoalKind::WinUnder { seconds: 180 },
     },
+    WeeklyGoalDef {
+        id: "weekly_1_under_five",
+        description: "Win 1 game in under 5 minutes this week",
+        target: 1,
+        kind: WeeklyGoalKind::WinUnder { seconds: 300 },
+    },
+    WeeklyGoalDef {
+        id: "weekly_draw_three",
+        description: "Win 1 Draw-3 game this week",
+        target: 1,
+        kind: WeeklyGoalKind::WinDrawThree,
+    },
 ];
 
 /// Stable identifier for the ISO week containing `date`, e.g. `"2026-W17"`.
@@ -89,6 +106,15 @@ mod tests {
         WeeklyGoalContext {
             time_seconds: time,
             used_undo: undo,
+            draw_mode: DrawMode::DrawOne,
+        }
+    }
+
+    fn ctx_d3(time: u64) -> WeeklyGoalContext {
+        WeeklyGoalContext {
+            time_seconds: time,
+            used_undo: false,
+            draw_mode: DrawMode::DrawThree,
         }
     }
 
@@ -144,5 +170,21 @@ mod tests {
         let key = current_iso_week_key(d);
         assert!(key.starts_with("2026-W"));
         assert_eq!(key.len(), 8);
+    }
+
+    #[test]
+    fn under_five_matches_wins_below_300_seconds() {
+        let g = weekly_goal_by_id("weekly_1_under_five").unwrap();
+        assert!(g.matches(&ctx(0, false)));
+        assert!(g.matches(&ctx(299, true)));
+        assert!(!g.matches(&ctx(300, false)));
+        assert!(!g.matches(&ctx(999, false)));
+    }
+
+    #[test]
+    fn draw_three_goal_matches_only_draw_three_wins() {
+        let g = weekly_goal_by_id("weekly_draw_three").unwrap();
+        assert!(g.matches(&ctx_d3(600)));
+        assert!(!g.matches(&ctx(600, false)));
     }
 }
