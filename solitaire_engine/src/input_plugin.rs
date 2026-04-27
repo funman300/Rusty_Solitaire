@@ -4,8 +4,7 @@
 //! - `U` → `UndoRequestEvent`
 //! - `N` → `NewGameRequestEvent { seed: None }`
 //! - `D` → `DrawRequestEvent`
-//! - `Esc` → logged as a pause placeholder (no event yet; wired up when the
-//!   pause screen lands in a later phase)
+//! - `Esc` → handled by `PausePlugin` (overlay toggle + paused flag)
 //!
 //! Mouse:
 //! - Left-click on the stock pile (face-down top) → `DrawRequestEvent`

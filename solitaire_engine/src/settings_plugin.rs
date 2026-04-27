@@ -15,6 +15,7 @@ use bevy::prelude::*;
 use solitaire_core::game_state::DrawMode;
 use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, Settings};
 
+use crate::events::ManualSyncRequestEvent;
 use crate::resources::{SyncStatus, SyncStatusResource};
 
 /// Volume adjustment step applied by the `[` / `]` hotkeys.
@@ -69,6 +70,7 @@ enum SettingsButton {
     MusicUp,
     ToggleDrawMode,
     ToggleTheme,
+    SyncNow,
     Done,
 }
 
@@ -110,6 +112,7 @@ impl Plugin for SettingsPlugin {
             .insert_resource(SettingsStoragePath(self.storage_path.clone()))
             .init_resource::<SettingsScreen>()
             .add_event::<SettingsChangedEvent>()
+            .add_event::<ManualSyncRequestEvent>()
             .add_systems(Update, (handle_volume_keys, toggle_settings_screen));
 
         if self.ui_enabled {
@@ -245,6 +248,7 @@ fn handle_settings_buttons(
     mut screen: ResMut<SettingsScreen>,
     path: Res<SettingsStoragePath>,
     mut changed: EventWriter<SettingsChangedEvent>,
+    mut manual_sync: EventWriter<ManualSyncRequestEvent>,
     mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
     mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
     mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>)>,
@@ -321,6 +325,9 @@ fn handle_settings_buttons(
                 if let Ok(mut t) = theme_text.get_single_mut() {
                     **t = theme_label(&settings.0.theme);
                 }
+            }
+            SettingsButton::SyncNow => {
+                manual_sync.send(ManualSyncRequestEvent);
             }
             SettingsButton::Done => {
                 screen.0 = false;
@@ -453,12 +460,40 @@ fn spawn_settings_panel(commands: &mut Commands, settings: &Settings, sync_statu
 
                 // --- Sync section ---
                 section_label(card, "Sync");
-                card.spawn((
-                    SyncStatusText,
-                    Text::new(sync_status.to_string()),
-                    TextFont { font_size: 16.0, ..default() },
-                    TextColor(Color::srgb(0.65, 0.65, 0.70)),
-                ));
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        SyncStatusText,
+                        Text::new(sync_status.to_string()),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.65, 0.65, 0.70)),
+                    ));
+                    // "Sync Now" button — hidden when SyncPlugin is not installed;
+                    // visible because ManualSyncRequestEvent is always registered.
+                    row.spawn((
+                        SettingsButton::SyncNow,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.20, 0.30, 0.45)),
+                        BorderRadius::all(Val::Px(4.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("Sync Now"),
+                            TextFont { font_size: 14.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
 
                 // Done button
                 card.spawn((

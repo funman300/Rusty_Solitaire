@@ -25,6 +25,7 @@ use solitaire_data::{
 use solitaire_sync::{merge, SyncPayload};
 
 use crate::achievement_plugin::{AchievementsResource, AchievementsStoragePath};
+use crate::events::ManualSyncRequestEvent;
 use crate::progress_plugin::{ProgressResource, ProgressStoragePath};
 use crate::resources::{SyncStatus, SyncStatusResource};
 use crate::stats_plugin::{StatsResource, StatsStoragePath};
@@ -92,8 +93,9 @@ impl Plugin for SyncPlugin {
             .init_resource::<SyncStatusResource>()
             .init_resource::<PullTaskResult>()
             .init_resource::<PullTask>()
+            .add_event::<ManualSyncRequestEvent>()
             .add_systems(Startup, start_pull)
-            .add_systems(Update, poll_pull_result)
+            .add_systems(Update, (poll_pull_result, handle_manual_sync_request))
             .add_systems(Last, push_on_exit);
     }
 }
@@ -108,6 +110,29 @@ fn start_pull(
     mut task_res: ResMut<PullTask>,
     mut status: ResMut<SyncStatusResource>,
 ) {
+    let provider = provider.0.clone();
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        provider.pull().await.map_err(|e| e.to_string())
+    });
+    task_res.0 = Some(task);
+    status.0 = SyncStatus::Syncing;
+}
+
+/// Update system: starts a new pull task when `ManualSyncRequestEvent` is
+/// received, but only if no pull is already in flight.
+fn handle_manual_sync_request(
+    mut events: EventReader<ManualSyncRequestEvent>,
+    provider: Res<SyncProviderResource>,
+    mut task_res: ResMut<PullTask>,
+    mut status: ResMut<SyncStatusResource>,
+) {
+    if events.is_empty() {
+        return;
+    }
+    events.clear();
+    if task_res.0.is_some() {
+        return; // Already pulling — ignore.
+    }
     let provider = provider.0.clone();
     let task = AsyncComputeTaskPool::get().spawn(async move {
         provider.pull().await.map_err(|e| e.to_string())

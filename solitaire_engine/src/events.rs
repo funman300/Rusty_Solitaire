@@ -61,3 +61,10 @@ pub struct CardFlippedEvent(pub u32);
 /// persistence/UI systems that need unlock metadata.
 #[derive(Event, Debug, Clone)]
 pub struct AchievementUnlockedEvent(pub AchievementRecord);
+
+/// Request to manually trigger a sync pull from the active backend.
+///
+/// Fired by the Settings panel "Sync Now" button. `SyncPlugin` responds by
+/// starting a new pull task if one is not already in flight.
+#[derive(Event, Debug, Clone, Copy, Default)]
+pub struct ManualSyncRequestEvent;

@@ -35,8 +35,8 @@ pub use animation_plugin::{AnimationPlugin, CardAnim};
 pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
 pub use card_plugin::{CardEntity, CardLabel, CardPlugin};
 pub use events::{
-    AchievementUnlockedEvent, CardFlippedEvent, DrawRequestEvent, GameWonEvent, MoveRejectedEvent,
-    MoveRequestEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
+    AchievementUnlockedEvent, CardFlippedEvent, DrawRequestEvent, GameWonEvent, ManualSyncRequestEvent,
+    MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
 };
 pub use game_plugin::{GameMutation, GamePlugin};
 pub use help_plugin::{HelpPlugin, HelpScreen};
