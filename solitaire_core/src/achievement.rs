@@ -109,13 +109,12 @@ fn draw_three_master(c: &AchievementContext) -> bool {
     c.draw_three_wins >= 10
 }
 fn night_owl(c: &AchievementContext) -> bool {
-    // "Play after midnight" — 00:00 through 05:59 local time.
-    matches!(c.wall_clock_hour, Some(h) if h < 6)
+    // Late-night session: 22:00–02:59 local time.
+    matches!(c.wall_clock_hour, Some(h) if !(3..22).contains(&h))
 }
 fn early_bird(c: &AchievementContext) -> bool {
-    // "Play before 6am" — same window as night_owl; both unlock together
-    // when someone wins in the small hours. Retained for progression variety.
-    matches!(c.wall_clock_hour, Some(h) if h < 6)
+    // Early-morning session: 05:00–06:59 local time.
+    matches!(c.wall_clock_hour, Some(h) if (5..7).contains(&h))
 }
 fn speed_and_skill(c: &AchievementContext) -> bool {
     c.last_win_time_seconds < 90 && !c.last_win_used_undo
@@ -227,7 +226,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
     AchievementDef {
         id: "night_owl",
         name: "Night Owl",
-        description: "Win a game after midnight",
+        description: "Win a game between 10pm and 3am",
         secret: false,
         reward: None,
         condition: night_owl,
@@ -235,7 +234,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
     AchievementDef {
         id: "early_bird",
         name: "Early Bird",
-        description: "Win a game before 6am",
+        description: "Win a game between 5am and 7am",
         secret: false,
         reward: None,
         condition: early_bird,
@@ -383,16 +382,39 @@ mod tests {
     }
 
     #[test]
-    fn night_owl_requires_early_hours() {
+    fn night_owl_triggers_in_late_night_window() {
         let mut c = ctx();
         c.games_won = 1;
-        c.wall_clock_hour = Some(2);
-        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
-        assert!(ids.contains(&"night_owl"));
+        // Late night: 22:00–02:59
+        for hour in [22u32, 23, 0, 1, 2] {
+            c.wall_clock_hour = Some(hour);
+            let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+            assert!(ids.contains(&"night_owl"), "expected night_owl at hour {hour}");
+        }
+        // Daytime hours must not trigger.
+        for hour in [3u32, 7, 12, 20, 21] {
+            c.wall_clock_hour = Some(hour);
+            let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+            assert!(!ids.contains(&"night_owl"), "unexpected night_owl at hour {hour}");
+        }
+    }
 
-        c.wall_clock_hour = Some(12);
-        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
-        assert!(!ids.contains(&"night_owl"));
+    #[test]
+    fn early_bird_triggers_in_morning_window() {
+        let mut c = ctx();
+        c.games_won = 1;
+        // Early morning: 05:00–06:59
+        for hour in [5u32, 6] {
+            c.wall_clock_hour = Some(hour);
+            let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+            assert!(ids.contains(&"early_bird"), "expected early_bird at hour {hour}");
+        }
+        // Outside the window must not trigger.
+        for hour in [0u32, 3, 4, 7, 12, 23] {
+            c.wall_clock_hour = Some(hour);
+            let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+            assert!(!ids.contains(&"early_bird"), "unexpected early_bird at hour {hour}");
+        }
     }
 
     #[test]
