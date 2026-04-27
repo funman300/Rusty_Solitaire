@@ -93,11 +93,13 @@ enum SettingsButton {
     ToggleDrawMode,
     CycleAnimSpeed,
     ToggleTheme,
-    CycleCardBack,
-    CycleBackground,
     ToggleColorBlind,
     SyncNow,
     Done,
+    /// Select a specific card-back by index from the picker row.
+    SelectCardBack(usize),
+    /// Select a specific background by index from the picker row.
+    SelectBackground(usize),
 }
 
 /// Plugin that owns the settings lifecycle.
@@ -252,6 +254,7 @@ fn sync_settings_panel_visibility(
 
 /// Returns the next unlocked index after `current` in the sorted `unlocked` list.
 /// Wraps around. Falls back to `unlocked[0]` if `current` is not found.
+#[cfg(test)]
 fn cycle_unlocked(unlocked: &[usize], current: usize) -> usize {
     if unlocked.is_empty() {
         return 0;
@@ -369,7 +372,6 @@ fn handle_settings_buttons(
     path: Res<SettingsStoragePath>,
     mut changed: EventWriter<SettingsChangedEvent>,
     mut manual_sync: EventWriter<ManualSyncRequestEvent>,
-    progress: Option<Res<ProgressResource>>,
     mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
     mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
     mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
@@ -461,26 +463,6 @@ fn handle_settings_buttons(
                     **t = theme_label(&settings.0.theme);
                 }
             }
-            SettingsButton::CycleCardBack => {
-                let unlocked = progress
-                    .as_ref()
-                    .map(|p| p.0.unlocked_card_backs.clone())
-                    .unwrap_or_else(|| vec![0]);
-                settings.0.selected_card_back =
-                    cycle_unlocked(&unlocked, settings.0.selected_card_back);
-                persist(&path, &settings.0);
-                changed.send(SettingsChangedEvent(settings.0.clone()));
-            }
-            SettingsButton::CycleBackground => {
-                let unlocked = progress
-                    .as_ref()
-                    .map(|p| p.0.unlocked_backgrounds.clone())
-                    .unwrap_or_else(|| vec![0]);
-                settings.0.selected_background =
-                    cycle_unlocked(&unlocked, settings.0.selected_background);
-                persist(&path, &settings.0);
-                changed.send(SettingsChangedEvent(settings.0.clone()));
-            }
             SettingsButton::ToggleColorBlind => {
                 settings.0.color_blind_mode = !settings.0.color_blind_mode;
                 persist(&path, &settings.0);
@@ -488,6 +470,16 @@ fn handle_settings_buttons(
                 if let Ok(mut t) = color_blind_text.get_single_mut() {
                     **t = color_blind_label(settings.0.color_blind_mode);
                 }
+            }
+            SettingsButton::SelectCardBack(idx) => {
+                settings.0.selected_card_back = *idx;
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
+            }
+            SettingsButton::SelectBackground(idx) => {
+                settings.0.selected_background = *idx;
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
             }
             SettingsButton::SyncNow => {
                 manual_sync.send(ManualSyncRequestEvent);
@@ -717,53 +709,97 @@ fn spawn_settings_panel(
                     icon_button(row, "⇄", SettingsButton::ToggleColorBlind);
                 });
 
-                // Card back row — only shown when the player has unlocked more than one.
-                if unlocked_card_backs.len() > 1 {
-                    card.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(8.0),
-                        ..default()
-                    })
-                    .with_children(|row| {
+                // --- Card Back section ---
+                section_label(card, "Card Back");
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    flex_wrap: FlexWrap::Wrap,
+                    ..default()
+                })
+                .with_children(|row| {
+                    // Always show at least button "1" (index 0 = default).
+                    let backs = if unlocked_card_backs.is_empty() {
+                        &[0usize][..]
+                    } else {
+                        unlocked_card_backs
+                    };
+                    for &back_idx in backs {
+                        let is_selected = back_idx == settings.selected_card_back;
+                        let bg_color = if is_selected {
+                            Color::srgb(0.2, 0.9, 0.3)
+                        } else {
+                            Color::srgb(0.25, 0.25, 0.30)
+                        };
                         row.spawn((
-                            Text::new("Card Back"),
-                            TextFont { font_size: 18.0, ..default() },
-                            TextColor(Color::srgb(0.85, 0.85, 0.80)),
-                        ));
-                        row.spawn((
-                            CardBackText,
-                            Text::new(card_back_label(settings.selected_card_back)),
-                            TextFont { font_size: 18.0, ..default() },
-                            TextColor(Color::WHITE),
-                        ));
-                        icon_button(row, "⇄", SettingsButton::CycleCardBack);
-                    });
-                }
+                            SettingsButton::SelectCardBack(back_idx),
+                            Button,
+                            Node {
+                                width: Val::Px(40.0),
+                                height: Val::Px(40.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(bg_color),
+                            BorderRadius::all(Val::Px(4.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new(format!("{}", back_idx + 1)),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    }
+                });
 
-                // Background row — only shown when the player has unlocked more than one.
-                if unlocked_backgrounds.len() > 1 {
-                    card.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(8.0),
-                        ..default()
-                    })
-                    .with_children(|row| {
+                // --- Background section ---
+                section_label(card, "Background");
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    flex_wrap: FlexWrap::Wrap,
+                    ..default()
+                })
+                .with_children(|row| {
+                    // Always show at least button "1" (index 0 = default).
+                    let bgs = if unlocked_backgrounds.is_empty() {
+                        &[0usize][..]
+                    } else {
+                        unlocked_backgrounds
+                    };
+                    for &bg_idx in bgs {
+                        let is_selected = bg_idx == settings.selected_background;
+                        let bg_color = if is_selected {
+                            Color::srgb(0.2, 0.9, 0.3)
+                        } else {
+                            Color::srgb(0.25, 0.25, 0.30)
+                        };
                         row.spawn((
-                            Text::new("Background"),
-                            TextFont { font_size: 18.0, ..default() },
-                            TextColor(Color::srgb(0.85, 0.85, 0.80)),
-                        ));
-                        row.spawn((
-                            BackgroundText,
-                            Text::new(background_label(settings.selected_background)),
-                            TextFont { font_size: 18.0, ..default() },
-                            TextColor(Color::WHITE),
-                        ));
-                        icon_button(row, "⇄", SettingsButton::CycleBackground);
-                    });
-                }
+                            SettingsButton::SelectBackground(bg_idx),
+                            Button,
+                            Node {
+                                width: Val::Px(40.0),
+                                height: Val::Px(40.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(bg_color),
+                            BorderRadius::all(Val::Px(4.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new(format!("{}", bg_idx + 1)),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    }
+                });
 
                 // --- Sync section ---
                 section_label(card, "Sync");

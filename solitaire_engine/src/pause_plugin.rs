@@ -11,11 +11,13 @@
 //! input-blocking on top if desired.
 
 use bevy::prelude::*;
+use solitaire_core::game_state::DrawMode;
 use solitaire_data::save_game_state_to;
 
 use crate::game_plugin::GameStatePath;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
+use crate::settings_plugin::{SettingsChangedEvent, SettingsResource, SettingsStoragePath};
 use crate::stats_plugin::StatsResource;
 
 /// Toggleable flag read by `tick_elapsed_time` and `advance_time_attack`.
@@ -26,12 +28,29 @@ pub struct PausedResource(pub bool);
 #[derive(Component, Debug)]
 pub struct PauseScreen;
 
+/// Marker on the draw-mode toggle button inside the pause overlay.
+#[derive(Component, Debug)]
+struct PauseDrawToggle;
+
+/// Returns the human-readable label for a draw mode.
+///
+/// Used on the pause overlay draw-mode toggle button.
+pub fn draw_mode_label(mode: DrawMode) -> &'static str {
+    match mode {
+        DrawMode::DrawOne => "Draw 1",
+        DrawMode::DrawThree => "Draw 3",
+    }
+}
+
 pub struct PausePlugin;
 
 impl Plugin for PausePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PausedResource>()
-            .add_systems(Update, toggle_pause);
+        // SettingsChangedEvent may already be registered by SettingsPlugin;
+        // add_event is idempotent so this is safe in either order.
+        app.add_event::<SettingsChangedEvent>()
+            .init_resource::<PausedResource>()
+            .add_systems(Update, (toggle_pause, handle_pause_draw_toggle));
     }
 }
 
@@ -45,6 +64,7 @@ fn toggle_pause(
     path: Option<Res<GameStatePath>>,
     progress: Option<Res<ProgressResource>>,
     stats: Option<Res<StatsResource>>,
+    settings: Option<Res<SettingsResource>>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
@@ -56,7 +76,8 @@ fn toggle_pause(
         // Snapshot current level and streak at pause time.
         let level = progress.as_deref().map(|p| p.0.level);
         let streak = stats.as_deref().map(|s| s.0.win_streak_current);
-        spawn_pause_screen(&mut commands, level, streak);
+        let draw_mode = settings.as_deref().map(|s| s.0.draw_mode.clone());
+        spawn_pause_screen(&mut commands, level, streak, draw_mode);
         paused.0 = true;
         // Persist the current game state whenever the player opens the pause
         // overlay so an OS-level kill still leaves a resumable save.
@@ -70,12 +91,54 @@ fn toggle_pause(
     }
 }
 
+/// Handles the draw-mode toggle button on the pause overlay.
+///
+/// Toggling flips the draw mode in `SettingsResource`, persists settings, and
+/// fires `SettingsChangedEvent`. The change takes effect on the next new game.
+fn handle_pause_draw_toggle(
+    interaction_query: Query<&Interaction, (Changed<Interaction>, With<PauseDrawToggle>)>,
+    paused: Res<PausedResource>,
+    settings: Option<ResMut<SettingsResource>>,
+    path: Option<Res<SettingsStoragePath>>,
+    mut changed: EventWriter<SettingsChangedEvent>,
+) {
+    if !paused.0 {
+        return;
+    }
+    let Some(mut settings) = settings else { return };
+    for interaction in &interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        settings.0.draw_mode = match settings.0.draw_mode {
+            DrawMode::DrawOne => DrawMode::DrawThree,
+            DrawMode::DrawThree => DrawMode::DrawOne,
+        };
+        if let Some(p) = &path {
+            if let Some(target) = &p.0 {
+                if let Err(e) = solitaire_data::save_settings_to(target, &settings.0) {
+                    warn!("failed to save settings after draw-mode toggle: {e}");
+                }
+            }
+        }
+        changed.send(SettingsChangedEvent(settings.0.clone()));
+    }
+}
+
 /// Spawns the full-screen pause overlay.
 ///
 /// `level` and `streak` are optional snapshots taken at pause time. When
 /// `ProgressResource` or `StatsResource` is not installed (e.g. in headless
 /// tests), those lines are omitted from the overlay.
-fn spawn_pause_screen(commands: &mut Commands, level: Option<u32>, streak: Option<u32>) {
+///
+/// `draw_mode` is the current draw mode shown on the toggle button. When
+/// `SettingsResource` is absent the draw-mode row is omitted.
+fn spawn_pause_screen(
+    commands: &mut Commands,
+    level: Option<u32>,
+    streak: Option<u32>,
+    draw_mode: Option<DrawMode>,
+) {
     commands
         .spawn((
             PauseScreen,
@@ -113,6 +176,46 @@ fn spawn_pause_screen(commands: &mut Commands, level: Option<u32>, streak: Optio
                         ..default()
                     },
                     TextColor(Color::srgb(0.75, 0.95, 0.75)),
+                ));
+            }
+            // Draw-mode toggle row — only shown when SettingsResource is present.
+            if let Some(mode) = draw_mode {
+                b.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(12.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("Draw Mode:"),
+                        TextFont { font_size: 20.0, ..default() },
+                        TextColor(Color::srgb(0.85, 0.85, 0.80)),
+                    ));
+                    row.spawn((
+                        PauseDrawToggle,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.20, 0.30, 0.45)),
+                        BorderRadius::all(Val::Px(4.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(draw_mode_label(mode)),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
+                b.spawn((
+                    Text::new("Takes effect next game"),
+                    TextFont { font_size: 14.0, ..default() },
+                    TextColor(Color::srgb(0.55, 0.55, 0.60)),
                 ));
             }
             b.spawn((
@@ -248,6 +351,7 @@ mod tests {
     #[test]
     fn pause_screen_spawns_with_level_and_streak_when_resources_present() {
         use crate::progress_plugin::{ProgressPlugin, ProgressResource};
+        use crate::settings_plugin::SettingsPlugin;
         use crate::stats_plugin::{StatsPlugin, StatsResource};
 
         let mut app = App::new();
@@ -256,6 +360,7 @@ mod tests {
             .add_plugins(crate::table_plugin::TablePlugin)
             .add_plugins(ProgressPlugin::headless())
             .add_plugins(StatsPlugin::headless())
+            .add_plugins(SettingsPlugin::headless())
             .add_plugins(PausePlugin);
         app.init_resource::<ButtonInput<KeyCode>>();
         app.update();
@@ -282,5 +387,96 @@ mod tests {
             texts.iter().any(|t| t == "Level 7   Win streak: 3"),
             "expected level/streak line in pause screen texts, got: {texts:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // draw_mode_label (pure function) — Task #64
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn draw_mode_label_draw_one() {
+        assert_eq!(draw_mode_label(DrawMode::DrawOne), "Draw 1");
+    }
+
+    #[test]
+    fn draw_mode_label_draw_three() {
+        assert_eq!(draw_mode_label(DrawMode::DrawThree), "Draw 3");
+    }
+
+    // -----------------------------------------------------------------------
+    // pause_draw_toggle_flips_draw_mode — Task #64
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pause_draw_toggle_flips_draw_mode() {
+        use crate::settings_plugin::{SettingsPlugin, SettingsResource};
+        use solitaire_data::Settings;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(SettingsPlugin::headless())
+            .add_plugins(PausePlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.update();
+
+        // Ensure we start with DrawOne.
+        app.world_mut()
+            .resource_mut::<SettingsResource>()
+            .0
+            .draw_mode = DrawMode::DrawOne;
+
+        // Set paused so handle_pause_draw_toggle acts.
+        app.world_mut().resource_mut::<PausedResource>().0 = true;
+
+        // Spawn a PauseDrawToggle button with Pressed interaction.
+        app.world_mut().spawn((
+            PauseDrawToggle,
+            Button,
+            Interaction::Pressed,
+        ));
+
+        app.update();
+
+        let mode = &app
+            .world()
+            .resource::<SettingsResource>()
+            .0
+            .draw_mode;
+        assert_eq!(
+            *mode,
+            DrawMode::DrawThree,
+            "draw mode must flip from DrawOne to DrawThree when toggle is pressed"
+        );
+
+        // A second press should flip back.
+        {
+            let mut interaction_query = app
+                .world_mut()
+                .query::<&mut Interaction>();
+            for mut i in interaction_query.iter_mut(app.world_mut()) {
+                *i = Interaction::Pressed;
+            }
+        }
+        app.update();
+
+        let mode2 = &app
+            .world()
+            .resource::<SettingsResource>()
+            .0
+            .draw_mode;
+        assert_eq!(
+            *mode2,
+            DrawMode::DrawOne,
+            "draw mode must flip back from DrawThree to DrawOne on second press"
+        );
+
+        // Verify a SettingsChangedEvent was fired.
+        let events = app.world().resource::<Events<SettingsChangedEvent>>();
+        let mut cursor = events.get_cursor();
+        let count = cursor.read(events).count();
+        assert!(count >= 1, "SettingsChangedEvent must be fired on toggle");
+
+        // Restore default settings state for hygiene.
+        let _ = Settings::default();
     }
 }

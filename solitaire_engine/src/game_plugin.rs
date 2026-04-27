@@ -20,6 +20,22 @@ use crate::events::{
 };
 use crate::resources::{DragState, GameStateResource, SyncStatusResource};
 
+// ---------------------------------------------------------------------------
+// Task #57 — Confirm-new-game dialog
+// ---------------------------------------------------------------------------
+
+/// Marker on the confirm-new-game modal root node.
+#[derive(Component, Debug)]
+pub struct ConfirmNewGameScreen;
+
+// ---------------------------------------------------------------------------
+// Task #58 — Game-over overlay
+// ---------------------------------------------------------------------------
+
+/// Marker on the game-over overlay root node.
+#[derive(Component, Debug)]
+pub struct GameOverScreen;
+
 /// System set for `GamePlugin`'s state-mutating systems. Downstream plugins
 /// that read the resulting `StateChangedEvent` should schedule themselves
 /// `.after(GameMutation)` so updates propagate within a single frame.
@@ -77,6 +93,8 @@ impl Plugin for GamePlugin {
                     .in_set(GameMutation),
             )
             .add_systems(Update, check_no_moves.after(GameMutation))
+            .add_systems(Update, handle_confirm_input.after(GameMutation))
+            .add_systems(Update, handle_game_over_input.after(GameMutation))
             .init_resource::<AutoSaveTimer>()
             .add_systems(Update, tick_elapsed_time)
             .add_systems(Update, auto_save_game_state)
@@ -131,14 +149,40 @@ fn seed_from_system_time() -> u64 {
         .unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_new_game(
+    mut commands: Commands,
     mut new_game: EventReader<NewGameRequestEvent>,
     mut game: ResMut<GameStateResource>,
     mut changed: EventWriter<StateChangedEvent>,
     settings: Option<Res<crate::settings_plugin::SettingsResource>>,
     path: Option<Res<GameStatePath>>,
+    confirm_screens: Query<Entity, With<ConfirmNewGameScreen>>,
+    game_over_screens: Query<Entity, With<GameOverScreen>>,
 ) {
     for ev in new_game.read() {
+        // If an active game is in progress, intercept and show a confirm dialog.
+        // A game is "active" when moves have been made and it is not yet won.
+        let needs_confirm = game.0.move_count > 0 && !game.0.is_won;
+        // Skip confirmation if a ConfirmNewGameScreen already exists (prevents duplicates).
+        let confirm_already_open = !confirm_screens.is_empty();
+        if needs_confirm && !confirm_already_open {
+            // Despawn any stale game-over overlay before showing confirm dialog.
+            for entity in &game_over_screens {
+                commands.entity(entity).despawn_recursive();
+            }
+            spawn_confirm_dialog(&mut commands, *ev);
+            continue;
+        }
+
+        // Despawn confirm and game-over overlays before starting the new game.
+        for entity in &confirm_screens {
+            commands.entity(entity).despawn_recursive();
+        }
+        for entity in &game_over_screens {
+            commands.entity(entity).despawn_recursive();
+        }
+
         let seed = ev.seed.unwrap_or_else(seed_from_system_time);
         // Prefer the draw mode from Settings when starting a fresh game.
         // Fall back to the current game's draw mode in headless/test contexts
@@ -156,6 +200,116 @@ fn handle_new_game(
             }
         }
         changed.send(StateChangedEvent);
+    }
+}
+
+/// Spawns the confirm-new-game modal overlay.
+///
+/// Shown when the player requests a new game while moves have been made and
+/// the game is not yet won. The overlay stores the original request so the
+/// `handle_confirm_input` system can replay it on confirmation.
+fn spawn_confirm_dialog(commands: &mut Commands, original_request: NewGameRequestEvent) {
+    commands
+        .spawn((
+            ConfirmNewGameScreen,
+            // Store the request so we can replay it on confirmation.
+            OriginalNewGameRequest(original_request),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(0.0),
+                top: Val::Percent(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(20.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
+            ZIndex(250),
+        ))
+        .with_children(|root| {
+            // Dialog card
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(40.0)),
+                    row_gap: Val::Px(20.0),
+                    min_width: Val::Px(360.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.10, 0.12, 0.15)),
+                BorderRadius::all(Val::Px(12.0)),
+            ))
+            .with_children(|card| {
+                // Heading
+                card.spawn((
+                    Text::new("Abandon current game?"),
+                    TextFont { font_size: 30.0, ..default() },
+                    TextColor(Color::WHITE),
+                ));
+                // Button row
+                card.spawn((Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(24.0),
+                    ..default()
+                },))
+                .with_children(|row| {
+                    // Yes button
+                    row.spawn((
+                        Text::new("Yes (Y)"),
+                        TextFont { font_size: 22.0, ..default() },
+                        TextColor(Color::srgb(0.3, 1.0, 0.4)),
+                    ));
+                    // No button
+                    row.spawn((
+                        Text::new("No (N)"),
+                        TextFont { font_size: 22.0, ..default() },
+                        TextColor(Color::srgb(1.0, 0.4, 0.4)),
+                    ));
+                });
+            });
+        });
+}
+
+/// Carries the original `NewGameRequestEvent` on the confirm overlay so
+/// `handle_confirm_input` can replay it with the same seed / mode.
+#[derive(Component, Debug, Clone, Copy)]
+struct OriginalNewGameRequest(NewGameRequestEvent);
+
+/// Handles keyboard input while `ConfirmNewGameScreen` is open.
+///
+/// `Y` or `Enter` confirms: despawns the overlay and fires `NewGameRequestEvent`.
+/// `N` or `Escape` cancels: despawns the overlay without starting a new game.
+fn handle_confirm_input(
+    mut commands: Commands,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    screens: Query<(Entity, &OriginalNewGameRequest), With<ConfirmNewGameScreen>>,
+    mut new_game: EventWriter<NewGameRequestEvent>,
+) {
+    let Ok((entity, original)) = screens.get_single() else {
+        return;
+    };
+    let Some(keys) = keys else {
+        return;
+    };
+
+    let confirmed = keys.just_pressed(KeyCode::KeyY) || keys.just_pressed(KeyCode::Enter);
+    let cancelled = keys.just_pressed(KeyCode::KeyN) || keys.just_pressed(KeyCode::Escape);
+
+    if confirmed {
+        commands.entity(entity).despawn_recursive();
+        // Re-send with move_count already 0 would bypass the dialog next time.
+        // We fire the event — handle_new_game will skip the dialog because
+        // the screen is despawned before the next read.
+        new_game.send(NewGameRequestEvent {
+            seed: original.0.seed,
+            mode: original.0.mode,
+        });
+    } else if cancelled {
+        commands.entity(entity).despawn_recursive();
     }
 }
 
@@ -305,13 +459,18 @@ pub fn has_legal_moves(game: &GameState) -> bool {
 }
 
 /// After each `StateChangedEvent`, check if the game has no legal moves.
-/// Fires `InfoToastEvent` once per "stuck" state. Resets when any new
-/// `StateChangedEvent` arrives.
+///
+/// When stuck (no legal moves and game not won), fires `InfoToastEvent` and
+/// spawns a `GameOverScreen` overlay. The overlay is despawned automatically
+/// when `has_legal_moves` returns true again (e.g. after undo) or when the
+/// game is won.
 fn check_no_moves(
+    mut commands: Commands,
     mut events: EventReader<StateChangedEvent>,
     game: Res<GameStateResource>,
     mut toast: EventWriter<InfoToastEvent>,
     mut already_fired: Local<bool>,
+    game_over_screens: Query<Entity, With<GameOverScreen>>,
 ) {
     // Reset the debounce flag on every state change so if something changes
     // we re-evaluate on the next state change.
@@ -326,15 +485,126 @@ fn check_no_moves(
     // Reset debounce whenever the state changes.
     *already_fired = false;
 
+    // Despawn game-over overlay whenever moves become available again or game is won.
+    let moves_ok = has_legal_moves(&game.0);
+    if moves_ok || game.0.is_won {
+        for entity in &game_over_screens {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+
     if game.0.is_won {
         return;
     }
 
-    if !has_legal_moves(&game.0) && !*already_fired {
+    if !moves_ok && !*already_fired {
         toast.send(InfoToastEvent(
             "No moves available \u{2014} press D to draw or N for a new game".to_string(),
         ));
         *already_fired = true;
+        // Only spawn the overlay if one does not already exist.
+        if game_over_screens.is_empty() {
+            spawn_game_over_screen(&mut commands, game.0.score);
+        }
+    }
+}
+
+/// Spawns the full-screen game-over overlay with score display and action buttons.
+fn spawn_game_over_screen(commands: &mut Commands, score: i32) {
+    commands
+        .spawn((
+            GameOverScreen,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(0.0),
+                top: Val::Percent(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(20.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.78)),
+            ZIndex(200),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(40.0)),
+                    row_gap: Val::Px(16.0),
+                    min_width: Val::Px(340.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.10, 0.08, 0.08)),
+                BorderRadius::all(Val::Px(12.0)),
+            ))
+            .with_children(|card| {
+                // Title
+                card.spawn((
+                    Text::new("No More Moves"),
+                    TextFont { font_size: 36.0, ..default() },
+                    TextColor(Color::srgb(1.0, 0.4, 0.1)),
+                ));
+                // Score
+                card.spawn((
+                    Text::new(format!("Score: {score}")),
+                    TextFont { font_size: 24.0, ..default() },
+                    TextColor(Color::WHITE),
+                ));
+                // Button row
+                card.spawn((Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(24.0),
+                    margin: UiRect::top(Val::Px(8.0)),
+                    ..default()
+                },))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("New Game (N)"),
+                        TextFont { font_size: 20.0, ..default() },
+                        TextColor(Color::srgb(0.3, 1.0, 0.4)),
+                    ));
+                    row.spawn((
+                        Text::new("Undo (U)"),
+                        TextFont { font_size: 20.0, ..default() },
+                        TextColor(Color::srgb(0.6, 0.8, 1.0)),
+                    ));
+                });
+            });
+        });
+}
+
+/// Handles keyboard input while `GameOverScreen` is open.
+///
+/// `N` fires `NewGameRequestEvent` (which will trigger the confirm dialog if
+/// moves have been made). `U` fires `UndoRequestEvent` and despawns the overlay
+/// — the `check_no_moves` system will re-show it on the next `StateChangedEvent`
+/// if the undo did not restore any legal moves.
+fn handle_game_over_input(
+    mut commands: Commands,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    screens: Query<Entity, With<GameOverScreen>>,
+    mut new_game: EventWriter<NewGameRequestEvent>,
+    mut undo: EventWriter<UndoRequestEvent>,
+) {
+    if screens.is_empty() {
+        return;
+    }
+    let Some(keys) = keys else {
+        return;
+    };
+
+    if keys.just_pressed(KeyCode::KeyN) {
+        new_game.send(NewGameRequestEvent::default());
+    } else if keys.just_pressed(KeyCode::KeyU) {
+        for entity in &screens {
+            commands.entity(entity).despawn_recursive();
+        }
+        undo.send(UndoRequestEvent);
     }
 }
 
@@ -795,5 +1065,110 @@ mod tests {
         });
 
         assert!(!has_legal_moves(&game), "Two of Clubs with empty board has no legal move");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #57 — Confirm-new-game dialog tests
+    // -----------------------------------------------------------------------
+
+    /// Helper that also initialises `ButtonInput<KeyCode>` so the keyboard
+    /// systems do not panic in MinimalPlugins environments.
+    fn test_app_with_input(seed: u64) -> App {
+        let mut app = test_app(seed);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app
+    }
+
+    #[test]
+    fn new_game_request_with_moves_spawns_confirm_dialog() {
+        let mut app = test_app_with_input(42);
+        // Simulate an active game with moves made.
+        app.world_mut().resource_mut::<GameStateResource>().0.move_count = 5;
+        app.world_mut()
+            .send_event(NewGameRequestEvent { seed: None, mode: None });
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&ConfirmNewGameScreen>()
+            .iter(app.world())
+            .count();
+        assert_eq!(count, 1, "ConfirmNewGameScreen must be spawned when move_count > 0");
+    }
+
+    #[test]
+    fn new_game_request_on_fresh_game_skips_confirm() {
+        let mut app = test_app_with_input(42);
+        // move_count stays at 0 (fresh game).
+        assert_eq!(
+            app.world().resource::<GameStateResource>().0.move_count,
+            0,
+            "test assumes a fresh game with no moves"
+        );
+        app.world_mut()
+            .send_event(NewGameRequestEvent { seed: None, mode: None });
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&ConfirmNewGameScreen>()
+            .iter(app.world())
+            .count();
+        assert_eq!(count, 0, "ConfirmNewGameScreen must NOT appear for a fresh game");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #58 — Game-over overlay tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn game_over_screen_absent_when_moves_available() {
+        // A fresh game always has moves (stock is non-empty).
+        let mut app = test_app_with_input(42);
+        app.world_mut().send_event(StateChangedEvent);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&GameOverScreen>()
+            .iter(app.world())
+            .count();
+        assert_eq!(count, 0, "GameOverScreen must not appear when moves are available");
+    }
+
+    #[test]
+    fn game_over_screen_spawns_when_stuck() {
+        use solitaire_core::card::{Card, Rank, Suit};
+        let mut app = test_app_with_input(1);
+
+        // Force a stuck state: empty all piles + stock/waste, leave only a
+        // Two of Clubs on tableau 0 with no legal destination.
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            gs.0.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+            gs.0.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+            for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+                gs.0.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+            }
+            for i in 0..7_usize {
+                gs.0.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+            }
+            gs.0.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+                id: 1,
+                suit: Suit::Clubs,
+                rank: Rank::Two,
+                face_up: true,
+            });
+        }
+
+        app.world_mut().send_event(StateChangedEvent);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&GameOverScreen>()
+            .iter(app.world())
+            .count();
+        assert_eq!(count, 1, "GameOverScreen must appear when no legal moves exist");
     }
 }

@@ -5,6 +5,7 @@ pub mod animation_plugin;
 pub mod auto_complete_plugin;
 pub mod audio_plugin;
 pub mod card_plugin;
+pub mod feedback_anim_plugin;
 pub mod challenge_plugin;
 pub mod cursor_plugin;
 pub mod daily_challenge_plugin;
@@ -20,6 +21,7 @@ pub mod pause_plugin;
 pub mod settings_plugin;
 pub mod progress_plugin;
 pub mod resources;
+pub mod selection_plugin;
 pub mod stats_plugin;
 pub mod sync_plugin;
 pub mod table_plugin;
@@ -36,7 +38,10 @@ pub use daily_challenge_plugin::{
 };
 pub use progress_plugin::{LevelUpEvent, ProgressPlugin, ProgressResource, ProgressUpdate};
 pub use weekly_goals_plugin::{WeeklyGoalCompletedEvent, WeeklyGoalsPlugin};
-pub use animation_plugin::{AnimationPlugin, CardAnim};
+pub use animation_plugin::{ActiveToast, AnimationPlugin, CardAnim, ToastEntity, ToastQueue};
+pub use feedback_anim_plugin::{
+    deal_stagger_delay, shake_offset, settle_scale, FeedbackAnimPlugin, SettleAnim, ShakeAnim,
+};
 pub use auto_complete_plugin::AutoCompletePlugin;
 pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
 pub use card_plugin::{CardEntity, CardLabel, CardPlugin, HintHighlight, RightClickHighlight};
@@ -46,9 +51,9 @@ pub use events::{
     InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
     NewGameConfirmEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent, XpAwardedEvent,
 };
-pub use game_plugin::{GameMutation, GamePlugin, GameStatePath};
+pub use game_plugin::{ConfirmNewGameScreen, GameMutation, GameOverScreen, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};
-pub use hud_plugin::HudPlugin;
+pub use hud_plugin::{HudAutoComplete, HudPlugin};
 pub use leaderboard_plugin::{LeaderboardPlugin, LeaderboardResource, LeaderboardScreen};
 pub use input_plugin::InputPlugin;
 pub use onboarding_plugin::{OnboardingPlugin, OnboardingScreen};
@@ -58,6 +63,7 @@ pub use settings_plugin::{
 };
 pub use layout::{compute_layout, Layout, LayoutResource};
 pub use resources::{DragState, GameStateResource, SyncStatus, SyncStatusResource};
+pub use selection_plugin::{SelectionHighlight, SelectionPlugin, SelectionState};
 pub use stats_plugin::{StatsPlugin, StatsResource, StatsScreen, StatsUpdate};
 pub use sync_plugin::{SyncPlugin, SyncProviderResource};
 pub use table_plugin::{PileMarker, TableBackground, TablePlugin};

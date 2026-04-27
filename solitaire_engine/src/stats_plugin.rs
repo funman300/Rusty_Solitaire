@@ -39,6 +39,12 @@ pub struct StatsUpdate;
 #[derive(Component, Debug)]
 pub struct StatsScreen;
 
+/// Marker component on an individual stat cell inside the stats overlay.
+///
+/// Each cell contains a large value label and a small descriptor label below it.
+#[derive(Component, Debug)]
+pub struct StatsCell;
+
 /// Registers stats resources, update systems, and the UI toggle.
 pub struct StatsPlugin {
     /// Where to persist stats. `None` disables all file I/O (for tests).
@@ -180,90 +186,14 @@ fn spawn_stats_screen(
     progress: Option<&PlayerProgress>,
     time_attack: Option<&TimeAttackResource>,
 ) {
-    let win_rate = stats
-        .win_rate()
-        .map_or("N/A".to_string(), |r| format!("{r:.1}%"));
-    let fastest = if stats.fastest_win_seconds == u64::MAX {
-        "N/A".to_string()
-    } else {
-        format_duration(stats.fastest_win_seconds)
-    };
-    let avg = if stats.games_won == 0 {
-        "N/A".to_string()
-    } else {
-        format_duration(stats.avg_time_seconds)
-    };
-
-    let mut lines: Vec<String> = vec![
-        "=== Statistics ===".to_string(),
-        format!("Games Played:  {}", stats.games_played),
-        format!("Games Won:     {}", stats.games_won),
-        format!("Games Lost:    {}", stats.games_lost),
-        format!("Win Rate:      {win_rate}"),
-        format!(
-            "Win Streak:    {} (Best: {})",
-            stats.win_streak_current, stats.win_streak_best
-        ),
-        format!("Draw 1 Wins:   {}", stats.draw_one_wins),
-        format!("Draw 3 Wins:   {}", stats.draw_three_wins),
-        format!("Best Score:    {}", stats.best_single_score),
-        format!("Lifetime Score:{}", stats.lifetime_score),
-        format!("Fastest Win:   {fastest}"),
-        format!("Avg Win Time:  {avg}"),
-    ];
-
-    if let Some(p) = progress {
-        lines.push(String::new());
-        lines.push("=== Progression ===".to_string());
-        lines.push(format!("Level:         {}", p.level));
-        lines.push(format!("Total XP:      {}", p.total_xp));
-        lines.push(format!("Next Level:    {}", xp_to_next_level_label(p.total_xp, p.level)));
-        lines.push(format!(
-            "Daily Streak:  {}",
-            p.daily_challenge_streak
-        ));
-        lines.push(format!(
-            "Challenge:     {}",
-            challenge_progress_label(p.challenge_index)
-        ));
-        lines.push(String::new());
-        lines.push("-- Weekly Goals --".to_string());
-        for goal in WEEKLY_GOALS {
-            let progress_value = p
-                .weekly_goal_progress
-                .get(goal.id)
-                .copied()
-                .unwrap_or(0);
-            lines.push(format!(
-                "  {}: {}/{}",
-                goal.description, progress_value, goal.target
-            ));
-        }
-        lines.push(String::new());
-        lines.push("-- Unlocks --".to_string());
-        lines.push(format!(
-            "  Card Backs:    {}",
-            format_id_list(&p.unlocked_card_backs)
-        ));
-        lines.push(format!(
-            "  Backgrounds:   {}",
-            format_id_list(&p.unlocked_backgrounds)
-        ));
-    }
-
-    if let Some(ta) = time_attack {
-        if ta.active {
-            let mins = (ta.remaining_secs / 60.0).floor() as u64;
-            let secs = (ta.remaining_secs % 60.0).floor() as u64;
-            lines.push(String::new());
-            lines.push("=== Time Attack ===".to_string());
-            lines.push(format!("Remaining:     {mins}m {secs:02}s"));
-            lines.push(format!("Wins:          {}", ta.wins));
-        }
-    }
-
-    lines.push(String::new());
-    lines.push("Press S to close".to_string());
+    // --- primary stat cells (tasks #65 and #66) ---
+    let win_rate_str  = format_win_rate(stats);
+    let played_str    = format_stat_value(stats.games_played);
+    let won_str       = format_stat_value(stats.games_won);
+    let lost_str      = format_stat_value(stats.games_lost);
+    let fastest_str   = format_fastest_win(stats.fastest_win_seconds);
+    let best_score_str = format_optional_u32(stats.best_single_score);
+    let best_streak_str = format_stat_value(stats.win_streak_best);
 
     commands
         .spawn((
@@ -275,26 +205,197 @@ fn spawn_stats_screen(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
+                justify_content: JustifyContent::FlexStart,
                 align_items: AlignItems::Center,
                 row_gap: Val::Px(6.0),
+                padding: UiRect::all(Val::Px(24.0)),
+                overflow: Overflow::clip(),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
             ZIndex(200),
         ))
-        .with_children(|b| {
-            for line in lines {
-                b.spawn((
-                    Text::new(line),
-                    TextFont {
-                        font_size: 24.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.95, 0.95, 0.90)),
+        .with_children(|root| {
+            // Title
+            root.spawn((
+                Text::new("Statistics"),
+                TextFont { font_size: 28.0, ..default() },
+                TextColor(Color::srgb(1.0, 0.85, 0.3)),
+            ));
+
+            // Two-column grid of stat cells
+            root.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::FlexStart,
+                column_gap: Val::Px(24.0),
+                row_gap: Val::Px(16.0),
+                width: Val::Percent(100.0),
+                margin: UiRect::top(Val::Px(16.0)),
+                ..default()
+            })
+            .with_children(|grid| {
+                spawn_stat_cell(grid, &win_rate_str,    "Win Rate");
+                spawn_stat_cell(grid, &played_str,      "Games Played");
+                spawn_stat_cell(grid, &won_str,         "Games Won");
+                spawn_stat_cell(grid, &lost_str,        "Games Lost");
+                spawn_stat_cell(grid, &fastest_str,     "Fastest Win");
+                spawn_stat_cell(grid, &best_score_str,  "Best Score");
+                spawn_stat_cell(grid, &best_streak_str, "Best Streak");
+            });
+
+            // Progression section
+            if let Some(p) = progress {
+                root.spawn((
+                    Text::new("Progression"),
+                    TextFont { font_size: 22.0, ..default() },
+                    TextColor(Color::srgb(0.7, 0.9, 1.0)),
+                ));
+
+                let level_str = format_stat_value(p.level);
+                let xp_str    = format_stat_value(p.total_xp as u32);
+                let next_label = xp_to_next_level_label(p.total_xp, p.level);
+                let daily_str  = format_stat_value(p.daily_challenge_streak);
+                let challenge_str = challenge_progress_label(p.challenge_index);
+
+                root.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    column_gap: Val::Px(24.0),
+                    row_gap: Val::Px(12.0),
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
+                .with_children(|grid| {
+                    spawn_stat_cell(grid, &level_str,     "Level");
+                    spawn_stat_cell(grid, &xp_str,        "Total XP");
+                    spawn_stat_cell(grid, &next_label,    "Next Level");
+                    spawn_stat_cell(grid, &daily_str,     "Daily Streak");
+                    spawn_stat_cell(grid, &challenge_str, "Challenge");
+                });
+
+                // Weekly goals row
+                root.spawn((
+                    Text::new("Weekly Goals"),
+                    TextFont { font_size: 18.0, ..default() },
+                    TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                ));
+                for goal in WEEKLY_GOALS {
+                    let pv = p.weekly_goal_progress.get(goal.id).copied().unwrap_or(0);
+                    root.spawn((
+                        Text::new(format!("  {}: {}/{}", goal.description, pv, goal.target)),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(Color::srgb(0.85, 0.85, 0.80)),
+                    ));
+                }
+
+                // Unlocks row
+                root.spawn((
+                    Text::new(format!(
+                        "Card Backs: {}  |  Backgrounds: {}",
+                        format_id_list(&p.unlocked_card_backs),
+                        format_id_list(&p.unlocked_backgrounds),
+                    )),
+                    TextFont { font_size: 16.0, ..default() },
+                    TextColor(Color::srgb(0.75, 0.75, 0.75)),
                 ));
             }
+
+            // Time Attack section
+            if let Some(ta) = time_attack {
+                if ta.active {
+                    let mins = (ta.remaining_secs / 60.0).floor() as u64;
+                    let secs = (ta.remaining_secs % 60.0).floor() as u64;
+                    root.spawn((
+                        Text::new(format!("Time Attack — {mins}m {secs:02}s left  |  Wins: {}", ta.wins)),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(1.0, 0.6, 0.2)),
+                    ));
+                }
+            }
+
+            // Dismiss hint
+            root.spawn((
+                Text::new("Press S to close"),
+                TextFont { font_size: 16.0, ..default() },
+                TextColor(Color::srgb(0.6, 0.6, 0.6)),
+            ));
         });
+}
+
+/// Spawn a single stat cell: a large value label on top and a small grey
+/// descriptor below, inside a fixed-width column node with a [`StatsCell`] marker.
+fn spawn_stat_cell(parent: &mut ChildBuilder, value: &str, label: &str) {
+    parent
+        .spawn((
+            StatsCell,
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                min_width: Val::Px(110.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.06)),
+        ))
+        .with_children(|cell| {
+            // Large value label.
+            cell.spawn((
+                Text::new(value.to_string()),
+                TextFont { font_size: 32.0, ..default() },
+                TextColor(Color::srgb(1.0, 1.0, 1.0)),
+            ));
+            // Small descriptor below.
+            cell.spawn((
+                Text::new(label.to_string()),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.65, 0.65, 0.65)),
+            ));
+        });
+}
+
+/// Format a win-rate value for display.
+///
+/// Returns `"—"` when no games have been played, otherwise `"N%"`.
+pub fn format_win_rate(stats: &StatsSnapshot) -> String {
+    match stats.win_rate() {
+        None => "\u{2014}".to_string(),
+        Some(r) => format!("{}%", (r) as u32),
+    }
+}
+
+/// Format `fastest_win_seconds` for display.
+///
+/// Returns `"—"` when the value is `u64::MAX` (sentinel for "no wins yet") or
+/// zero. Otherwise delegates to [`format_duration`].
+pub fn format_fastest_win(fastest_win_seconds: u64) -> String {
+    if fastest_win_seconds == u64::MAX || fastest_win_seconds == 0 {
+        "\u{2014}".to_string()
+    } else {
+        format_duration(fastest_win_seconds)
+    }
+}
+
+/// Format an optional `u32` statistic.
+///
+/// Returns `"—"` when `value` is `0`, otherwise the decimal representation.
+pub fn format_optional_u32(value: u32) -> String {
+    if value == 0 {
+        "\u{2014}".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+/// Format any `u32`-like stat value as a decimal string.
+///
+/// Unlike [`format_optional_u32`], this always shows the number (even if zero).
+pub fn format_stat_value<T: std::fmt::Display>(value: T) -> String {
+    format!("{value}")
 }
 
 /// Returns XP remaining until next level, formatted as "N XP (P%)".
@@ -316,7 +417,10 @@ fn xp_to_next_level_label(total_xp: u64, level: u32) -> String {
     format!("{remaining} XP ({pct}%)")
 }
 
-fn format_duration(secs: u64) -> String {
+/// Format a duration given in whole seconds as `"Mm SSs"`.
+///
+/// Example: `90` → `"1m 30s"`.
+pub fn format_duration(secs: u64) -> String {
     let m = secs / 60;
     let s = secs % 60;
     format!("{m}m {s:02}s")
@@ -542,5 +646,54 @@ mod tests {
     #[test]
     fn format_duration_handles_sub_minute() {
         assert_eq!(format_duration(59), "0m 59s");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #65 — win rate and stat cell pure-function tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_win_rate_zero() {
+        // 0 wins, 0 played → "—"
+        let s = StatsSnapshot::default();
+        assert_eq!(format_win_rate(&s), "\u{2014}");
+    }
+
+    #[test]
+    fn format_win_rate_half() {
+        // 5 wins out of 10 played → "50%"
+        let s = StatsSnapshot {
+            games_played: 10,
+            games_won: 5,
+            ..StatsSnapshot::default()
+        };
+        assert_eq!(format_win_rate(&s), "50%");
+    }
+
+    #[test]
+    fn format_stat_value_zero_returns_zero() {
+        assert_eq!(format_stat_value(0u32), "0");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #66 — fastest win, best score, streak pure-function tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_fastest_win_unset() {
+        // fastest_win_seconds == u64::MAX → "—"
+        assert_eq!(format_fastest_win(u64::MAX), "\u{2014}");
+    }
+
+    #[test]
+    fn format_fastest_win_90s() {
+        // 90 seconds → "1m 30s"
+        assert_eq!(format_fastest_win(90), "1m 30s");
+    }
+
+    #[test]
+    fn best_score_display_zero() {
+        // best_single_score == 0 → "—"
+        assert_eq!(format_optional_u32(0), "\u{2014}");
     }
 }

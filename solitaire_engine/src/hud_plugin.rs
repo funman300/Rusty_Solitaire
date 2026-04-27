@@ -9,7 +9,9 @@
 use bevy::prelude::*;
 use solitaire_core::game_state::{DrawMode, GameMode};
 
+use crate::auto_complete_plugin::AutoCompleteState;
 use crate::daily_challenge_plugin::DailyChallengeResource;
+use crate::events::InfoToastEvent;
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
 use crate::time_attack_plugin::TimeAttackResource;
@@ -44,6 +46,13 @@ pub struct HudChallenge;
 #[derive(Component, Debug)]
 pub struct HudUndos;
 
+/// Marker on the auto-complete badge text node.
+///
+/// Displays `"AUTO"` in green while `AutoCompleteState.active` is true;
+/// empty string otherwise.
+#[derive(Component, Debug)]
+pub struct HudAutoComplete;
+
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
 
@@ -52,7 +61,8 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_hud)
-            .add_systems(Update, update_hud.after(GameMutation));
+            .add_systems(Update, update_hud.after(GameMutation))
+            .add_systems(Update, announce_auto_complete.after(GameMutation));
     }
 }
 
@@ -96,6 +106,13 @@ fn spawn_hud(mut commands: Commands) {
                 font,
                 white,
             ));
+            // Auto-complete badge (green "AUTO" when sequence is running).
+            b.spawn((
+                HudAutoComplete,
+                Text::new(""),
+                TextFont { font_size: 17.0, ..default() },
+                TextColor(Color::srgb(0.2, 0.9, 0.3)),
+            ));
         });
 }
 
@@ -113,6 +130,7 @@ fn update_hud(
     game: Res<GameStateResource>,
     time_attack: Option<Res<TimeAttackResource>>,
     daily: Option<Res<DailyChallengeResource>>,
+    auto_complete: Option<Res<AutoCompleteState>>,
     mut score_q: Query<
         &mut Text,
         (
@@ -122,6 +140,7 @@ fn update_hud(
             Without<HudMode>,
             Without<HudChallenge>,
             Without<HudUndos>,
+            Without<HudAutoComplete>,
         ),
     >,
     mut moves_q: Query<
@@ -133,6 +152,7 @@ fn update_hud(
             Without<HudMode>,
             Without<HudChallenge>,
             Without<HudUndos>,
+            Without<HudAutoComplete>,
         ),
     >,
     mut time_q: Query<
@@ -144,6 +164,7 @@ fn update_hud(
             Without<HudMode>,
             Without<HudChallenge>,
             Without<HudUndos>,
+            Without<HudAutoComplete>,
         ),
     >,
     mut mode_q: Query<
@@ -155,6 +176,7 @@ fn update_hud(
             Without<HudTime>,
             Without<HudChallenge>,
             Without<HudUndos>,
+            Without<HudAutoComplete>,
         ),
     >,
     mut challenge_q: Query<
@@ -166,6 +188,7 @@ fn update_hud(
             Without<HudTime>,
             Without<HudMode>,
             Without<HudUndos>,
+            Without<HudAutoComplete>,
         ),
     >,
     mut undos_q: Query<
@@ -177,6 +200,19 @@ fn update_hud(
             Without<HudTime>,
             Without<HudMode>,
             Without<HudChallenge>,
+            Without<HudAutoComplete>,
+        ),
+    >,
+    mut auto_q: Query<
+        &mut Text,
+        (
+            With<HudAutoComplete>,
+            Without<HudScore>,
+            Without<HudMoves>,
+            Without<HudTime>,
+            Without<HudMode>,
+            Without<HudChallenge>,
+            Without<HudUndos>,
         ),
     >,
 ) {
@@ -260,6 +296,35 @@ fn update_hud(
             **t = String::new();
         }
     }
+
+    // --- Auto-complete badge ---
+    // Reflects the AutoCompleteState resource; update whenever it changes or game changes.
+    let ac_active = auto_complete.as_ref().is_some_and(|ac| ac.active);
+    let ac_changed = auto_complete.as_ref().is_some_and(|ac| ac.is_changed());
+    if ac_changed || game.is_changed() {
+        if let Ok(mut t) = auto_q.get_single_mut() {
+            **t = if ac_active {
+                "AUTO".to_string()
+            } else {
+                String::new()
+            };
+        }
+    }
+}
+
+/// Fires `InfoToastEvent("Auto-completing...")` exactly once each time
+/// `AutoCompleteState` transitions from inactive to active. Uses a `Local<bool>`
+/// to debounce so the toast only appears on the leading edge.
+fn announce_auto_complete(
+    auto_complete: Option<Res<AutoCompleteState>>,
+    mut toast: EventWriter<InfoToastEvent>,
+    mut was_active: Local<bool>,
+) {
+    let now_active = auto_complete.as_ref().is_some_and(|ac| ac.active);
+    if now_active && !*was_active {
+        toast.send(InfoToastEvent("Auto-completing...".to_string()));
+    }
+    *was_active = now_active;
 }
 
 /// Builds the HUD text for the active daily challenge constraints.
@@ -499,5 +564,39 @@ mod tests {
         app.world_mut().resource_mut::<GameStateResource>().0.undo_count = 3;
         app.update();
         assert_eq!(read_hud_text::<HudUndos>(&mut app), "Undos: 3");
+    }
+
+    // -----------------------------------------------------------------------
+    // HudAutoComplete in-app tests (Task #56)
+    // -----------------------------------------------------------------------
+
+    fn headless_app_with_auto_complete() -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(GamePlugin)
+            .add_plugins(TablePlugin)
+            .add_plugins(HudPlugin);
+        app.init_resource::<AutoCompleteState>();
+        app.update();
+        app
+    }
+
+    #[test]
+    fn auto_complete_badge_shows_auto_when_active() {
+        let mut app = headless_app_with_auto_complete();
+        app.world_mut().resource_mut::<AutoCompleteState>().active = true;
+        // Also trigger game state change so the update fires.
+        app.world_mut().resource_mut::<GameStateResource>().0.move_count += 1;
+        app.update();
+        assert_eq!(read_hud_text::<HudAutoComplete>(&mut app), "AUTO");
+    }
+
+    #[test]
+    fn auto_complete_badge_empty_when_inactive() {
+        let mut app = headless_app_with_auto_complete();
+        // active is false by default.
+        app.world_mut().resource_mut::<GameStateResource>().0.move_count += 1;
+        app.update();
+        assert_eq!(read_hud_text::<HudAutoComplete>(&mut app), "");
     }
 }

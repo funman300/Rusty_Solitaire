@@ -368,4 +368,50 @@ mod tests {
         assert!(loaded.color_blind_mode, "color_blind_mode must survive a save/load round-trip");
         let _ = std::fs::remove_file(&path);
     }
+
+    // -----------------------------------------------------------------------
+    // Task #62 — selected_card_back
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settings_card_back_default_is_zero() {
+        assert_eq!(Settings::default().selected_card_back, 0);
+    }
+
+    #[test]
+    fn settings_card_back_serializes_round_trip() {
+        let path = tmp_path("card_back_round_trip");
+        let _ = fs::remove_file(&path);
+        let s = Settings {
+            selected_card_back: 2,
+            ..Settings::default()
+        };
+        save_settings_to(&path, &s).expect("save");
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.selected_card_back, 2, "selected_card_back must survive serde round-trip");
+        let _ = fs::remove_file(&path);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #63 — selected_background
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settings_background_default_is_zero() {
+        assert_eq!(Settings::default().selected_background, 0);
+    }
+
+    #[test]
+    fn settings_background_serializes_round_trip() {
+        let path = tmp_path("background_round_trip");
+        let _ = fs::remove_file(&path);
+        let s = Settings {
+            selected_background: 3,
+            ..Settings::default()
+        };
+        save_settings_to(&path, &s).expect("save");
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.selected_background, 3, "selected_background must survive serde round-trip");
+        let _ = fs::remove_file(&path);
+    }
 }

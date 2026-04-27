@@ -5,11 +5,15 @@
 //!
 //! | Event | Sound |
 //! |---|---|
-//! | `DrawRequestEvent` | `card_flip.wav` |
+//! | `DrawRequestEvent` | `card_flip.wav` (recycle: 0.5× volume) |
 //! | `MoveRequestEvent` | `card_place.wav` |
 //! | `MoveRejectedEvent` | `card_invalid.wav` |
 //! | `NewGameRequestEvent` | `card_deal.wav` |
 //! | `GameWonEvent` | `win_fanfare.wav` |
+//!
+//! An ambient loop is started at plugin startup using `card_flip.wav` at very
+//! low volume (0.05 amplitude) routed through `music_track` as a placeholder
+//! until a dedicated ambient track is available.
 //!
 //! If the audio device cannot be opened (e.g. a headless CI machine or a
 //! Linux box without a running PulseAudio/Pipewire session), the plugin
@@ -21,16 +25,35 @@ use std::io::Cursor;
 use bevy::prelude::*;
 use kira::manager::backend::DefaultBackend;
 use kira::manager::{AudioManager, AudioManagerSettings};
-use kira::sound::static_sound::StaticSoundData;
+use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
+use kira::sound::Region;
 use kira::track::{TrackBuilder, TrackHandle};
 use kira::tween::Tween;
+use kira::Volume;
 
 use crate::events::{
     CardFlippedEvent, DrawRequestEvent, GameWonEvent, MoveRejectedEvent, MoveRequestEvent,
     NewGameRequestEvent, UndoRequestEvent,
 };
 use crate::pause_plugin::PausedResource;
+use crate::resources::GameStateResource;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
+use solitaire_core::pile::PileType;
+
+/// Volume amplitude for the stock-recycle draw sound (half of normal 1.0).
+const RECYCLE_VOLUME: f64 = 0.5;
+
+/// Volume amplitude for the ambient music loop placeholder.
+const AMBIENT_VOLUME: f64 = 0.05;
+
+/// Returns `true` when a `DrawRequestEvent` will recycle the waste pile back
+/// to stock rather than drawing a new card.
+///
+/// This is a pure function with no side effects — it can be called from tests
+/// without an audio device or Bevy world.
+fn is_recycle(stock_len: usize) -> bool {
+    stock_len == 0
+}
 
 /// Pre-decoded sound effects. Cheap to clone (frames are an `Arc<[Frame]>`),
 /// so we hand a fresh handle to `manager.play()` on every event.
@@ -50,9 +73,10 @@ pub struct AudioState {
     /// Dedicated sub-track for sound effects. Volume controlled by `sfx_volume`.
     sfx_track: Option<TrackHandle>,
     /// Dedicated sub-track for ambient music. Volume controlled by `music_volume`.
-    /// No sounds are currently routed here; the track exists so future ambient
-    /// music can be added without changing the volume architecture.
     music_track: Option<TrackHandle>,
+    /// Handle to the looping ambient track so it can be paused or stopped later.
+    #[allow(dead_code)]
+    ambient_handle: Option<StaticSoundHandle>,
 }
 
 /// Tracks which audio channels the player has silenced via the M / Shift+M shortcuts.
@@ -75,6 +99,11 @@ impl Plugin for AudioPlugin {
             warn!("audio device unavailable; SFX disabled");
         }
 
+        let library = build_library();
+        if library.is_none() {
+            warn!("failed to decode embedded SFX assets; SFX disabled");
+        }
+
         let (sfx_track, music_track) = match manager.as_mut() {
             Some(mgr) => {
                 let sfx = mgr.add_sub_track(TrackBuilder::default()).ok();
@@ -84,14 +113,21 @@ impl Plugin for AudioPlugin {
             None => (None, None),
         };
 
-        app.insert_non_send_resource(AudioState { manager, sfx_track, music_track })
-            .init_resource::<MuteState>();
+        // Start the ambient loop placeholder (card_flip.wav looped at very low
+        // volume through music_track).
+        let ambient_handle =
+            start_ambient_loop(manager.as_mut(), library.as_ref(), &music_track);
 
-        let library = build_library();
+        app.insert_non_send_resource(AudioState {
+            manager,
+            sfx_track,
+            music_track,
+            ambient_handle,
+        })
+        .init_resource::<MuteState>();
+
         if let Some(lib) = library {
             app.insert_resource(lib);
-        } else {
-            warn!("failed to decode embedded SFX assets; SFX disabled");
         }
 
         app.add_event::<DrawRequestEvent>()
@@ -102,10 +138,7 @@ impl Plugin for AudioPlugin {
             .add_event::<CardFlippedEvent>()
             .add_event::<UndoRequestEvent>()
             .add_event::<SettingsChangedEvent>()
-            .add_systems(
-                Startup,
-                apply_initial_volume,
-            )
+            .add_systems(Startup, apply_initial_volume)
             .add_systems(
                 Update,
                 (
@@ -143,6 +176,36 @@ fn decode(bytes: &'static [u8]) -> Option<StaticSoundData> {
         Ok(data) => Some(data),
         Err(e) => {
             warn!("failed to decode SFX: {e}");
+            None
+        }
+    }
+}
+
+/// Starts the ambient music loop placeholder (`card_flip.wav` looped at very
+/// low volume) routed through `music_track`. Returns the handle so it can be
+/// stored in `AudioState` for future pause/stop control.
+///
+/// Returns `None` when audio is unavailable or the library failed to load.
+fn start_ambient_loop(
+    manager: Option<&mut AudioManager<DefaultBackend>>,
+    library: Option<&SoundLibrary>,
+    music_track: &Option<TrackHandle>,
+) -> Option<StaticSoundHandle> {
+    let manager = manager?;
+    let lib = library?;
+
+    let mut data = lib.flip.clone();
+    // Loop the entire file from start to end.
+    data.settings.loop_region = Some(Region::default());
+    data.settings.volume = Volume::Amplitude(AMBIENT_VOLUME).into();
+    if let Some(track) = music_track {
+        data.settings.output_destination = track.id().into();
+    }
+
+    match manager.play(data) {
+        Ok(handle) => Some(handle),
+        Err(e) => {
+            warn!("failed to start ambient loop: {e}");
             None
         }
     }
@@ -244,12 +307,34 @@ fn play_on_draw(
     mut events: EventReader<DrawRequestEvent>,
     mut audio: NonSendMut<AudioState>,
     lib: Option<Res<SoundLibrary>>,
+    game: Option<Res<GameStateResource>>,
 ) {
     let Some(lib) = lib else {
         return;
     };
     for _ in events.read() {
-        play(&mut audio, &lib.flip);
+        // When the stock pile is empty the draw action recycles the waste pile
+        // back to stock. Play the flip sound at half volume to give audible
+        // feedback that distinguishes a recycle from a normal draw.
+        let stock_len = game
+            .as_ref()
+            .and_then(|g| g.0.piles.get(&PileType::Stock))
+            .map_or(1, |p| p.cards.len()); // default > 0 → normal draw sound
+
+        if is_recycle(stock_len) {
+            let mut data = lib.flip.clone();
+            data.settings.volume = Volume::Amplitude(RECYCLE_VOLUME).into();
+            if let Some(track) = &audio.sfx_track {
+                data.settings.output_destination = track.id().into();
+            }
+            if let Some(manager) = audio.manager.as_mut() {
+                if let Err(e) = manager.play(data) {
+                    warn!("failed to play recycle SFX: {e}");
+                }
+            }
+        } else {
+            play(&mut audio, &lib.flip);
+        }
     }
 }
 
@@ -382,5 +467,42 @@ mod tests {
         let mut m = MuteState { sfx_muted: true, music_muted: true };
         toggle_all(&mut m);
         assert!(!m.sfx_muted && !m.music_muted, "M should unmute both when all were muted");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #60 — stock-recycle detection (pure, no audio hardware needed)
+    // -----------------------------------------------------------------------
+
+    /// The recycle volume constant must be exactly half of normal (1.0).
+    #[test]
+    fn recycle_volume_is_half_normal() {
+        assert!((RECYCLE_VOLUME - 0.5).abs() < f64::EPSILON);
+    }
+
+    /// `is_recycle` returns `true` only when the stock pile is empty.
+    #[test]
+    fn stock_empty_means_recycle() {
+        assert!(is_recycle(0), "empty stock should trigger recycle");
+        assert!(!is_recycle(1), "non-empty stock must not trigger recycle");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #61 — AudioState has ambient_handle slot (compile-time check)
+    // -----------------------------------------------------------------------
+
+    /// Verifies that `AudioState` exposes an `ambient_handle` field of the
+    /// correct type.  No real `AudioManager` is created; the field is set to
+    /// `None` to avoid requiring audio hardware in CI.
+    #[test]
+    fn audio_state_has_music_track_slot() {
+        let state = AudioState {
+            manager: None,
+            sfx_track: None,
+            music_track: None,
+            ambient_handle: None,
+        };
+        // The assertion is intentionally trivial — the real check is that this
+        // code compiles, confirming the field exists with the expected type.
+        assert!(state.ambient_handle.is_none());
     }
 }
