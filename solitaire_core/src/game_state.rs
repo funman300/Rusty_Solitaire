@@ -340,6 +340,31 @@ impl GameState {
         })
     }
 
+    /// Returns the next `(from, to)` move that advances auto-complete, or
+    /// `None` if no such move exists (or `is_auto_completable` is not set).
+    ///
+    /// Scans tableau piles 0–6 in order, returning the first top card that
+    /// can be placed on any foundation pile. The scan order ensures Aces are
+    /// resolved before higher ranks that depend on them.
+    pub fn next_auto_complete_move(&self) -> Option<(PileType, PileType)> {
+        if !self.is_auto_completable || self.is_won {
+            return None;
+        }
+        let suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
+        for i in 0..7 {
+            let tableau = PileType::Tableau(i);
+            if let Some(card) = self.piles[&tableau].cards.last() {
+                for &suit in &suits {
+                    let foundation = PileType::Foundation(suit);
+                    if can_place_on_foundation(card, &self.piles[&foundation], suit) {
+                        return Some((tableau, foundation));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Time bonus added to score on win: `700_000 / elapsed_seconds` (0 if elapsed is 0).
     pub fn compute_time_bonus(&self) -> i32 {
         scoring_time_bonus(self.elapsed_seconds)
@@ -650,5 +675,47 @@ mod tests {
         let mut g = new_game();
         g.elapsed_seconds = 100;
         assert_eq!(g.compute_time_bonus(), 7000);
+    }
+
+    // --- next_auto_complete_move ---
+
+    #[test]
+    fn next_auto_complete_move_returns_none_on_fresh_game() {
+        // A fresh game has stock and face-down cards — not auto-completable.
+        assert!(new_game().next_auto_complete_move().is_none());
+    }
+
+    #[test]
+    fn next_auto_complete_move_finds_ace_on_auto_completable_board() {
+        use crate::card::{Card, Rank};
+
+        let mut g = new_game();
+        // Clear stock and waste to satisfy auto-complete precondition.
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        // Clear all tableau piles and put a single face-up Ace of Clubs
+        // into Tableau(0); all other piles empty.
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 99,
+            suit: Suit::Clubs,
+            rank: Rank::Ace,
+            face_up: true,
+        });
+        g.is_auto_completable = true;
+
+        let mv = g.next_auto_complete_move().expect("should find a move");
+        assert_eq!(mv.0, PileType::Tableau(0));
+        assert_eq!(mv.1, PileType::Foundation(Suit::Clubs));
+    }
+
+    #[test]
+    fn next_auto_complete_move_returns_none_when_already_won() {
+        let mut g = new_game();
+        g.is_auto_completable = true;
+        g.is_won = true;
+        assert!(g.next_auto_complete_move().is_none());
     }
 }

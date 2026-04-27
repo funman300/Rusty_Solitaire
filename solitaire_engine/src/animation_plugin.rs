@@ -6,6 +6,7 @@
 use bevy::prelude::*;
 
 use crate::achievement_plugin::display_name_for;
+use crate::auto_complete_plugin::AutoCompleteState;
 use crate::card_plugin::CardEntity;
 use crate::challenge_plugin::ChallengeAdvancedEvent;
 use crate::daily_challenge_plugin::DailyChallengeCompletedEvent;
@@ -80,6 +81,7 @@ impl Plugin for AnimationPlugin {
                     handle_time_attack_toast,
                     handle_challenge_toast,
                     handle_settings_toast,
+                    handle_auto_complete_toast,
                     tick_toasts,
                 )
                     .after(GameMutation),
@@ -230,6 +232,25 @@ fn handle_settings_toast(
             format!("SFX: {pct}%"),
             VOLUME_TOAST_SECS,
         );
+    }
+}
+
+/// Shows a one-time "Auto-completing..." toast when auto-complete activates.
+fn handle_auto_complete_toast(
+    mut commands: Commands,
+    state: Option<Res<AutoCompleteState>>,
+    mut shown: Local<bool>,
+) {
+    let Some(s) = state else { return };
+    if s.is_changed() {
+        if s.active {
+            if !*shown {
+                *shown = true;
+                spawn_toast(&mut commands, "Auto-completing…".to_string(), 2.0);
+            }
+        } else {
+            *shown = false;
+        }
     }
 }
 

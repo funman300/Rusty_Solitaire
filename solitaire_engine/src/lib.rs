@@ -2,6 +2,7 @@
 
 pub mod achievement_plugin;
 pub mod animation_plugin;
+pub mod auto_complete_plugin;
 pub mod audio_plugin;
 pub mod card_plugin;
 pub mod challenge_plugin;
@@ -32,6 +33,7 @@ pub use daily_challenge_plugin::{
 pub use progress_plugin::{LevelUpEvent, ProgressPlugin, ProgressResource, ProgressUpdate};
 pub use weekly_goals_plugin::{WeeklyGoalCompletedEvent, WeeklyGoalsPlugin};
 pub use animation_plugin::{AnimationPlugin, CardAnim};
+pub use auto_complete_plugin::AutoCompletePlugin;
 pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
 pub use card_plugin::{CardEntity, CardLabel, CardPlugin};
 pub use events::{
