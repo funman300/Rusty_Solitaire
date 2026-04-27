@@ -83,8 +83,14 @@ fn update_hud(
     // Score, moves, and mode only need updating when the game state changes.
     if game.is_changed() {
         let g = &game.0;
+        let is_zen = g.mode == GameMode::Zen;
         if let Ok(mut t) = score_q.get_single_mut() {
-            **t = format!("Score: {}", g.score);
+            // Zen mode suppresses score display per spec ("No score display").
+            **t = if is_zen {
+                String::new()
+            } else {
+                format!("Score: {}", g.score)
+            };
         }
         if let Ok(mut t) = moves_q.get_single_mut() {
             **t = format!("Moves: {}", g.move_count);
@@ -103,8 +109,10 @@ fn update_hud(
     }
 
     // Time display: show Time Attack countdown every frame when active;
-    // otherwise show game elapsed time (updates once per second via game.is_changed()).
-    let update_time = ta_active || game.is_changed();
+    // Zen mode suppresses the timer per spec ("No timer").
+    // Otherwise show game elapsed time (updates once per second via game.is_changed()).
+    let is_zen = game.0.mode == GameMode::Zen;
+    let update_time = (ta_active || game.is_changed()) && !is_zen;
     if update_time {
         if let Ok(mut t) = time_q.get_single_mut() {
             if let Some(ta) = time_attack.as_ref().filter(|ta| ta.active) {
@@ -118,6 +126,11 @@ fn update_hud(
                 let s = secs % 60;
                 **t = format!("{m}:{s:02}");
             }
+        }
+    } else if is_zen && game.is_changed() {
+        // Clear the time display when entering Zen mode.
+        if let Ok(mut t) = time_q.get_single_mut() {
+            **t = String::new();
         }
     }
 }
