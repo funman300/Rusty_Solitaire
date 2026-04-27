@@ -16,6 +16,7 @@ use solitaire_core::game_state::DrawMode;
 use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, Settings};
 
 use crate::events::ManualSyncRequestEvent;
+use crate::progress_plugin::ProgressResource;
 use crate::resources::{SyncStatus, SyncStatusResource};
 
 /// Volume adjustment step applied by the `[` / `]` hotkeys.
@@ -61,6 +62,14 @@ struct ThemeText;
 #[derive(Component, Debug)]
 struct SyncStatusText;
 
+/// Marks the `Text` node showing the active card-back index.
+#[derive(Component, Debug)]
+struct CardBackText;
+
+/// Marks the `Text` node showing the active background index.
+#[derive(Component, Debug)]
+struct BackgroundText;
+
 /// Tags interactive buttons inside the Settings panel.
 #[derive(Component, Debug)]
 enum SettingsButton {
@@ -70,6 +79,8 @@ enum SettingsButton {
     MusicUp,
     ToggleDrawMode,
     ToggleTheme,
+    CycleCardBack,
+    CycleBackground,
     SyncNow,
     Done,
 }
@@ -122,6 +133,8 @@ impl Plugin for SettingsPlugin {
                     sync_settings_panel_visibility,
                     handle_settings_buttons,
                     update_sync_status_text,
+                    update_card_back_text,
+                    update_background_text,
                 ),
             );
         }
@@ -186,6 +199,7 @@ fn sync_settings_panel_visibility(
     mut commands: Commands,
     settings: Res<SettingsResource>,
     sync_status: Option<Res<SyncStatusResource>>,
+    progress: Option<Res<ProgressResource>>,
 ) {
     if !screen.is_changed() {
         return;
@@ -195,13 +209,37 @@ fn sync_settings_panel_visibility(
             let status_label = sync_status
                 .map(|s| sync_status_label(&s.0))
                 .unwrap_or_else(|| "Status: not configured".to_string());
-            spawn_settings_panel(&mut commands, &settings.0, &status_label);
+            let unlocked_backs = progress
+                .as_ref()
+                .map(|p| p.0.unlocked_card_backs.as_slice())
+                .unwrap_or(&[0]);
+            let unlocked_bgs = progress
+                .as_ref()
+                .map(|p| p.0.unlocked_backgrounds.as_slice())
+                .unwrap_or(&[0]);
+            spawn_settings_panel(
+                &mut commands,
+                &settings.0,
+                &status_label,
+                unlocked_backs,
+                unlocked_bgs,
+            );
         }
     } else {
         for entity in &panels {
             commands.entity(entity).despawn_recursive();
         }
     }
+}
+
+/// Returns the next unlocked index after `current` in the sorted `unlocked` list.
+/// Wraps around. Falls back to `unlocked[0]` if `current` is not found.
+fn cycle_unlocked(unlocked: &[usize], current: usize) -> usize {
+    if unlocked.is_empty() {
+        return 0;
+    }
+    let pos = unlocked.iter().position(|&i| i == current).unwrap_or(0);
+    unlocked[(pos + 1) % unlocked.len()]
 }
 
 /// Keeps the sync-status text node current while the panel is open.
@@ -218,6 +256,46 @@ fn update_sync_status_text(
     let label = sync_status_label(&status.0);
     for mut text in &mut text_nodes {
         **text = label.clone();
+    }
+}
+
+fn update_card_back_text(
+    settings: Res<SettingsResource>,
+    mut text_nodes: Query<&mut Text, With<CardBackText>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut text_nodes {
+        **text = card_back_label(settings.0.selected_card_back);
+    }
+}
+
+fn update_background_text(
+    settings: Res<SettingsResource>,
+    mut text_nodes: Query<&mut Text, With<BackgroundText>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut text_nodes {
+        **text = background_label(settings.0.selected_background);
+    }
+}
+
+fn card_back_label(idx: usize) -> String {
+    if idx == 0 {
+        "Default".to_string()
+    } else {
+        format!("Style {idx}")
+    }
+}
+
+fn background_label(idx: usize) -> String {
+    if idx == 0 {
+        "Default".to_string()
+    } else {
+        format!("Style {idx}")
     }
 }
 
@@ -249,6 +327,7 @@ fn handle_settings_buttons(
     path: Res<SettingsStoragePath>,
     mut changed: EventWriter<SettingsChangedEvent>,
     mut manual_sync: EventWriter<ManualSyncRequestEvent>,
+    progress: Option<Res<ProgressResource>>,
     mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
     mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
     mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>)>,
@@ -326,6 +405,26 @@ fn handle_settings_buttons(
                     **t = theme_label(&settings.0.theme);
                 }
             }
+            SettingsButton::CycleCardBack => {
+                let unlocked = progress
+                    .as_ref()
+                    .map(|p| p.0.unlocked_card_backs.clone())
+                    .unwrap_or_else(|| vec![0]);
+                settings.0.selected_card_back =
+                    cycle_unlocked(&unlocked, settings.0.selected_card_back);
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
+            }
+            SettingsButton::CycleBackground => {
+                let unlocked = progress
+                    .as_ref()
+                    .map(|p| p.0.unlocked_backgrounds.clone())
+                    .unwrap_or_else(|| vec![0]);
+                settings.0.selected_background =
+                    cycle_unlocked(&unlocked, settings.0.selected_background);
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
+            }
             SettingsButton::SyncNow => {
                 manual_sync.send(ManualSyncRequestEvent);
             }
@@ -355,7 +454,13 @@ fn theme_label(theme: &Theme) -> String {
 // UI construction
 // ---------------------------------------------------------------------------
 
-fn spawn_settings_panel(commands: &mut Commands, settings: &Settings, sync_status: &str) {
+fn spawn_settings_panel(
+    commands: &mut Commands,
+    settings: &Settings,
+    sync_status: &str,
+    unlocked_card_backs: &[usize],
+    unlocked_backgrounds: &[usize],
+) {
     commands
         .spawn((
             SettingsPanel,
@@ -457,6 +562,54 @@ fn spawn_settings_panel(commands: &mut Commands, settings: &Settings, sync_statu
                     ));
                     icon_button(row, "⇄", SettingsButton::ToggleTheme);
                 });
+
+                // Card back row — only shown when the player has unlocked more than one.
+                if unlocked_card_backs.len() > 1 {
+                    card.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("Card Back"),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(Color::srgb(0.85, 0.85, 0.80)),
+                        ));
+                        row.spawn((
+                            CardBackText,
+                            Text::new(card_back_label(settings.selected_card_back)),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                        icon_button(row, "⇄", SettingsButton::CycleCardBack);
+                    });
+                }
+
+                // Background row — only shown when the player has unlocked more than one.
+                if unlocked_backgrounds.len() > 1 {
+                    card.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new("Background"),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(Color::srgb(0.85, 0.85, 0.80)),
+                        ));
+                        row.spawn((
+                            BackgroundText,
+                            Text::new(background_label(settings.selected_background)),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                        icon_button(row, "⇄", SettingsButton::CycleBackground);
+                    });
+                }
 
                 // --- Sync section ---
                 section_label(card, "Sync");

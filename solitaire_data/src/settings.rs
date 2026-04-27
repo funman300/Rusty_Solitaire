@@ -84,6 +84,14 @@ pub struct Settings {
     /// Which sync backend is active.
     #[serde(default)]
     pub sync_backend: SyncBackend,
+    /// Index of the card-back design currently in use (0 = default).
+    /// Only indices present in `PlayerProgress::unlocked_card_backs` are valid.
+    #[serde(default)]
+    pub selected_card_back: usize,
+    /// Index of the background design currently in use (0 = default).
+    /// Only indices present in `PlayerProgress::unlocked_backgrounds` are valid.
+    #[serde(default)]
+    pub selected_background: usize,
     /// Set to `true` once the player has dismissed the first-run banner.
     #[serde(default)]
     pub first_run_complete: bool,
@@ -110,6 +118,8 @@ impl Default for Settings {
             animation_speed: AnimSpeed::Normal,
             theme: Theme::Green,
             sync_backend: SyncBackend::Local,
+            selected_card_back: 0,
+            selected_background: 0,
             first_run_complete: false,
         }
     }
@@ -264,6 +274,8 @@ mod tests {
                 url: "https://example.com".to_string(),
                 username: "testuser".to_string(),
             },
+            selected_card_back: 0,
+            selected_background: 0,
             first_run_complete: true,
         };
         save_settings_to(&path, &s).expect("save");

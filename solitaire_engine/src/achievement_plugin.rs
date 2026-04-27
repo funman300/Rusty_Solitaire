@@ -10,15 +10,16 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use chrono::{Local, Timelike, Utc};
 use solitaire_core::achievement::{
-    achievement_by_id, check_achievements, AchievementContext, ALL_ACHIEVEMENTS,
+    achievement_by_id, check_achievements, AchievementContext, Reward, ALL_ACHIEVEMENTS,
 };
 use solitaire_data::{
     achievements_file_path, load_achievements_from, save_achievements_to, AchievementRecord,
+    save_progress_to,
 };
 
 use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
-use crate::progress_plugin::{ProgressResource, ProgressUpdate};
+use crate::progress_plugin::{LevelUpEvent, ProgressResource, ProgressStoragePath, ProgressUpdate};
 use crate::resources::GameStateResource;
 use crate::stats_plugin::{StatsResource, StatsUpdate};
 
@@ -89,11 +90,13 @@ impl Plugin for AchievementPlugin {
 fn evaluate_on_win(
     mut wins: EventReader<GameWonEvent>,
     mut unlocks: EventWriter<AchievementUnlockedEvent>,
+    mut levelups: EventWriter<LevelUpEvent>,
     game: Res<GameStateResource>,
     stats: Res<StatsResource>,
-    progress: Res<ProgressResource>,
     path: Res<AchievementsStoragePath>,
+    progress_path: Res<ProgressStoragePath>,
     mut achievements: ResMut<AchievementsResource>,
+    mut progress: ResMut<ProgressResource>,
 ) {
     let Some(ev) = wins.read().last() else {
         return;
@@ -119,7 +122,9 @@ fn evaluate_on_win(
     }
 
     let now = Utc::now();
-    let mut changed = false;
+    let mut achievements_changed = false;
+    let mut progress_changed = false;
+
     for def in hits {
         let Some(record) = achievements.0.iter_mut().find(|r| r.id == def.id) else {
             continue;
@@ -128,14 +133,56 @@ fn evaluate_on_win(
             continue;
         }
         record.unlock(now);
-        changed = true;
+        achievements_changed = true;
+
+        // Grant the reward on first unlock.
+        if !record.reward_granted {
+            if let Some(reward) = def.reward {
+                match reward {
+                    Reward::CardBack(idx) => {
+                        if !progress.0.unlocked_card_backs.contains(&idx) {
+                            progress.0.unlocked_card_backs.push(idx);
+                            progress_changed = true;
+                        }
+                    }
+                    Reward::Background(idx) => {
+                        if !progress.0.unlocked_backgrounds.contains(&idx) {
+                            progress.0.unlocked_backgrounds.push(idx);
+                            progress_changed = true;
+                        }
+                    }
+                    Reward::BonusXp(amount) => {
+                        let prev_level = progress.0.add_xp(amount);
+                        if progress.0.leveled_up_from(prev_level) {
+                            levelups.send(LevelUpEvent {
+                                previous_level: prev_level,
+                                new_level: progress.0.level,
+                                total_xp: progress.0.total_xp,
+                            });
+                        }
+                        progress_changed = true;
+                    }
+                    Reward::Badge => {}
+                }
+            }
+            record.reward_granted = true;
+        }
+
         unlocks.send(AchievementUnlockedEvent(record.clone()));
     }
 
-    if changed {
+    if achievements_changed {
         if let Some(target) = &path.0 {
             if let Err(e) = save_achievements_to(target, &achievements.0) {
                 warn!("failed to save achievements: {e}");
+            }
+        }
+    }
+
+    if progress_changed {
+        if let Some(target) = &progress_path.0 {
+            if let Err(e) = save_progress_to(target, &progress.0) {
+                warn!("failed to save progress after reward: {e}");
             }
         }
     }

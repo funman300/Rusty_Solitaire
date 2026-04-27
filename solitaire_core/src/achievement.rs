@@ -34,6 +34,19 @@ pub struct AchievementContext {
     pub wall_clock_hour: Option<u32>,
 }
 
+/// Reward granted when an achievement is first unlocked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reward {
+    /// Unlocks a card-back design at the given index (0 is always unlocked).
+    CardBack(usize),
+    /// Unlocks a background design at the given index (0 is always unlocked).
+    Background(usize),
+    /// Awards bonus XP on top of the standard win XP.
+    BonusXp(u64),
+    /// A visual badge — no gameplay effect.
+    Badge,
+}
+
 /// A single achievement's static metadata + unlock condition.
 #[derive(Debug, Clone, Copy)]
 pub struct AchievementDef {
@@ -42,6 +55,8 @@ pub struct AchievementDef {
     pub description: &'static str,
     /// Hidden from the achievements screen until unlocked.
     pub secret: bool,
+    /// Reward granted on first unlock. `None` for cosmetic-only recognition.
+    pub reward: Option<Reward>,
     pub condition: fn(&AchievementContext) -> bool,
 }
 
@@ -112,6 +127,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "First Win",
         description: "Win your first game",
         secret: false,
+        reward: None,
         condition: first_win,
     },
     AchievementDef {
@@ -119,6 +135,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "On a Roll",
         description: "Win 3 games in a row",
         secret: false,
+        reward: Some(Reward::CardBack(1)),
         condition: on_a_roll,
     },
     AchievementDef {
@@ -126,6 +143,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Unstoppable",
         description: "Win 10 games in a row",
         secret: false,
+        reward: Some(Reward::Background(1)),
         condition: unstoppable,
     },
     AchievementDef {
@@ -133,6 +151,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Century",
         description: "Play 100 games",
         secret: false,
+        reward: None,
         condition: century,
     },
     AchievementDef {
@@ -140,6 +159,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Veteran",
         description: "Play 500 games",
         secret: false,
+        reward: Some(Reward::Badge),
         condition: veteran,
     },
     AchievementDef {
@@ -147,6 +167,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Speed Demon",
         description: "Win in under 3 minutes",
         secret: false,
+        reward: None,
         condition: speed_demon,
     },
     AchievementDef {
@@ -154,6 +175,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Lightning",
         description: "Win in under 90 seconds",
         secret: false,
+        reward: Some(Reward::CardBack(2)),
         condition: lightning,
     },
     AchievementDef {
@@ -161,6 +183,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "High Scorer",
         description: "Score at least 5,000 in one game",
         secret: false,
+        reward: None,
         condition: high_scorer,
     },
     AchievementDef {
@@ -168,6 +191,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Point Machine",
         description: "Accumulate 50,000 lifetime points",
         secret: false,
+        reward: Some(Reward::Background(2)),
         condition: point_machine,
     },
     AchievementDef {
@@ -175,6 +199,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "No Undo",
         description: "Win a game without using undo",
         secret: false,
+        reward: Some(Reward::BonusXp(25)),
         condition: no_undo,
     },
     AchievementDef {
@@ -182,6 +207,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Draw 3 Master",
         description: "Win 10 games in Draw 3 mode",
         secret: false,
+        reward: Some(Reward::CardBack(3)),
         condition: draw_three_master,
     },
     AchievementDef {
@@ -189,6 +215,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Night Owl",
         description: "Win a game after midnight",
         secret: false,
+        reward: None,
         condition: night_owl,
     },
     AchievementDef {
@@ -196,6 +223,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Early Bird",
         description: "Win a game before 6am",
         secret: false,
+        reward: None,
         condition: early_bird,
     },
     AchievementDef {
@@ -203,6 +231,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "???",
         description: "A secret achievement",
         secret: true,
+        reward: Some(Reward::CardBack(4)),
         condition: speed_and_skill,
     },
     AchievementDef {
@@ -210,6 +239,7 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         name: "Daily Devotee",
         description: "Complete the daily challenge 7 days in a row",
         secret: false,
+        reward: Some(Reward::Background(3)),
         condition: daily_devotee,
     },
 ];
