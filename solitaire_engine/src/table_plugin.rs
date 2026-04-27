@@ -244,4 +244,51 @@ mod tests {
         types.dedup();
         assert_eq!(types.len(), 13);
     }
+
+    // -----------------------------------------------------------------------
+    // Pure-function tests (no Bevy app required)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn all_three_themes_produce_distinct_colours() {
+        let green = theme_colour(&Theme::Green);
+        let blue  = theme_colour(&Theme::Blue);
+        let dark  = theme_colour(&Theme::Dark);
+        assert_ne!(green, blue, "Green and Blue must differ");
+        assert_ne!(green, dark, "Green and Dark must differ");
+        assert_ne!(blue,  dark, "Blue and Dark must differ");
+    }
+
+    #[test]
+    fn effective_background_index_0_matches_theme_colour() {
+        for theme in [Theme::Green, Theme::Blue, Theme::Dark] {
+            let expected = theme_colour(&theme);
+            let actual   = effective_background_colour(&theme, 0);
+            assert_eq!(
+                expected, actual,
+                "index 0 must always return the theme colour for {:?}",
+                theme
+            );
+        }
+    }
+
+    #[test]
+    fn effective_background_indices_1_through_3_are_distinct_from_theme() {
+        // Non-zero indices override the theme with a fixed colour.
+        let theme_green = theme_colour(&Theme::Green);
+        for idx in 1..=3 {
+            let eff = effective_background_colour(&Theme::Green, idx);
+            assert_ne!(eff, theme_green, "index {idx} must override the theme colour");
+        }
+    }
+
+    #[test]
+    fn effective_background_index_4_falls_through_to_charcoal() {
+        // All indices ≥ 4 share the same charcoal fallback.
+        let c4 = effective_background_colour(&Theme::Green, 4);
+        let c5 = effective_background_colour(&Theme::Green, 5);
+        let c99 = effective_background_colour(&Theme::Green, 99);
+        assert_eq!(c4, c5, "indices 4 and 5 must share the charcoal fallback");
+        assert_eq!(c4, c99, "index 99 must share the charcoal fallback");
+    }
 }

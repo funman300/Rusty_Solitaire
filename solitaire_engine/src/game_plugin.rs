@@ -387,6 +387,14 @@ mod tests {
     }
 
     #[test]
+    fn advance_elapsed_saturates_at_u64_max() {
+        let mut elapsed = u64::MAX;
+        let mut acc = 0.0;
+        advance_elapsed(&mut elapsed, &mut acc, 5.0, false);
+        assert_eq!(elapsed, u64::MAX, "elapsed must not overflow past u64::MAX");
+    }
+
+    #[test]
     fn advance_elapsed_handles_subsecond_deltas_without_skipping() {
         let mut elapsed = 0;
         let mut acc = 0.0;
