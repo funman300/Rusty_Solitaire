@@ -154,10 +154,9 @@ impl Plugin for AnimationPlugin {
                     handle_settings_toast,
                     handle_auto_complete_toast,
                     handle_new_game_confirm_toast,
-                    enqueue_toasts,
-                    drive_toast_display,
                     handle_xp_awarded_toast,
                     tick_toasts,
+                    (enqueue_toasts, drive_toast_display).chain(),
                 )
                     .after(GameMutation),
             );
