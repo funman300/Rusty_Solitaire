@@ -210,8 +210,18 @@ fn merge_progress(
         local.daily_challenge_streak.max(remote.daily_challenge_streak);
 
     // weekly_goal_progress: use whichever side has the more recent ISO week key.
+    // When both sides share the same week, merge per-goal counts with max so
+    // progress made on either device is never lost.
     let (weekly_goal_week_iso, weekly_goal_progress) =
         match (&local.weekly_goal_week_iso, &remote.weekly_goal_week_iso) {
+            (Some(l), Some(r)) if l == r => {
+                let mut merged = local.weekly_goal_progress.clone();
+                for (id, &rv) in &remote.weekly_goal_progress {
+                    let lv = merged.entry(id.clone()).or_insert(0);
+                    *lv = (*lv).max(rv);
+                }
+                (local.weekly_goal_week_iso.clone(), merged)
+            }
             (Some(l), Some(r)) if r > l => {
                 (remote.weekly_goal_week_iso.clone(), remote.weekly_goal_progress.clone())
             }
@@ -515,5 +525,47 @@ mod tests {
         let (merged, _) = merge(&local, &remote);
         assert_eq!(merged.progress.total_xp, 5500);
         assert_eq!(merged.progress.level, crate::progress::level_for_xp(5500));
+    }
+
+    // -----------------------------------------------------------------------
+    // Weekly goal merge
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn weekly_goals_same_week_takes_per_goal_max() {
+        let week = "2026-W17".to_string();
+        let mut local = default_payload();
+        local.progress.weekly_goal_week_iso = Some(week.clone());
+        local.progress.weekly_goal_progress.insert("weekly_5_wins".to_string(), 3);
+        local.progress.weekly_goal_progress.insert("weekly_3_fast".to_string(), 1);
+
+        let mut remote = default_payload();
+        remote.progress.weekly_goal_week_iso = Some(week.clone());
+        remote.progress.weekly_goal_progress.insert("weekly_5_wins".to_string(), 2);
+        remote.progress.weekly_goal_progress.insert("weekly_3_no_undo".to_string(), 2);
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.progress.weekly_goal_week_iso, Some(week));
+        // local had 3, remote had 2 — take max
+        assert_eq!(merged.progress.weekly_goal_progress.get("weekly_5_wins"), Some(&3));
+        // only in local
+        assert_eq!(merged.progress.weekly_goal_progress.get("weekly_3_fast"), Some(&1));
+        // only in remote
+        assert_eq!(merged.progress.weekly_goal_progress.get("weekly_3_no_undo"), Some(&2));
+    }
+
+    #[test]
+    fn weekly_goals_newer_remote_week_wins() {
+        let mut local = default_payload();
+        local.progress.weekly_goal_week_iso = Some("2026-W16".to_string());
+        local.progress.weekly_goal_progress.insert("weekly_5_wins".to_string(), 5);
+
+        let mut remote = default_payload();
+        remote.progress.weekly_goal_week_iso = Some("2026-W17".to_string());
+        remote.progress.weekly_goal_progress.insert("weekly_5_wins".to_string(), 1);
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.progress.weekly_goal_week_iso, Some("2026-W17".to_string()));
+        assert_eq!(merged.progress.weekly_goal_progress.get("weekly_5_wins"), Some(&1));
     }
 }
