@@ -41,7 +41,7 @@ pub use card_plugin::{CardEntity, CardLabel, CardPlugin};
 pub use events::{
     AchievementUnlockedEvent, CardFlippedEvent, DrawRequestEvent, GameWonEvent, InfoToastEvent,
     ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent,
-    NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
+    NewGameRequestEvent, StateChangedEvent, UndoRequestEvent, XpAwardedEvent,
 };
 pub use game_plugin::{GameMutation, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};

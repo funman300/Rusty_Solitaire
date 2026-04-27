@@ -80,3 +80,10 @@ pub struct NewGameConfirmEvent;
 /// a short string to the player, e.g. "Locked — reach level 5".
 #[derive(Event, Debug, Clone)]
 pub struct InfoToastEvent(pub String);
+
+/// Fired by `ProgressPlugin` immediately after awarding XP for a win so the
+/// animation layer can display a "+N XP" toast alongside the win cascade.
+#[derive(Event, Debug, Clone, Copy)]
+pub struct XpAwardedEvent {
+    pub amount: u64,
+}

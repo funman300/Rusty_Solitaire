@@ -12,7 +12,7 @@ use solitaire_data::{
     load_progress_from, progress_file_path, save_progress_to, xp_for_win, PlayerProgress,
 };
 
-use crate::events::GameWonEvent;
+use crate::events::{GameWonEvent, XpAwardedEvent};
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
 
@@ -65,6 +65,7 @@ impl Plugin for ProgressPlugin {
         app.insert_resource(ProgressResource(loaded))
             .insert_resource(ProgressStoragePath(self.storage_path.clone()))
             .add_event::<LevelUpEvent>()
+            .add_event::<XpAwardedEvent>()
             .add_event::<GameWonEvent>()
             .add_systems(
                 Update,
@@ -78,6 +79,7 @@ impl Plugin for ProgressPlugin {
 fn award_xp_on_win(
     mut wins: EventReader<GameWonEvent>,
     mut levelups: EventWriter<LevelUpEvent>,
+    mut xp_awarded: EventWriter<XpAwardedEvent>,
     game: Res<GameStateResource>,
     path: Res<ProgressStoragePath>,
     mut progress: ResMut<ProgressResource>,
@@ -86,6 +88,7 @@ fn award_xp_on_win(
         let used_undo = game.0.undo_count > 0;
         let amount = xp_for_win(ev.time_seconds, used_undo);
         let prev_level = progress.0.add_xp(amount);
+        xp_awarded.send(XpAwardedEvent { amount });
         if progress.0.leveled_up_from(prev_level) {
             levelups.send(LevelUpEvent {
                 previous_level: prev_level,

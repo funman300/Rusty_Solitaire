@@ -107,14 +107,24 @@ pub async fn opt_out(
 ///
 /// Sets `leaderboard_opt_in = 1` on the user row and creates/updates the
 /// leaderboard entry with the supplied display name.
+/// Maximum allowed length for a leaderboard display name.
+const DISPLAY_NAME_MAX: usize = 32;
+
 pub async fn opt_in(
     State(pool): State<SqlitePool>,
     user: AuthenticatedUser,
     Json(body): Json<OptInRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if body.display_name.trim().is_empty() {
+    let display_name = body.display_name.trim();
+    if display_name.is_empty() {
         return Err(AppError::BadRequest("display_name must not be empty".into()));
     }
+    if display_name.len() > DISPLAY_NAME_MAX {
+        return Err(AppError::BadRequest(format!(
+            "display_name must be at most {DISPLAY_NAME_MAX} characters"
+        )));
+    }
+    let display_name = display_name.to_string();
 
     // Mark the user as opted in.
     sqlx::query!(
@@ -134,7 +144,7 @@ pub async fn opt_in(
                display_name = excluded.display_name,
                recorded_at  = excluded.recorded_at"#,
         user.user_id,
-        body.display_name,
+        display_name,
         now
     )
     .execute(&pool)
