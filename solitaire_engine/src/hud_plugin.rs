@@ -10,6 +10,7 @@ use solitaire_core::game_state::GameMode;
 
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
+use crate::time_attack_plugin::TimeAttackResource;
 
 /// Marker on the score text node.
 #[derive(Component, Debug)]
@@ -71,36 +72,50 @@ fn spawn_hud(mut commands: Commands) {
 #[allow(clippy::type_complexity)]
 fn update_hud(
     game: Res<GameStateResource>,
+    time_attack: Option<Res<TimeAttackResource>>,
     mut score_q: Query<&mut Text, (With<HudScore>, Without<HudMoves>, Without<HudTime>, Without<HudMode>)>,
     mut moves_q: Query<&mut Text, (With<HudMoves>, Without<HudScore>, Without<HudTime>, Without<HudMode>)>,
     mut time_q: Query<&mut Text, (With<HudTime>, Without<HudScore>, Without<HudMoves>, Without<HudMode>)>,
     mut mode_q: Query<&mut Text, (With<HudMode>, Without<HudScore>, Without<HudMoves>, Without<HudTime>)>,
 ) {
-    if !game.is_changed() {
-        return;
+    let ta_active = time_attack.as_ref().is_some_and(|ta| ta.active);
+
+    // Score, moves, and mode only need updating when the game state changes.
+    if game.is_changed() {
+        let g = &game.0;
+        if let Ok(mut t) = score_q.get_single_mut() {
+            **t = format!("Score: {}", g.score);
+        }
+        if let Ok(mut t) = moves_q.get_single_mut() {
+            **t = format!("Moves: {}", g.move_count);
+        }
+        if let Ok(mut t) = mode_q.get_single_mut() {
+            **t = match g.mode {
+                GameMode::Classic => String::new(),
+                GameMode::Zen => "ZEN".to_string(),
+                GameMode::Challenge => "CHALLENGE".to_string(),
+                GameMode::TimeAttack => "TIME ATTACK".to_string(),
+            };
+        }
     }
 
-    let g = &game.0;
-
-    if let Ok(mut t) = score_q.get_single_mut() {
-        **t = format!("Score: {}", g.score);
-    }
-    if let Ok(mut t) = moves_q.get_single_mut() {
-        **t = format!("Moves: {}", g.move_count);
-    }
-    if let Ok(mut t) = time_q.get_single_mut() {
-        let secs = g.elapsed_seconds;
-        let m = secs / 60;
-        let s = secs % 60;
-        **t = format!("{m}:{s:02}");
-    }
-    if let Ok(mut t) = mode_q.get_single_mut() {
-        **t = match g.mode {
-            GameMode::Classic => String::new(),
-            GameMode::Zen => "ZEN".to_string(),
-            GameMode::Challenge => "CHALLENGE".to_string(),
-            GameMode::TimeAttack => "TIME ATTACK".to_string(),
-        };
+    // Time display: show Time Attack countdown every frame when active;
+    // otherwise show game elapsed time (updates once per second via game.is_changed()).
+    let update_time = ta_active || game.is_changed();
+    if update_time {
+        if let Ok(mut t) = time_q.get_single_mut() {
+            if let Some(ta) = time_attack.as_ref().filter(|ta| ta.active) {
+                let remaining = ta.remaining_secs.max(0.0) as u64;
+                let m = remaining / 60;
+                let s = remaining % 60;
+                **t = format!("{m}:{s:02}");
+            } else {
+                let secs = game.0.elapsed_seconds;
+                let m = secs / 60;
+                let s = secs % 60;
+                **t = format!("{m}:{s:02}");
+            }
+        }
     }
 }
 
