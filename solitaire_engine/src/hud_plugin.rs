@@ -6,7 +6,7 @@
 //! without a separate tick system.
 
 use bevy::prelude::*;
-use solitaire_core::game_state::GameMode;
+use solitaire_core::game_state::{DrawMode, GameMode};
 
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
@@ -91,7 +91,10 @@ fn update_hud(
         }
         if let Ok(mut t) = mode_q.get_single_mut() {
             **t = match g.mode {
-                GameMode::Classic => String::new(),
+                GameMode::Classic => match g.draw_mode {
+                    DrawMode::DrawOne => String::new(),
+                    DrawMode::DrawThree => "Draw 3".to_string(),
+                },
                 GameMode::Zen => "ZEN".to_string(),
                 GameMode::Challenge => "CHALLENGE".to_string(),
                 GameMode::TimeAttack => "TIME ATTACK".to_string(),
