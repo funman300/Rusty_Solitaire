@@ -68,3 +68,10 @@ pub struct AchievementUnlockedEvent(pub AchievementRecord);
 /// starting a new pull task if one is not already in flight.
 #[derive(Event, Debug, Clone, Copy, Default)]
 pub struct ManualSyncRequestEvent;
+
+/// Fired by `InputPlugin` when N is pressed while a game is in progress
+/// but confirmation has not yet been received. The animation plugin shows
+/// a "Press N again to confirm" toast. A second N press within the
+/// confirmation window sends `NewGameRequestEvent`.
+#[derive(Event, Debug, Clone, Copy, Default)]
+pub struct NewGameConfirmEvent;

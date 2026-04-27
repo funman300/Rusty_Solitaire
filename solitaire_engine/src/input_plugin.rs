@@ -25,8 +25,8 @@ use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 use crate::card_plugin::{CardEntity, TABLEAU_FAN_FRAC};
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::events::{
-    DrawRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent, StateChangedEvent,
-    UndoRequestEvent,
+    DrawRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent,
+    StateChangedEvent, UndoRequestEvent,
 };
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::ProgressResource;
@@ -47,32 +47,62 @@ pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                handle_keyboard,
-                handle_stock_click,
-                start_drag,
-                follow_drag,
-                end_drag.before(GameMutation),
-            )
-                .chain(),
-        );
+        app.add_event::<NewGameConfirmEvent>()
+            .add_systems(
+                Update,
+                (
+                    handle_keyboard,
+                    handle_stock_click,
+                    start_drag,
+                    follow_drag,
+                    end_drag.before(GameMutation),
+                )
+                    .chain(),
+            );
     }
 }
 
+/// Seconds after the first N press during which a second N confirms new game.
+const NEW_GAME_CONFIRM_WINDOW: f32 = 3.0;
+
+#[allow(clippy::too_many_arguments)]
 fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     progress: Option<Res<ProgressResource>>,
+    game: Option<Res<crate::resources::GameStateResource>>,
+    time: Res<Time>,
+    mut confirm_countdown: Local<f32>,
     mut undo: EventWriter<UndoRequestEvent>,
     mut new_game: EventWriter<NewGameRequestEvent>,
+    mut confirm_event: EventWriter<NewGameConfirmEvent>,
     mut draw: EventWriter<DrawRequestEvent>,
 ) {
+    // Tick down any active confirmation window.
+    if *confirm_countdown > 0.0 {
+        *confirm_countdown -= time.delta_secs();
+        if *confirm_countdown <= 0.0 {
+            *confirm_countdown = 0.0;
+        }
+    }
+
     if keys.just_pressed(KeyCode::KeyU) {
         undo.send(UndoRequestEvent);
     }
     if keys.just_pressed(KeyCode::KeyN) {
-        new_game.send(NewGameRequestEvent::default());
+        let active_game = game.as_ref().is_some_and(|g| g.0.move_count > 0 && !g.0.is_won);
+        if !active_game {
+            // No active game — start immediately.
+            new_game.send(NewGameRequestEvent::default());
+            *confirm_countdown = 0.0;
+        } else if *confirm_countdown > 0.0 {
+            // Second press within the window — confirmed.
+            new_game.send(NewGameRequestEvent::default());
+            *confirm_countdown = 0.0;
+        } else {
+            // First press on an active game — require confirmation.
+            *confirm_countdown = NEW_GAME_CONFIRM_WINDOW;
+            confirm_event.send(NewGameConfirmEvent);
+        }
     }
     if keys.just_pressed(KeyCode::KeyZ) {
         // Zen / Challenge / Time Attack are gated to level >= CHALLENGE_UNLOCK_LEVEL.

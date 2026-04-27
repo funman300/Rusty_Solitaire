@@ -40,7 +40,8 @@ pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
 pub use card_plugin::{CardEntity, CardLabel, CardPlugin};
 pub use events::{
     AchievementUnlockedEvent, CardFlippedEvent, DrawRequestEvent, GameWonEvent, ManualSyncRequestEvent,
-    MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
+    MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent, StateChangedEvent,
+    UndoRequestEvent,
 };
 pub use game_plugin::{GameMutation, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};

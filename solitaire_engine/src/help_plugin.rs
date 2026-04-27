@@ -44,7 +44,7 @@ fn spawn_help_screen(commands: &mut Commands) {
         "  Click stock  Draw".to_string(),
         String::new(),
         "-- New Game --".to_string(),
-        "  N            New Classic game".to_string(),
+        "  N            New Classic game (N twice if in progress)".to_string(),
         "  C            Start today's daily challenge".to_string(),
         "  Z            Start a Zen game (level 5+)".to_string(),
         "  X            Start the next Challenge (level 5+)".to_string(),
