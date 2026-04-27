@@ -665,6 +665,32 @@ mod tests {
         assert!(g.undo_stack_len() <= 64);
     }
 
+    #[test]
+    fn undo_count_starts_at_zero() {
+        assert_eq!(new_game().undo_count, 0);
+    }
+
+    #[test]
+    fn undo_count_increments_on_each_undo() {
+        let mut g = new_game();
+        g.draw().unwrap();
+        assert_eq!(g.undo_count, 0, "undo_count unchanged before calling undo");
+        g.undo().unwrap();
+        assert_eq!(g.undo_count, 1);
+        g.draw().unwrap();
+        g.undo().unwrap();
+        assert_eq!(g.undo_count, 2);
+    }
+
+    #[test]
+    fn undo_count_saturates_at_max() {
+        let mut g = new_game();
+        g.undo_count = u32::MAX;
+        g.draw().unwrap();
+        g.undo().unwrap();
+        assert_eq!(g.undo_count, u32::MAX, "undo_count must saturate at u32::MAX");
+    }
+
     // --- Scoring ---
 
     #[test]
