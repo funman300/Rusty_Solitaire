@@ -14,7 +14,9 @@ use bevy::prelude::*;
 use solitaire_data::save_game_state_to;
 
 use crate::game_plugin::GameStatePath;
+use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
+use crate::stats_plugin::StatsResource;
 
 /// Toggleable flag read by `tick_elapsed_time` and `advance_time_attack`.
 #[derive(Resource, Debug, Default)]
@@ -33,6 +35,7 @@ impl Plugin for PausePlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn toggle_pause(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -40,6 +43,8 @@ fn toggle_pause(
     screens: Query<Entity, With<PauseScreen>>,
     game: Option<Res<GameStateResource>>,
     path: Option<Res<GameStatePath>>,
+    progress: Option<Res<ProgressResource>>,
+    stats: Option<Res<StatsResource>>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
@@ -48,7 +53,10 @@ fn toggle_pause(
         commands.entity(entity).despawn_recursive();
         paused.0 = false;
     } else {
-        spawn_pause_screen(&mut commands);
+        // Snapshot current level and streak at pause time.
+        let level = progress.as_deref().map(|p| p.0.level);
+        let streak = stats.as_deref().map(|s| s.0.win_streak_current);
+        spawn_pause_screen(&mut commands, level, streak);
         paused.0 = true;
         // Persist the current game state whenever the player opens the pause
         // overlay so an OS-level kill still leaves a resumable save.
@@ -62,7 +70,12 @@ fn toggle_pause(
     }
 }
 
-fn spawn_pause_screen(commands: &mut Commands) {
+/// Spawns the full-screen pause overlay.
+///
+/// `level` and `streak` are optional snapshots taken at pause time. When
+/// `ProgressResource` or `StatsResource` is not installed (e.g. in headless
+/// tests), those lines are omitted from the overlay.
+fn spawn_pause_screen(commands: &mut Commands, level: Option<u32>, streak: Option<u32>) {
     commands
         .spawn((
             PauseScreen,
@@ -90,6 +103,18 @@ fn spawn_pause_screen(commands: &mut Commands) {
                 },
                 TextColor(Color::srgb(1.0, 0.87, 0.0)),
             ));
+            // Level and streak line — only shown when the resources are present.
+            if level.is_some() || streak.is_some() {
+                let info = build_level_streak_line(level, streak);
+                b.spawn((
+                    Text::new(info),
+                    TextFont {
+                        font_size: 22.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.75, 0.95, 0.75)),
+                ));
+            }
             b.spawn((
                 Text::new("Press Esc to resume"),
                 TextFont {
@@ -99,6 +124,19 @@ fn spawn_pause_screen(commands: &mut Commands) {
                 TextColor(Color::srgb(0.85, 0.85, 0.80)),
             ));
         });
+}
+
+/// Formats the level / win-streak summary line for the pause overlay.
+///
+/// Both values are optional because either resource may be absent in
+/// headless or partially-configured app contexts.
+fn build_level_streak_line(level: Option<u32>, streak: Option<u32>) -> String {
+    match (level, streak) {
+        (Some(l), Some(s)) => format!("Level {l}   Win streak: {s}"),
+        (Some(l), None) => format!("Level {l}"),
+        (None, Some(s)) => format!("Win streak: {s}"),
+        (None, None) => String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +211,76 @@ mod tests {
                 .count(),
             1,
             "third Esc must re-spawn PauseScreen"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // build_level_streak_line (pure function)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn level_streak_both_present() {
+        assert_eq!(
+            build_level_streak_line(Some(7), Some(3)),
+            "Level 7   Win streak: 3"
+        );
+    }
+
+    #[test]
+    fn level_streak_only_level() {
+        assert_eq!(build_level_streak_line(Some(5), None), "Level 5");
+    }
+
+    #[test]
+    fn level_streak_only_streak() {
+        assert_eq!(build_level_streak_line(None, Some(4)), "Win streak: 4");
+    }
+
+    #[test]
+    fn level_streak_neither() {
+        assert_eq!(build_level_streak_line(None, None), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pause screen with progress / stats resources present
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pause_screen_spawns_with_level_and_streak_when_resources_present() {
+        use crate::progress_plugin::{ProgressPlugin, ProgressResource};
+        use crate::stats_plugin::{StatsPlugin, StatsResource};
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(crate::game_plugin::GamePlugin)
+            .add_plugins(crate::table_plugin::TablePlugin)
+            .add_plugins(ProgressPlugin::headless())
+            .add_plugins(StatsPlugin::headless())
+            .add_plugins(PausePlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.update();
+
+        // Set known values.
+        app.world_mut().resource_mut::<ProgressResource>().0.level = 7;
+        app.world_mut().resource_mut::<StatsResource>().0.win_streak_current = 3;
+
+        press_esc(&mut app);
+        app.update();
+
+        // Verify the screen was spawned.
+        assert!(app.world().resource::<PausedResource>().0);
+
+        // Find the text nodes on the PauseScreen children and check one contains
+        // the expected level/streak string.
+        let texts: Vec<String> = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect();
+        assert!(
+            texts.iter().any(|t| t == "Level 7   Win streak: 3"),
+            "expected level/streak line in pause screen texts, got: {texts:?}"
         );
     }
 }

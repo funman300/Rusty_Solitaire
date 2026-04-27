@@ -19,12 +19,16 @@ use solitaire_core::card::{Card, Rank, Suit};
 use solitaire_core::game_state::{DrawMode, GameState};
 use solitaire_core::pile::PileType;
 
+use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
+
 use crate::animation_plugin::{CardAnim, EffectiveSlideDuration};
-use crate::events::StateChangedEvent;
+use crate::events::{CardFlippedEvent, StateChangedEvent};
 use crate::game_plugin::GameMutation;
 use crate::layout::{Layout, LayoutResource};
-use crate::resources::GameStateResource;
+use crate::pause_plugin::PausedResource;
+use crate::resources::{DragState, GameStateResource};
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
+use crate::table_plugin::PileMarker;
 
 /// Fraction of card height used as vertical offset between face-up tableau cards.
 pub const TABLEAU_FAN_FRAC: f32 = 0.25;
@@ -39,9 +43,13 @@ const STACK_FAN_FRAC: f32 = 0.003;
 /// Font size as a fraction of card width.
 const FONT_SIZE_FRAC: f32 = 0.28;
 
-const CARD_FACE_COLOUR: Color = Color::srgb(0.98, 0.98, 0.95);
-const RED_SUIT_COLOUR: Color = Color::srgb(0.78, 0.12, 0.15);
-const BLACK_SUIT_COLOUR: Color = Color::srgb(0.08, 0.08, 0.08);
+pub const CARD_FACE_COLOUR: Color = Color::srgb(0.98, 0.98, 0.95);
+pub const RED_SUIT_COLOUR: Color = Color::srgb(0.78, 0.12, 0.15);
+pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.08, 0.08, 0.08);
+
+/// Alternative face tint for red-suit cards in color-blind mode — a subtle
+/// blue wash that distinguishes them from black-suit cards without colour alone.
+const CARD_FACE_COLOUR_RED_CBM: Color = Color::srgba(0.85, 0.92, 1.0, 1.0);
 
 /// Returns the card back color for the given unlocked card-back index.
 /// Index 0 = default blue; 1–4 are unlockable alternate designs.
@@ -65,6 +73,56 @@ pub struct CardEntity {
 #[derive(Component, Debug)]
 pub struct CardLabel;
 
+/// Marker component indicating the card is currently highlighted as a hint.
+/// `remaining` counts down in real seconds; the highlight is removed when it
+/// reaches zero and the card sprite colour is restored to its normal value.
+#[derive(Component, Debug, Clone)]
+pub struct HintHighlight {
+    /// Seconds remaining before the highlight is cleared.
+    pub remaining: f32,
+}
+
+/// Marker on a `PileMarker` entity that is highlighted because the right-clicked
+/// card can legally be placed there.
+#[derive(Component, Debug)]
+pub struct RightClickHighlight;
+
+// ---------------------------------------------------------------------------
+// Task #34 — Card-flip animation
+// ---------------------------------------------------------------------------
+
+/// Phase of the two-stage flip animation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlipPhase {
+    /// Scale X from 1.0 → 0.0 (hiding the back face).
+    ScalingDown,
+    /// Scale X from 0.0 → 1.0 (revealing the front face).
+    ScalingUp,
+}
+
+/// Drives a 2-phase "card flip" animation on `CardEntity` entities.
+///
+/// The animation squashes X to 0, swaps the sprite to the face-up colour,
+/// then expands X back to 1. Total duration is `2 × FLIP_HALF_SECS`.
+#[derive(Component, Debug, Clone)]
+pub struct CardFlipAnim {
+    /// Seconds elapsed in the current phase.
+    pub timer: f32,
+    /// Which half of the flip we are in.
+    pub phase: FlipPhase,
+}
+
+/// Duration of each half of the flip animation (scale-down or scale-up).
+const FLIP_HALF_SECS: f32 = 0.08;
+
+// ---------------------------------------------------------------------------
+// Task #38 — Drag-elevation shadow
+// ---------------------------------------------------------------------------
+
+/// Marker component for the semi-transparent shadow sprite shown while dragging.
+#[derive(Component, Debug)]
+pub struct ShadowEntity;
+
 /// Renders cards by reading `GameStateResource` on `StateChangedEvent`.
 pub struct CardPlugin;
 
@@ -72,13 +130,24 @@ impl Plugin for CardPlugin {
     fn build(&self, app: &mut App) {
         // PostStartup ensures TablePlugin's Startup system has inserted
         // LayoutResource before we try to read it.
-        app.add_event::<SettingsChangedEvent>()
+        //
+        // `handle_right_click` reads `ButtonInput<MouseButton>`. Under
+        // `MinimalPlugins` (tests) this resource is absent by default, so we
+        // ensure it exists here. Under `DefaultPlugins` the call is a no-op.
+        app.init_resource::<ButtonInput<MouseButton>>()
+            .add_event::<SettingsChangedEvent>()
+            .add_event::<CardFlippedEvent>()
             .add_systems(PostStartup, sync_cards_startup)
             .add_systems(
                 Update,
                 (
                     sync_cards_on_change.after(GameMutation),
                     resync_cards_on_settings_change.before(sync_cards_on_change),
+                    start_flip_anim.after(GameMutation),
+                    tick_flip_anim,
+                    update_drag_shadow,
+                    tick_hint_highlight,
+                    handle_right_click,
                 ),
             );
     }
@@ -111,7 +180,8 @@ fn sync_cards_startup(
         let back_colour = settings
             .as_ref()
             .map_or_else(|| card_back_colour(0), |s| card_back_colour(s.0.selected_card_back));
-        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, &entities);
+        let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
+        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities);
     }
 }
 
@@ -132,7 +202,8 @@ fn sync_cards_on_change(
         let back_colour = settings
             .as_ref()
             .map_or_else(|| card_back_colour(0), |s| card_back_colour(s.0.selected_card_back));
-        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, &entities);
+        let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
+        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities);
     }
 }
 
@@ -142,6 +213,7 @@ fn sync_cards(
     layout: &Layout,
     slide_secs: f32,
     back_colour: Color,
+    color_blind: bool,
     entities: &Query<(Entity, &CardEntity, &Transform)>,
 ) {
     let positions = card_positions(game, layout);
@@ -165,9 +237,12 @@ fn sync_cards(
     for (card, position, z) in positions {
         match existing.get(&card.id) {
             Some(&(entity, cur)) => {
-                update_card_entity(&mut commands, entity, &card, position, z, layout, slide_secs, back_colour, cur)
+                update_card_entity(
+                    &mut commands, entity, &card, position, z, layout,
+                    slide_secs, back_colour, color_blind, cur,
+                )
             }
-            None => spawn_card_entity(&mut commands, &card, position, z, layout, back_colour),
+            None => spawn_card_entity(&mut commands, &card, position, z, layout, back_colour, color_blind),
         }
     }
 }
@@ -243,9 +318,22 @@ fn card_positions(game: &GameState, layout: &Layout) -> Vec<(Card, Vec2, f32)> {
     out
 }
 
-fn spawn_card_entity(commands: &mut Commands, card: &Card, pos: Vec2, z: f32, layout: &Layout, back_colour: Color) {
-    let body_colour = if card.face_up {
+/// Returns the appropriate face-up body colour for a card.
+///
+/// In color-blind mode, red-suit cards receive a subtle blue tint
+/// (`CARD_FACE_COLOUR_RED_CBM`) so they are distinguishable from black-suit
+/// cards without relying on the text colour alone.
+fn face_colour(card: &Card, color_blind: bool) -> Color {
+    if color_blind && card.suit.is_red() {
+        CARD_FACE_COLOUR_RED_CBM
+    } else {
         CARD_FACE_COLOUR
+    }
+}
+
+fn spawn_card_entity(commands: &mut Commands, card: &Card, pos: Vec2, z: f32, layout: &Layout, back_colour: Color, color_blind: bool) {
+    let body_colour = if card.face_up {
+        face_colour(card, color_blind)
     } else {
         back_colour
     };
@@ -288,10 +376,11 @@ fn update_card_entity(
     layout: &Layout,
     slide_secs: f32,
     back_colour: Color,
+    color_blind: bool,
     cur: Vec3,
 ) {
     let body_colour = if card.face_up {
-        CARD_FACE_COLOUR
+        face_colour(card, color_blind)
     } else {
         back_colour
     };
@@ -382,6 +471,299 @@ fn label_visibility(card: &Card) -> Visibility {
     } else {
         Visibility::Hidden
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task #34 — Card-flip animation systems
+// ---------------------------------------------------------------------------
+
+/// Listens for `CardFlippedEvent` and inserts a `CardFlipAnim` on the entity.
+///
+/// Skipped when `EffectiveSlideDuration::slide_secs == 0.0` (Instant speed).
+fn start_flip_anim(
+    mut events: EventReader<CardFlippedEvent>,
+    slide_dur: Option<Res<EffectiveSlideDuration>>,
+    mut commands: Commands,
+    card_entities: Query<(Entity, &CardEntity)>,
+) {
+    if slide_dur.is_some_and(|d| d.slide_secs == 0.0) {
+        // Instant animation speed — skip the flip effect entirely.
+        events.clear();
+        return;
+    }
+
+    for CardFlippedEvent(card_id) in events.read() {
+        for (entity, marker) in &card_entities {
+            if marker.card_id == *card_id {
+                commands.entity(entity).insert(CardFlipAnim {
+                    timer: 0.0,
+                    phase: FlipPhase::ScalingDown,
+                });
+                break;
+            }
+        }
+    }
+}
+
+/// Advances `CardFlipAnim` each frame, modifying `Transform::scale.x`.
+///
+/// - Phase `ScalingDown`: lerps scale.x from 1.0 → 0.0 over `FLIP_HALF_SECS`.
+/// - At the midpoint the phase switches to `ScalingUp` and scale.x resets to 0.
+/// - Phase `ScalingUp`:  lerps scale.x from 0.0 → 1.0 over `FLIP_HALF_SECS`.
+/// - When complete the component is removed and scale.x is restored to 1.0.
+fn tick_flip_anim(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut anims: Query<(Entity, &mut Transform, &mut CardFlipAnim)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut transform, mut anim) in &mut anims {
+        anim.timer += dt;
+        match anim.phase {
+            FlipPhase::ScalingDown => {
+                let t = (anim.timer / FLIP_HALF_SECS).min(1.0);
+                transform.scale.x = 1.0 - t;
+                if t >= 1.0 {
+                    anim.phase = FlipPhase::ScalingUp;
+                    anim.timer = 0.0;
+                    transform.scale.x = 0.0;
+                }
+            }
+            FlipPhase::ScalingUp => {
+                let t = (anim.timer / FLIP_HALF_SECS).min(1.0);
+                transform.scale.x = t;
+                if t >= 1.0 {
+                    transform.scale.x = 1.0;
+                    commands.entity(entity).remove::<CardFlipAnim>();
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task #38 — Drag-elevation shadow
+// ---------------------------------------------------------------------------
+
+/// Maintains a single `ShadowEntity` while cards are being dragged.
+///
+/// - If a drag is active, spawns (or repositions) a semi-transparent dark
+///   sprite behind the top dragged card.
+/// - If no drag is active, despawns the shadow entity.
+fn update_drag_shadow(
+    mut commands: Commands,
+    drag: Res<DragState>,
+    layout: Option<Res<LayoutResource>>,
+    card_entities: Query<(&CardEntity, &Transform)>,
+    mut shadow: Local<Option<Entity>>,
+) {
+    if drag.is_idle() {
+        // No drag in progress — remove shadow if it exists.
+        if let Some(e) = shadow.take() {
+            commands.entity(e).despawn_recursive();
+        }
+        return;
+    }
+
+    let Some(layout) = layout else { return };
+    let card_w = layout.0.card_size.x;
+    let card_h = layout.0.card_size.y;
+
+    // Find the world position of the first (top) dragged card.
+    let first_id = drag.cards.first().copied();
+    let top_pos = first_id.and_then(|id| {
+        card_entities
+            .iter()
+            .find(|(marker, _)| marker.card_id == id)
+            .map(|(_, t)| t.translation)
+    });
+
+    let Some(top_pos) = top_pos else { return };
+
+    // Shadow is slightly larger, offset behind-and-below, at a z slightly
+    // below the dragged cards.
+    let shadow_pos = top_pos + Vec3::new(-4.0, 4.0, -1.0);
+
+    match *shadow {
+        Some(e) => {
+            // Reposition the existing shadow.
+            commands.entity(e).insert(Transform::from_translation(shadow_pos));
+        }
+        None => {
+            // Spawn a new shadow sprite.
+            let e = commands
+                .spawn((
+                    ShadowEntity,
+                    Sprite {
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.35),
+                        custom_size: Some(Vec2::new(card_w + 8.0, card_h + 8.0)),
+                        ..default()
+                    },
+                    Transform::from_translation(shadow_pos),
+                    Visibility::default(),
+                ))
+                .id();
+            *shadow = Some(e);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task #28 — Hint highlight tick system
+// ---------------------------------------------------------------------------
+
+/// Counts down `HintHighlight::remaining` each frame. When it reaches zero,
+/// removes the component and resets the card sprite to its normal face-up colour.
+fn tick_hint_highlight(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut HintHighlight, &mut Sprite, &CardEntity)>,
+    game: Res<GameStateResource>,
+    settings: Option<Res<SettingsResource>>,
+) {
+    let back_idx = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
+    for (entity, mut hint, mut sprite, card_entity) in query.iter_mut() {
+        hint.remaining -= time.delta_secs();
+        if hint.remaining <= 0.0 {
+            // Restore normal face-up colour.
+            let is_face_up = game.0.piles.values()
+                .flat_map(|p| p.cards.iter())
+                .find(|c| c.id == card_entity.card_id)
+                .is_some_and(|c| c.face_up);
+            sprite.color = if is_face_up {
+                CARD_FACE_COLOUR
+            } else {
+                card_back_colour(back_idx)
+            };
+            commands.entity(entity).remove::<HintHighlight>();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task #46 — Right-click legal destination highlights
+// ---------------------------------------------------------------------------
+
+/// Color applied to a `PileMarker` sprite when it is a legal destination for
+/// the right-clicked card.
+const RIGHT_CLICK_HIGHLIGHT_COLOUR: Color = Color::srgba(0.2, 0.8, 0.2, 0.6);
+/// Restored color for `PileMarker` sprites when the highlight is cleared.
+const PILE_MARKER_DEFAULT_COLOUR: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
+
+/// Handles right-click: highlights legal destination piles for the clicked card,
+/// and clears highlights on any subsequent right- or left-click.
+///
+/// This system lives in `CardPlugin` to keep `InputPlugin` untouched.
+#[allow(clippy::too_many_arguments)]
+fn handle_right_click(
+    buttons: Option<Res<ButtonInput<MouseButton>>>,
+    paused: Option<Res<PausedResource>>,
+    drag: Res<DragState>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    layout: Option<Res<LayoutResource>>,
+    game: Res<GameStateResource>,
+    mut commands: Commands,
+    mut pile_markers: Query<(Entity, &PileMarker, &mut Sprite)>,
+    card_entities: Query<(Entity, &CardEntity, &Transform)>,
+    highlighted: Query<Entity, With<RightClickHighlight>>,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+
+    let Some(buttons) = buttons else { return };
+    let left_pressed = buttons.just_pressed(MouseButton::Left);
+    let right_pressed = buttons.just_pressed(MouseButton::Right);
+
+    // Clear existing highlights on any click.
+    if left_pressed || right_pressed {
+        for entity in &highlighted {
+            commands.entity(entity).remove::<RightClickHighlight>();
+        }
+        for (_entity, _, mut sprite) in &mut pile_markers {
+            if sprite.color == RIGHT_CLICK_HIGHLIGHT_COLOUR {
+                sprite.color = PILE_MARKER_DEFAULT_COLOUR;
+            }
+        }
+    }
+
+    // Only proceed for right-clicks while not dragging.
+    if !right_pressed || !drag.is_idle() {
+        return;
+    }
+
+    let Some(layout) = layout else { return };
+
+    // Convert cursor to world-space position.
+    let Some(world) = cursor_world_pos(&windows, &cameras) else { return };
+
+    // Find the topmost face-up card under the cursor.
+    let Some(card) = find_top_card_at(world, &game.0, &layout.0, &card_entities) else { return };
+
+    // Tint piles that legally accept the card.
+    for (entity, pile_marker, mut sprite) in &mut pile_markers {
+        let pile_type = &pile_marker.0;
+        let Some(pile) = game.0.piles.get(pile_type) else { continue };
+        let legal = match pile_type {
+            PileType::Foundation(suit) => {
+                can_place_on_foundation(&card, pile, *suit)
+            }
+            PileType::Tableau(_) => can_place_on_tableau(&card, pile),
+            _ => false,
+        };
+        if legal {
+            sprite.color = RIGHT_CLICK_HIGHLIGHT_COLOUR;
+            commands.entity(entity).insert(RightClickHighlight);
+        }
+    }
+}
+
+/// Converts cursor position to 2-D world coordinates.
+fn cursor_world_pos(
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
+    cameras: &Query<(&Camera, &GlobalTransform)>,
+) -> Option<Vec2> {
+    let window = windows.get_single().ok()?;
+    let cursor = window.cursor_position()?;
+    let (camera, camera_transform) = cameras.get_single().ok()?;
+    camera.viewport_to_world_2d(camera_transform, cursor).ok()
+}
+
+/// Returns the topmost face-up `Card` under `cursor` by checking axis-aligned
+/// bounding rectangles of all card sprites, picking the highest Z.
+fn find_top_card_at(
+    cursor: Vec2,
+    game: &GameState,
+    layout: &Layout,
+    card_entities: &Query<(Entity, &CardEntity, &Transform)>,
+) -> Option<Card> {
+    let half = layout.card_size / 2.0;
+    let mut best: Option<(f32, Card)> = None;
+
+    for (_, card_entity, transform) in card_entities.iter() {
+        let pos = transform.translation.truncate();
+        if cursor.x < pos.x - half.x
+            || cursor.x > pos.x + half.x
+            || cursor.y < pos.y - half.y
+            || cursor.y > pos.y + half.y
+        {
+            continue;
+        }
+        let card = game
+            .piles
+            .values()
+            .flat_map(|p| p.cards.iter())
+            .find(|c| c.id == card_entity.card_id && c.face_up)
+            .cloned();
+        if let Some(card) = card {
+            let z = transform.translation.z;
+            if best.as_ref().is_none_or(|(bz, _)| z > *bz) {
+                best = Some((z, card));
+            }
+        }
+    }
+    best.map(|(_, card)| card)
 }
 
 #[cfg(test)]
@@ -598,6 +980,69 @@ mod tests {
         for w in ys.windows(2) {
             assert!(w[0] > w[1]);
         }
+    }
+
+    #[test]
+    fn card_back_colour_known_indices_are_distinct() {
+        // Indices 0–3 must each produce a unique colour.
+        let colours: Vec<_> = (0..4).map(card_back_colour).collect();
+        for i in 0..colours.len() {
+            for j in (i + 1)..colours.len() {
+                assert_ne!(colours[i], colours[j], "indices {i} and {j} must be distinct");
+            }
+        }
+    }
+
+    #[test]
+    fn card_back_colour_out_of_range_does_not_panic() {
+        // Indices >= 4 are beyond the defined set; the wildcard arm must handle them
+        // without panicking and return the same teal fallback for all.
+        let c4  = card_back_colour(4);
+        let c5  = card_back_colour(5);
+        let c99 = card_back_colour(99);
+        assert_eq!(c4, c5,  "out-of-range indices must share the fallback colour");
+        assert_eq!(c4, c99, "index 99 must share the fallback colour");
+    }
+
+    // -----------------------------------------------------------------------
+    // Task #34 pure-function / phase-transition tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn flip_phase_scaling_down_starts_at_one() {
+        // A brand-new flip anim in ScalingDown at timer=0 should produce scale 1.0
+        // (no time has elapsed yet).
+        let t = 0.0_f32 / FLIP_HALF_SECS;
+        let scale_x = 1.0 - t.min(1.0);
+        assert!((scale_x - 1.0).abs() < 1e-6, "scale_x at timer=0 must be 1.0");
+    }
+
+    #[test]
+    fn flip_phase_scaling_down_reaches_zero_at_half_secs() {
+        let t = (FLIP_HALF_SECS / FLIP_HALF_SECS).min(1.0);
+        let scale_x = 1.0 - t;
+        assert!(scale_x.abs() < 1e-6, "scale_x must reach 0.0 after one half-period");
+    }
+
+    #[test]
+    fn flip_phase_scaling_up_starts_at_zero() {
+        let t = 0.0_f32 / FLIP_HALF_SECS;
+        let scale_x = t.min(1.0);
+        assert!(scale_x.abs() < 1e-6, "scale_x at start of ScalingUp must be 0.0");
+    }
+
+    #[test]
+    fn flip_phase_scaling_up_reaches_one_at_half_secs() {
+        let t = (FLIP_HALF_SECS / FLIP_HALF_SECS).min(1.0);
+        let scale_x = t;
+        assert!((scale_x - 1.0).abs() < 1e-6, "scale_x must reach 1.0 after second half-period");
+    }
+
+    #[test]
+    fn flip_phase_enum_equality() {
+        assert_eq!(FlipPhase::ScalingDown, FlipPhase::ScalingDown);
+        assert_eq!(FlipPhase::ScalingUp, FlipPhase::ScalingUp);
+        assert_ne!(FlipPhase::ScalingDown, FlipPhase::ScalingUp);
     }
 
     #[test]

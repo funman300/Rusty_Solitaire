@@ -6,6 +6,7 @@ pub mod auto_complete_plugin;
 pub mod audio_plugin;
 pub mod card_plugin;
 pub mod challenge_plugin;
+pub mod cursor_plugin;
 pub mod daily_challenge_plugin;
 pub mod events;
 pub mod game_plugin;
@@ -24,6 +25,7 @@ pub mod sync_plugin;
 pub mod table_plugin;
 pub mod time_attack_plugin;
 pub mod weekly_goals_plugin;
+pub mod win_summary_plugin;
 
 pub use achievement_plugin::{AchievementPlugin, AchievementsResource, AchievementsScreen};
 pub use challenge_plugin::{
@@ -37,11 +39,12 @@ pub use weekly_goals_plugin::{WeeklyGoalCompletedEvent, WeeklyGoalsPlugin};
 pub use animation_plugin::{AnimationPlugin, CardAnim};
 pub use auto_complete_plugin::AutoCompletePlugin;
 pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
-pub use card_plugin::{CardEntity, CardLabel, CardPlugin};
+pub use card_plugin::{CardEntity, CardLabel, CardPlugin, HintHighlight, RightClickHighlight};
+pub use cursor_plugin::CursorPlugin;
 pub use events::{
-    AchievementUnlockedEvent, CardFlippedEvent, DrawRequestEvent, GameWonEvent, InfoToastEvent,
-    ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent,
-    NewGameRequestEvent, StateChangedEvent, UndoRequestEvent, XpAwardedEvent,
+    AchievementUnlockedEvent, CardFlippedEvent, DrawRequestEvent, ForfeitEvent, GameWonEvent,
+    InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
+    NewGameConfirmEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent, XpAwardedEvent,
 };
 pub use game_plugin::{GameMutation, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};
@@ -60,4 +63,7 @@ pub use sync_plugin::{SyncPlugin, SyncProviderResource};
 pub use table_plugin::{PileMarker, TableBackground, TablePlugin};
 pub use time_attack_plugin::{
     TimeAttackEndedEvent, TimeAttackPlugin, TimeAttackResource, TIME_ATTACK_DURATION_SECS,
+};
+pub use win_summary_plugin::{
+    format_win_time, ScreenShakeResource, WinSummaryPending, WinSummaryPlugin,
 };

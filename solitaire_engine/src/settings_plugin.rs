@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use solitaire_core::game_state::DrawMode;
 use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, AnimSpeed, Settings};
@@ -74,6 +75,14 @@ struct AnimSpeedText;
 #[derive(Component, Debug)]
 struct BackgroundText;
 
+/// Marks the `Text` node showing the current color-blind mode state.
+#[derive(Component, Debug)]
+struct ColorBlindText;
+
+/// Marks the scrollable inner card so the mouse-wheel system can target it.
+#[derive(Component, Debug)]
+struct SettingsPanelScrollable;
+
 /// Tags interactive buttons inside the Settings panel.
 #[derive(Component, Debug)]
 enum SettingsButton {
@@ -86,6 +95,7 @@ enum SettingsButton {
     ToggleTheme,
     CycleCardBack,
     CycleBackground,
+    ToggleColorBlind,
     SyncNow,
     Done,
 }
@@ -129,7 +139,8 @@ impl Plugin for SettingsPlugin {
             .init_resource::<SettingsScreen>()
             .add_event::<SettingsChangedEvent>()
             .add_event::<ManualSyncRequestEvent>()
-            .add_systems(Update, (handle_volume_keys, toggle_settings_screen));
+            .add_event::<bevy::input::mouse::MouseWheel>()
+            .add_systems(Update, (handle_volume_keys, toggle_settings_screen, scroll_settings_panel));
 
         if self.ui_enabled {
             app.add_systems(
@@ -141,6 +152,7 @@ impl Plugin for SettingsPlugin {
                     update_card_back_text,
                     update_background_text,
                     update_anim_speed_text,
+                    update_color_blind_text,
                 ),
             );
         }
@@ -301,6 +313,18 @@ fn update_anim_speed_text(
     }
 }
 
+fn update_color_blind_text(
+    settings: Res<SettingsResource>,
+    mut text_nodes: Query<&mut Text, With<ColorBlindText>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut text_nodes {
+        **text = color_blind_label(settings.0.color_blind_mode);
+    }
+}
+
 fn card_back_label(idx: usize) -> String {
     if idx == 0 {
         "Default".to_string()
@@ -346,11 +370,12 @@ fn handle_settings_buttons(
     mut changed: EventWriter<SettingsChangedEvent>,
     mut manual_sync: EventWriter<ManualSyncRequestEvent>,
     progress: Option<Res<ProgressResource>>,
-    mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>)>,
-    mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>)>,
-    mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>, Without<AnimSpeedText>)>,
-    mut theme_text: Query<&mut Text, (With<ThemeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<AnimSpeedText>)>,
-    mut anim_speed_text: Query<&mut Text, (With<AnimSpeedText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>)>,
+    mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
+    mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
+    mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
+    mut theme_text: Query<&mut Text, (With<ThemeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
+    mut anim_speed_text: Query<&mut Text, (With<AnimSpeedText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<ColorBlindText>)>,
+    mut color_blind_text: Query<&mut Text, (With<ColorBlindText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>)>,
 ) {
     for (interaction, button) in &interaction_query {
         if *interaction != Interaction::Pressed {
@@ -456,6 +481,14 @@ fn handle_settings_buttons(
                 persist(&path, &settings.0);
                 changed.send(SettingsChangedEvent(settings.0.clone()));
             }
+            SettingsButton::ToggleColorBlind => {
+                settings.0.color_blind_mode = !settings.0.color_blind_mode;
+                persist(&path, &settings.0);
+                changed.send(SettingsChangedEvent(settings.0.clone()));
+                if let Ok(mut t) = color_blind_text.get_single_mut() {
+                    **t = color_blind_label(settings.0.color_blind_mode);
+                }
+            }
             SettingsButton::SyncNow => {
                 manual_sync.send(ManualSyncRequestEvent);
             }
@@ -489,6 +522,39 @@ fn theme_label(theme: &Theme) -> String {
     }
 }
 
+fn color_blind_label(enabled: bool) -> String {
+    if enabled { "ON".into() } else { "OFF".into() }
+}
+
+/// Scrolls the settings panel inner card in response to mouse-wheel events.
+///
+/// `offset_y` increases downward (0 = top of content). Scrolling down (ev.y < 0)
+/// adds to the offset; scrolling up subtracts. Clamped to >= 0 so it never
+/// scrolls past the top.
+fn scroll_settings_panel(
+    mut scroll_evr: EventReader<MouseWheel>,
+    screen: Res<SettingsScreen>,
+    mut scrollables: Query<&mut ScrollPosition, With<SettingsPanelScrollable>>,
+) {
+    if !screen.0 {
+        scroll_evr.clear();
+        return;
+    }
+    let delta_y: f32 = scroll_evr
+        .read()
+        .map(|ev| match ev.unit {
+            MouseScrollUnit::Line => ev.y * 50.0,
+            MouseScrollUnit::Pixel => ev.y,
+        })
+        .sum();
+    if delta_y == 0.0 {
+        return;
+    }
+    for mut sp in scrollables.iter_mut() {
+        sp.offset_y = (sp.offset_y - delta_y).max(0.0);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // UI construction
 // ---------------------------------------------------------------------------
@@ -518,15 +584,18 @@ fn spawn_settings_panel(
             ZIndex(200),
         ))
         .with_children(|root| {
-            // Inner card — max_height + clip_y keeps it on-screen on small windows.
+            // Inner card — max_height + scroll_y lets the player reach all rows
+            // on small windows by scrolling with the mouse wheel.
             root.spawn((
+                SettingsPanelScrollable,
+                ScrollPosition::default(),
                 Node {
                     flex_direction: FlexDirection::Column,
                     padding: UiRect::all(Val::Px(28.0)),
                     row_gap: Val::Px(14.0),
                     min_width: Val::Px(340.0),
                     max_height: Val::Percent(88.0),
-                    overflow: Overflow::clip_y(),
+                    overflow: Overflow::scroll_y(),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.11, 0.11, 0.14)),
@@ -624,6 +693,28 @@ fn spawn_settings_panel(
                         TextColor(Color::WHITE),
                     ));
                     icon_button(row, "⇄", SettingsButton::ToggleTheme);
+                });
+
+                // Color-blind mode row
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("Color-blind Mode"),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(0.85, 0.85, 0.80)),
+                    ));
+                    row.spawn((
+                        ColorBlindText,
+                        Text::new(color_blind_label(settings.color_blind_mode)),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                    icon_button(row, "⇄", SettingsButton::ToggleColorBlind);
                 });
 
                 // Card back row — only shown when the player has unlocked more than one.
@@ -941,5 +1032,93 @@ mod tests {
     #[test]
     fn cycle_unlocked_empty_returns_zero() {
         assert_eq!(cycle_unlocked(&[], 0), 0);
+    }
+
+    #[test]
+    fn scroll_is_noop_when_settings_panel_closed() {
+        use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+        let mut app = headless_app();
+        // Panel starts closed (SettingsScreen(false)); spawn a scrollable entity.
+        let entity = app
+            .world_mut()
+            .spawn((SettingsPanelScrollable, ScrollPosition::default()))
+            .id();
+        // Send a downward scroll event while the panel is closed.
+        app.world_mut().send_event(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: -3.0,
+            window: bevy::ecs::entity::Entity::PLACEHOLDER,
+        });
+        app.update();
+        // ScrollPosition must remain at 0.0 — panel was closed.
+        let offset = app
+            .world()
+            .entity(entity)
+            .get::<ScrollPosition>()
+            .unwrap()
+            .offset_y;
+        assert_eq!(offset, 0.0, "scroll must not move when panel is closed");
+    }
+
+    #[test]
+    fn scroll_moves_offset_when_panel_open() {
+        use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+        let mut app = headless_app();
+        // Open the panel.
+        app.world_mut().resource_mut::<SettingsScreen>().0 = true;
+        // Spawn a scrollable entity with an existing offset so we can distinguish clamping.
+        let entity = app
+            .world_mut()
+            .spawn((
+                SettingsPanelScrollable,
+                ScrollPosition { offset_y: 100.0, ..default() },
+            ))
+            .id();
+        // Scroll down by 2 lines (50 px/line → +100 px added to offset_y).
+        app.world_mut().send_event(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: -2.0,
+            window: bevy::ecs::entity::Entity::PLACEHOLDER,
+        });
+        app.update();
+        let offset = app
+            .world()
+            .entity(entity)
+            .get::<ScrollPosition>()
+            .unwrap()
+            .offset_y;
+        assert!((offset - 200.0).abs() < 1e-3, "scrolling down should increase offset_y; got {offset}");
+    }
+
+    #[test]
+    fn scroll_clamps_offset_to_zero_at_top() {
+        use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+        let mut app = headless_app();
+        app.world_mut().resource_mut::<SettingsScreen>().0 = true;
+        // Entity starts at 10 px offset.
+        let entity = app
+            .world_mut()
+            .spawn((
+                SettingsPanelScrollable,
+                ScrollPosition { offset_y: 10.0, ..default() },
+            ))
+            .id();
+        // Scroll up by 5 lines → would subtract 250 px, but must clamp to 0.
+        app.world_mut().send_event(MouseWheel {
+            unit: MouseScrollUnit::Line,
+            x: 0.0,
+            y: 5.0,
+            window: bevy::ecs::entity::Entity::PLACEHOLDER,
+        });
+        app.update();
+        let offset = app
+            .world()
+            .entity(entity)
+            .get::<ScrollPosition>()
+            .unwrap()
+            .offset_y;
+        assert_eq!(offset, 0.0, "scrolling past top must clamp to 0, got {offset}");
     }
 }

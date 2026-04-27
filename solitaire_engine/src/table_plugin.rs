@@ -124,9 +124,22 @@ fn apply_theme_on_settings_change(
     }
 }
 
+/// Returns the single-letter suit symbol used on empty foundation markers.
+///
+/// Matches the same ASCII convention used by `CardPlugin` for card labels.
+pub fn suit_symbol(suit: &Suit) -> &'static str {
+    match suit {
+        Suit::Spades   => "S",
+        Suit::Hearts   => "H",
+        Suit::Diamonds => "D",
+        Suit::Clubs    => "C",
+    }
+}
+
 fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
     let marker_colour = Color::srgba(1.0, 1.0, 1.0, 0.08);
     let marker_size = layout.card_size;
+    let font_size = layout.card_size.x * 0.28;
 
     let mut piles: Vec<PileType> = Vec::with_capacity(13);
     piles.push(PileType::Stock);
@@ -140,15 +153,40 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
 
     for pile in piles {
         let pos = layout.pile_positions[&pile];
-        commands.spawn((
+        let mut entity = commands.spawn((
             Sprite {
                 color: marker_colour,
                 custom_size: Some(marker_size),
                 ..default()
             },
             Transform::from_xyz(pos.x, pos.y, Z_PILE_MARKER),
-            PileMarker(pile),
+            PileMarker(pile.clone()),
         ));
+
+        // Task #35 — suit symbol on empty foundation placeholders.
+        if let PileType::Foundation(suit) = &pile {
+            let symbol = suit_symbol(suit).to_string();
+            entity.with_children(|b| {
+                b.spawn((
+                    Text2d::new(symbol),
+                    TextFont { font_size, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.45)),
+                    Transform::from_xyz(0.0, 0.0, 0.1),
+                ));
+            });
+        }
+
+        // Task #43 — King indicator on empty tableau placeholders.
+        if let PileType::Tableau(_) = &pile {
+            entity.with_children(|b| {
+                b.spawn((
+                    Text2d::new("K"),
+                    TextFont { font_size, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+                    Transform::from_xyz(0.0, 0.0, 0.1),
+                ));
+            });
+        }
     }
 }
 
@@ -290,5 +328,27 @@ mod tests {
         let c99 = effective_background_colour(&Theme::Green, 99);
         assert_eq!(c4, c5, "indices 4 and 5 must share the charcoal fallback");
         assert_eq!(c4, c99, "index 99 must share the charcoal fallback");
+    }
+
+    // -----------------------------------------------------------------------
+    // suit_symbol pure-function tests (Task #35)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn suit_symbol_returns_correct_letters() {
+        assert_eq!(suit_symbol(&Suit::Spades),   "S");
+        assert_eq!(suit_symbol(&Suit::Hearts),   "H");
+        assert_eq!(suit_symbol(&Suit::Diamonds), "D");
+        assert_eq!(suit_symbol(&Suit::Clubs),    "C");
+    }
+
+    #[test]
+    fn suit_symbol_all_four_are_distinct() {
+        let symbols: Vec<&str> = [Suit::Spades, Suit::Hearts, Suit::Diamonds, Suit::Clubs]
+            .iter()
+            .map(suit_symbol)
+            .collect();
+        let unique: std::collections::HashSet<&&str> = symbols.iter().collect();
+        assert_eq!(unique.len(), 4, "all four suit symbols must be distinct");
     }
 }

@@ -16,7 +16,7 @@ use solitaire_data::{
 };
 
 use crate::challenge_plugin::challenge_progress_label;
-use crate::events::{GameWonEvent, NewGameRequestEvent};
+use crate::events::{ForfeitEvent, GameWonEvent, InfoToastEvent, NewGameRequestEvent};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
@@ -72,6 +72,8 @@ impl Plugin for StatsPlugin {
             .insert_resource(StatsStoragePath(self.storage_path.clone()))
             .add_event::<GameWonEvent>()
             .add_event::<NewGameRequestEvent>()
+            .add_event::<ForfeitEvent>()
+            .add_event::<InfoToastEvent>()
             // record_abandoned must read `move_count` BEFORE handle_new_game
             // clobbers it with a fresh game.
             .add_systems(
@@ -83,6 +85,10 @@ impl Plugin for StatsPlugin {
             .add_systems(
                 Update,
                 update_stats_on_win.after(GameMutation).in_set(StatsUpdate),
+            )
+            .add_systems(
+                Update,
+                handle_forfeit.before(GameMutation).in_set(StatsUpdate),
             )
             .add_systems(Update, toggle_stats_screen.after(GameMutation));
     }
@@ -122,6 +128,26 @@ fn update_stats_on_new_game(
             stats.0.record_abandoned();
             persist(&path, &stats.0, "abandoned game");
         }
+    }
+}
+
+/// When the player presses G to forfeit, record the game as abandoned, save
+/// stats, fire an informational toast, and start a new game.
+fn handle_forfeit(
+    mut events: EventReader<ForfeitEvent>,
+    game: Res<GameStateResource>,
+    mut stats: ResMut<StatsResource>,
+    path: Res<StatsStoragePath>,
+    mut new_game: EventWriter<NewGameRequestEvent>,
+    mut toast: EventWriter<InfoToastEvent>,
+) {
+    for _ in events.read() {
+        if game.0.move_count > 0 && !game.0.is_won {
+            stats.0.record_abandoned();
+            persist(&path, &stats.0, "forfeit");
+        }
+        toast.send(InfoToastEvent("Game forfeited".to_string()));
+        new_game.send(NewGameRequestEvent::default());
     }
 }
 
@@ -359,6 +385,25 @@ mod tests {
         let stats = &app.world().resource::<StatsResource>().0;
         assert_eq!(stats.games_won, 1);
         assert_eq!(stats.games_played, 1);
+    }
+
+    #[test]
+    fn draw_three_win_increments_draw_three_wins_only() {
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<crate::resources::GameStateResource>()
+            .0
+            .draw_mode = solitaire_core::game_state::DrawMode::DrawThree;
+
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 200,
+        });
+        app.update();
+
+        let stats = &app.world().resource::<StatsResource>().0;
+        assert_eq!(stats.draw_three_wins, 1, "draw_three_wins must increment for DrawThree mode");
+        assert_eq!(stats.draw_one_wins, 0, "draw_one_wins must not increment for DrawThree mode");
     }
 
     #[test]

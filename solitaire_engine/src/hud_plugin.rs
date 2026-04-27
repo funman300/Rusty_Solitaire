@@ -1,4 +1,5 @@
-//! Persistent in-game HUD: score, move count, elapsed time, and mode badge.
+//! Persistent in-game HUD: score, move count, elapsed time, mode badge,
+//! daily-challenge constraint, and undo count.
 //!
 //! The HUD spawns once at startup and lives for the app's lifetime. Text is
 //! refreshed whenever `GameStateResource` changes (which happens on every move
@@ -8,25 +9,40 @@
 use bevy::prelude::*;
 use solitaire_core::game_state::{DrawMode, GameMode};
 
+use crate::daily_challenge_plugin::DailyChallengeResource;
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
 use crate::time_attack_plugin::TimeAttackResource;
 
 /// Marker on the score text node.
 #[derive(Component, Debug)]
-struct HudScore;
+pub struct HudScore;
 
 /// Marker on the move-count text node.
 #[derive(Component, Debug)]
-struct HudMoves;
+pub struct HudMoves;
 
 /// Marker on the elapsed-time text node.
 #[derive(Component, Debug)]
-struct HudTime;
+pub struct HudTime;
 
 /// Marker on the mode badge text node.
 #[derive(Component, Debug)]
-struct HudMode;
+pub struct HudMode;
+
+/// Marker on the daily-challenge constraint text node.
+///
+/// Displays the active goal (time limit or score target) when a daily challenge
+/// is in progress. Empty string when no challenge is active or the game is won.
+#[derive(Component, Debug)]
+pub struct HudChallenge;
+
+/// Marker on the undo-count text node.
+///
+/// Shows how many undos have been used this game. Displayed in amber when
+/// `undo_count > 0` because using undo blocks the no-undo achievement.
+#[derive(Component, Debug)]
+pub struct HudUndos;
 
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
@@ -59,28 +75,114 @@ fn spawn_hud(mut commands: Commands) {
         .with_children(|b| {
             b.spawn((HudScore, Text::new("Score: 0"), font.clone(), white));
             b.spawn((HudMoves, Text::new("Moves: 0"), font.clone(), white));
-            b.spawn((HudTime, Text::new("0:00"), font, white));
+            b.spawn((HudTime, Text::new("0:00"), font.clone(), white));
             b.spawn((
                 HudMode,
                 Text::new(""),
                 TextFont { font_size: 17.0, ..default() },
                 TextColor(Color::srgb(1.0, 0.85, 0.25)),
             ));
+            // Daily-challenge constraint (hidden until a challenge is active).
+            b.spawn((
+                HudChallenge,
+                Text::new(""),
+                TextFont { font_size: 17.0, ..default() },
+                TextColor(Color::srgb(0.4, 0.9, 1.0)),
+            ));
+            // Undo counter (white by default; turns amber when undos are used).
+            b.spawn((
+                HudUndos,
+                Text::new(""),
+                font,
+                white,
+            ));
         });
 }
 
-#[allow(clippy::type_complexity)]
+/// Formats a time-limit value in seconds as `"mm:ss"` for HUD display.
+///
+/// For example `format_time_limit(300)` returns `"5:00"`.
+pub fn format_time_limit(secs: u64) -> String {
+    let m = secs / 60;
+    let s = secs % 60;
+    format!("{m}:{s:02}")
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_hud(
     game: Res<GameStateResource>,
     time_attack: Option<Res<TimeAttackResource>>,
-    mut score_q: Query<&mut Text, (With<HudScore>, Without<HudMoves>, Without<HudTime>, Without<HudMode>)>,
-    mut moves_q: Query<&mut Text, (With<HudMoves>, Without<HudScore>, Without<HudTime>, Without<HudMode>)>,
-    mut time_q: Query<&mut Text, (With<HudTime>, Without<HudScore>, Without<HudMoves>, Without<HudMode>)>,
-    mut mode_q: Query<&mut Text, (With<HudMode>, Without<HudScore>, Without<HudMoves>, Without<HudTime>)>,
+    daily: Option<Res<DailyChallengeResource>>,
+    mut score_q: Query<
+        &mut Text,
+        (
+            With<HudScore>,
+            Without<HudMoves>,
+            Without<HudTime>,
+            Without<HudMode>,
+            Without<HudChallenge>,
+            Without<HudUndos>,
+        ),
+    >,
+    mut moves_q: Query<
+        &mut Text,
+        (
+            With<HudMoves>,
+            Without<HudScore>,
+            Without<HudTime>,
+            Without<HudMode>,
+            Without<HudChallenge>,
+            Without<HudUndos>,
+        ),
+    >,
+    mut time_q: Query<
+        &mut Text,
+        (
+            With<HudTime>,
+            Without<HudScore>,
+            Without<HudMoves>,
+            Without<HudMode>,
+            Without<HudChallenge>,
+            Without<HudUndos>,
+        ),
+    >,
+    mut mode_q: Query<
+        &mut Text,
+        (
+            With<HudMode>,
+            Without<HudScore>,
+            Without<HudMoves>,
+            Without<HudTime>,
+            Without<HudChallenge>,
+            Without<HudUndos>,
+        ),
+    >,
+    mut challenge_q: Query<
+        (&mut Text, &mut TextColor),
+        (
+            With<HudChallenge>,
+            Without<HudScore>,
+            Without<HudMoves>,
+            Without<HudTime>,
+            Without<HudMode>,
+            Without<HudUndos>,
+        ),
+    >,
+    mut undos_q: Query<
+        (&mut Text, &mut TextColor),
+        (
+            With<HudUndos>,
+            Without<HudScore>,
+            Without<HudMoves>,
+            Without<HudTime>,
+            Without<HudMode>,
+            Without<HudChallenge>,
+        ),
+    >,
 ) {
     let ta_active = time_attack.as_ref().is_some_and(|ta| ta.active);
 
-    // Score, moves, and mode only need updating when the game state changes.
+    // Score, moves, mode, challenge, and undos only need updating when game state changes.
     if game.is_changed() {
         let g = &game.0;
         let is_zen = g.mode == GameMode::Zen;
@@ -105,6 +207,31 @@ fn update_hud(
                 GameMode::Challenge => "CHALLENGE".to_string(),
                 GameMode::TimeAttack => "TIME ATTACK".to_string(),
             };
+        }
+
+        // --- Daily challenge constraint ---
+        if let Ok((mut t, _)) = challenge_q.get_single_mut() {
+            **t = if g.is_won {
+                // Hide constraint once the game is over.
+                String::new()
+            } else if let Some(dc) = daily.as_deref() {
+                challenge_hud_text(dc)
+            } else {
+                String::new()
+            };
+        }
+
+        // --- Undo count ---
+        if let Ok((mut t, mut color)) = undos_q.get_single_mut() {
+            let count = g.undo_count;
+            if count == 0 {
+                **t = String::new();
+                *color = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.80));
+            } else {
+                **t = format!("Undos: {count}");
+                // Amber warning: using undo blocks the no-undo achievement.
+                *color = TextColor(Color::srgb(1.0, 0.7, 0.2));
+            }
         }
     }
 
@@ -135,11 +262,27 @@ fn update_hud(
     }
 }
 
+/// Builds the HUD text for the active daily challenge constraints.
+///
+/// Returns `"Limit: mm:ss"` when a time limit is set, `"Goal: N pts"` when a
+/// score target is set, or an empty string when the challenge has no extra
+/// constraints.
+fn challenge_hud_text(dc: &DailyChallengeResource) -> String {
+    if let Some(secs) = dc.max_time_secs {
+        format!("Limit: {}", format_time_limit(secs))
+    } else if let Some(score) = dc.target_score {
+        format!("Goal: {score} pts")
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::game_plugin::GamePlugin;
     use crate::table_plugin::TablePlugin;
+    use chrono::Local;
     use solitaire_core::game_state::{DrawMode, GameState};
 
     fn headless_app() -> App {
@@ -219,5 +362,142 @@ mod tests {
         app.update();
         // 125 seconds = 2 minutes 5 seconds → "2:05"
         assert_eq!(read_hud_text::<HudTime>(&mut app), "2:05");
+    }
+
+    // -----------------------------------------------------------------------
+    // format_time_limit (pure function)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_time_limit_300_is_5_00() {
+        assert_eq!(format_time_limit(300), "5:00");
+    }
+
+    #[test]
+    fn format_time_limit_zero() {
+        assert_eq!(format_time_limit(0), "0:00");
+    }
+
+    #[test]
+    fn format_time_limit_pads_seconds() {
+        assert_eq!(format_time_limit(65), "1:05");
+    }
+
+    // -----------------------------------------------------------------------
+    // challenge_hud_text (pure function)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn challenge_hud_text_shows_time_limit() {
+        let dc = DailyChallengeResource {
+            date: Local::now().date_naive(),
+            seed: 1,
+            goal_description: None,
+            target_score: None,
+            max_time_secs: Some(300),
+        };
+        assert_eq!(challenge_hud_text(&dc), "Limit: 5:00");
+    }
+
+    #[test]
+    fn challenge_hud_text_shows_score_goal() {
+        let dc = DailyChallengeResource {
+            date: Local::now().date_naive(),
+            seed: 1,
+            goal_description: None,
+            target_score: Some(4000),
+            max_time_secs: None,
+        };
+        assert_eq!(challenge_hud_text(&dc), "Goal: 4000 pts");
+    }
+
+    #[test]
+    fn challenge_hud_text_empty_when_no_constraints() {
+        let dc = DailyChallengeResource {
+            date: Local::now().date_naive(),
+            seed: 1,
+            goal_description: None,
+            target_score: None,
+            max_time_secs: None,
+        };
+        assert_eq!(challenge_hud_text(&dc), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // HudChallenge in-app tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn challenge_hud_empty_when_no_daily_resource() {
+        // No DailyChallengeResource inserted → HudChallenge must be empty.
+        let mut app = headless_app();
+        app.world_mut().resource_mut::<GameStateResource>().0.score = 1; // force change
+        app.update();
+        assert_eq!(read_hud_text::<HudChallenge>(&mut app), "");
+    }
+
+    #[test]
+    fn challenge_hud_shows_time_limit_when_resource_present() {
+        let mut app = headless_app();
+        app.world_mut().insert_resource(DailyChallengeResource {
+            date: Local::now().date_naive(),
+            seed: 42,
+            goal_description: Some("Win fast".to_string()),
+            target_score: None,
+            max_time_secs: Some(300),
+        });
+        app.world_mut().resource_mut::<GameStateResource>().0.score = 1; // force change
+        app.update();
+        assert_eq!(read_hud_text::<HudChallenge>(&mut app), "Limit: 5:00");
+    }
+
+    #[test]
+    fn challenge_hud_shows_score_goal_when_resource_present() {
+        let mut app = headless_app();
+        app.world_mut().insert_resource(DailyChallengeResource {
+            date: Local::now().date_naive(),
+            seed: 42,
+            goal_description: None,
+            target_score: Some(4000),
+            max_time_secs: None,
+        });
+        app.world_mut().resource_mut::<GameStateResource>().0.score = 1;
+        app.update();
+        assert_eq!(read_hud_text::<HudChallenge>(&mut app), "Goal: 4000 pts");
+    }
+
+    #[test]
+    fn challenge_hud_clears_on_win() {
+        let mut app = headless_app();
+        app.world_mut().insert_resource(DailyChallengeResource {
+            date: Local::now().date_naive(),
+            seed: 42,
+            goal_description: None,
+            target_score: None,
+            max_time_secs: Some(300),
+        });
+        // Mark the game as won — HudChallenge should be empty.
+        app.world_mut().resource_mut::<GameStateResource>().0.is_won = true;
+        app.update();
+        assert_eq!(read_hud_text::<HudChallenge>(&mut app), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // HudUndos in-app tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn undos_hud_empty_at_game_start() {
+        let mut app = headless_app();
+        app.update();
+        assert_eq!(read_hud_text::<HudUndos>(&mut app), "");
+    }
+
+    #[test]
+    fn undos_hud_shows_count_after_undo() {
+        let mut app = headless_app();
+        app.world_mut().resource_mut::<GameStateResource>().0.undo_count = 3;
+        app.update();
+        assert_eq!(read_hud_text::<HudUndos>(&mut app), "Undos: 3");
     }
 }

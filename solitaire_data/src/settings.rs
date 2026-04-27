@@ -95,6 +95,11 @@ pub struct Settings {
     /// Set to `true` once the player has dismissed the first-run banner.
     #[serde(default)]
     pub first_run_complete: bool,
+    /// When `true`, red-suit card faces use a blue tint instead of the default
+    /// cream so they are distinguishable from black-suit cards without relying
+    /// solely on colour.
+    #[serde(default)]
+    pub color_blind_mode: bool,
 }
 
 fn default_draw_mode() -> DrawMode {
@@ -121,6 +126,7 @@ impl Default for Settings {
             selected_card_back: 0,
             selected_background: 0,
             first_run_complete: false,
+            color_blind_mode: false,
         }
     }
 }
@@ -277,10 +283,28 @@ mod tests {
             selected_card_back: 0,
             selected_background: 0,
             first_run_complete: true,
+            color_blind_mode: false,
         };
         save_settings_to(&path, &s).expect("save");
         let loaded = load_settings_from(&path);
         assert_eq!(loaded, s);
+    }
+
+    #[test]
+    fn round_trip_preserves_non_default_cosmetic_selections() {
+        // selected_card_back and selected_background must survive save→load with
+        // non-zero values — zero is the default and not a meaningful regression check.
+        let path = tmp_path("cosmetic_selections");
+        let _ = fs::remove_file(&path);
+        let s = Settings {
+            selected_card_back: 3,
+            selected_background: 2,
+            ..Settings::default()
+        };
+        save_settings_to(&path, &s).expect("save");
+        let loaded = load_settings_from(&path);
+        assert_eq!(loaded.selected_card_back, 3);
+        assert_eq!(loaded.selected_background, 2);
     }
 
     #[test]
@@ -318,5 +342,30 @@ mod tests {
         assert_eq!(s.theme, Theme::Green);
         assert_eq!(s.sync_backend, SyncBackend::Local);
         assert_eq!(s.draw_mode, DrawMode::DrawOne);
+        assert_eq!(s.selected_card_back, 0, "cosmetic card-back must default to 0 on old format");
+        assert_eq!(s.selected_background, 0, "cosmetic background must default to 0 on old format");
+        assert!(!s.color_blind_mode, "color_blind_mode must default to false on old format");
+    }
+
+    #[test]
+    fn color_blind_mode_defaults_to_false_when_field_absent() {
+        // Simulate a JSON file that has no color_blind_mode field.
+        let json = br#"{ "sfx_volume": 0.7 }"#;
+        let s: Settings = serde_json::from_slice(json).unwrap_or_default();
+        assert!(!s.color_blind_mode, "color_blind_mode must be false when absent from JSON");
+    }
+
+    #[test]
+    fn color_blind_mode_round_trips() {
+        let path = tmp_path("color_blind");
+        let _ = std::fs::remove_file(&path);
+        let s = Settings {
+            color_blind_mode: true,
+            ..Settings::default()
+        };
+        save_settings_to(&path, &s).expect("save");
+        let loaded = load_settings_from(&path);
+        assert!(loaded.color_blind_mode, "color_blind_mode must survive a save/load round-trip");
+        let _ = std::fs::remove_file(&path);
     }
 }
