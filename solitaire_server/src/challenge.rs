@@ -34,8 +34,8 @@ pub fn hash_date_to_u64(date: &str) -> u64 {
 /// so all players face exactly the same challenge on the same day.
 fn generate_goal(date: &str, seed: u64) -> ChallengeGoal {
     // Pick a goal variant based on seed modulo number-of-variants.
-    // Three variants cycle through: timed, high-score, and open.
-    match seed % 3 {
+    // Six variants give a fortnight of variety before any repeat.
+    match seed % 6 {
         0 => ChallengeGoal {
             date: date.to_string(),
             seed,
@@ -49,6 +49,27 @@ fn generate_goal(date: &str, seed: u64) -> ChallengeGoal {
             description: "Reach a score of 4 000 or more".to_string(),
             target_score: Some(4_000),
             max_time_secs: None,
+        },
+        2 => ChallengeGoal {
+            date: date.to_string(),
+            seed,
+            description: "Win in under 3 minutes".to_string(),
+            target_score: None,
+            max_time_secs: Some(180),
+        },
+        3 => ChallengeGoal {
+            date: date.to_string(),
+            seed,
+            description: "Reach a score of 5 000 or more".to_string(),
+            target_score: Some(5_000),
+            max_time_secs: None,
+        },
+        4 => ChallengeGoal {
+            date: date.to_string(),
+            seed,
+            description: "Win in under 8 minutes".to_string(),
+            target_score: None,
+            max_time_secs: Some(480),
         },
         _ => ChallengeGoal {
             date: date.to_string(),
