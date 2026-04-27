@@ -326,10 +326,35 @@ fn spawn_achievements_screen(commands: &mut Commands, records: &[AchievementReco
                                 TextColor(desc_color),
                             ));
                         }
+                        // Reward line
+                        if let Some(reward_str) = def.and_then(|d| d.reward).map(format_reward) {
+                            row.spawn((
+                                Text::new(format!("   Reward: {reward_str}")),
+                                TextFont { font_size: 12.0, ..default() },
+                                TextColor(Color::srgb(0.45, 0.75, 0.45)),
+                            ));
+                        }
+                        // Unlock date for unlocked achievements
+                        if let Some(date) = record.unlock_date {
+                            row.spawn((
+                                Text::new(format!("   Unlocked {}", date.format("%Y-%m-%d"))),
+                                TextFont { font_size: 11.0, ..default() },
+                                TextColor(Color::srgb(0.40, 0.40, 0.45)),
+                            ));
+                        }
                     });
                 }
             });
         });
+}
+
+fn format_reward(reward: Reward) -> String {
+    match reward {
+        Reward::CardBack(idx) => format!("Card Back #{idx}"),
+        Reward::Background(idx) => format!("Background #{idx}"),
+        Reward::BonusXp(xp) => format!("+{xp} XP"),
+        Reward::Badge => "Badge".to_string(),
+    }
 }
 
 #[cfg(test)]
