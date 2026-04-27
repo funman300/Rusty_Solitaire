@@ -130,3 +130,197 @@ impl PlayerProgress {
         true
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // level_for_xp
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn level_zero_at_zero_xp() {
+        assert_eq!(level_for_xp(0), 0);
+    }
+
+    #[test]
+    fn level_one_at_500_xp() {
+        assert_eq!(level_for_xp(500), 1);
+    }
+
+    #[test]
+    fn level_nine_at_4500_xp() {
+        assert_eq!(level_for_xp(4_500), 9);
+    }
+
+    #[test]
+    fn level_ten_at_5000_xp() {
+        assert_eq!(level_for_xp(5_000), 10);
+    }
+
+    #[test]
+    fn level_eleven_at_6000_xp() {
+        assert_eq!(level_for_xp(6_000), 11);
+    }
+
+    #[test]
+    fn level_scales_correctly_above_ten() {
+        // Level 10 + floor((7000 - 5000) / 1000) = 10 + 2 = 12
+        assert_eq!(level_for_xp(7_000), 12);
+    }
+
+    // -----------------------------------------------------------------------
+    // add_xp
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn add_xp_increases_total_xp() {
+        let mut p = PlayerProgress::default();
+        p.add_xp(300);
+        assert_eq!(p.total_xp, 300);
+    }
+
+    #[test]
+    fn add_xp_returns_previous_level() {
+        let mut p = PlayerProgress::default();
+        p.add_xp(400); // still level 0
+        let prev = p.add_xp(200); // crosses into level 1
+        assert_eq!(prev, 0, "returned level should be the pre-call level");
+        assert_eq!(p.level, 1);
+    }
+
+    #[test]
+    fn add_xp_saturates_on_overflow() {
+        let mut p = PlayerProgress::default();
+        p.total_xp = u64::MAX;
+        p.add_xp(1);
+        assert_eq!(p.total_xp, u64::MAX);
+    }
+
+    // -----------------------------------------------------------------------
+    // leveled_up_from
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn leveled_up_from_returns_true_when_level_increased() {
+        let mut p = PlayerProgress::default();
+        p.add_xp(600); // reaches level 1
+        assert!(p.leveled_up_from(0));
+    }
+
+    #[test]
+    fn leveled_up_from_returns_false_when_same_level() {
+        let p = PlayerProgress::default();
+        assert!(!p.leveled_up_from(0));
+    }
+
+    // -----------------------------------------------------------------------
+    // roll_weekly_goals_if_new_week
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn roll_weekly_goals_clears_progress_for_new_week() {
+        let mut p = PlayerProgress::default();
+        p.weekly_goal_week_iso = Some("2026-W16".to_string());
+        p.weekly_goal_progress.insert("weekly_5_wins".to_string(), 3);
+
+        let rolled = p.roll_weekly_goals_if_new_week("2026-W17");
+        assert!(rolled);
+        assert!(p.weekly_goal_progress.is_empty());
+        assert_eq!(p.weekly_goal_week_iso, Some("2026-W17".to_string()));
+    }
+
+    #[test]
+    fn roll_weekly_goals_is_noop_for_same_week() {
+        let mut p = PlayerProgress::default();
+        p.weekly_goal_week_iso = Some("2026-W17".to_string());
+        p.weekly_goal_progress.insert("weekly_5_wins".to_string(), 2);
+
+        let rolled = p.roll_weekly_goals_if_new_week("2026-W17");
+        assert!(!rolled);
+        assert_eq!(p.weekly_goal_progress.get("weekly_5_wins"), Some(&2));
+    }
+
+    // -----------------------------------------------------------------------
+    // record_weekly_progress
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn record_weekly_progress_increments_counter() {
+        let mut p = PlayerProgress::default();
+        p.roll_weekly_goals_if_new_week("2026-W17");
+        let done = p.record_weekly_progress("weekly_5_wins", 5);
+        assert!(!done, "1/5 should not be done");
+        assert_eq!(p.weekly_goal_progress.get("weekly_5_wins"), Some(&1));
+    }
+
+    #[test]
+    fn record_weekly_progress_returns_true_on_completion() {
+        let mut p = PlayerProgress::default();
+        p.roll_weekly_goals_if_new_week("2026-W17");
+        for _ in 0..4 {
+            p.record_weekly_progress("weekly_5_wins", 5);
+        }
+        let done = p.record_weekly_progress("weekly_5_wins", 5);
+        assert!(done, "5th increment should complete the goal");
+    }
+
+    #[test]
+    fn record_weekly_progress_does_not_exceed_target() {
+        let mut p = PlayerProgress::default();
+        p.roll_weekly_goals_if_new_week("2026-W17");
+        for _ in 0..10 {
+            p.record_weekly_progress("weekly_5_wins", 5);
+        }
+        // Counter must be capped at target — never go above.
+        assert_eq!(p.weekly_goal_progress.get("weekly_5_wins"), Some(&5));
+    }
+
+    // -----------------------------------------------------------------------
+    // record_daily_completion
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn record_daily_completion_starts_streak_at_one() {
+        let mut p = PlayerProgress::default();
+        let recorded = p.record_daily_completion(date(2026, 4, 20));
+        assert!(recorded);
+        assert_eq!(p.daily_challenge_streak, 1);
+        assert_eq!(p.daily_challenge_last_completed, Some(date(2026, 4, 20)));
+    }
+
+    #[test]
+    fn record_daily_completion_same_day_is_noop() {
+        let mut p = PlayerProgress::default();
+        p.record_daily_completion(date(2026, 4, 20));
+        let recorded = p.record_daily_completion(date(2026, 4, 20));
+        assert!(!recorded);
+        assert_eq!(p.daily_challenge_streak, 1, "streak must not double-count same day");
+    }
+
+    #[test]
+    fn record_daily_completion_consecutive_days_extend_streak() {
+        let mut p = PlayerProgress::default();
+        p.record_daily_completion(date(2026, 4, 20));
+        p.record_daily_completion(date(2026, 4, 21));
+        assert_eq!(p.daily_challenge_streak, 2);
+    }
+
+    #[test]
+    fn record_daily_completion_gap_resets_streak_to_one() {
+        let mut p = PlayerProgress::default();
+        p.record_daily_completion(date(2026, 4, 20));
+        p.record_daily_completion(date(2026, 4, 22)); // skip the 21st
+        assert_eq!(p.daily_challenge_streak, 1, "gap must reset streak");
+    }
+}
