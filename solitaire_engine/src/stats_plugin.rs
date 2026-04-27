@@ -191,6 +191,7 @@ fn spawn_stats_screen(
         lines.push("=== Progression ===".to_string());
         lines.push(format!("Level:         {}", p.level));
         lines.push(format!("Total XP:      {}", p.total_xp));
+        lines.push(format!("Next Level:    {}", xp_to_next_level_label(p.total_xp, p.level)));
         lines.push(format!(
             "Daily Streak:  {}",
             p.daily_challenge_streak
@@ -268,6 +269,25 @@ fn spawn_stats_screen(
                 ));
             }
         });
+}
+
+/// Returns XP remaining until next level, formatted as "N XP (P%)".
+fn xp_to_next_level_label(total_xp: u64, level: u32) -> String {
+    let xp_current = if level < 10 {
+        level as u64 * 500
+    } else {
+        5_000 + (level as u64 - 10) * 1_000
+    };
+    let xp_next = if level < 10 {
+        (level as u64 + 1) * 500
+    } else {
+        5_000 + (level as u64 - 9) * 1_000
+    };
+    let span = xp_next - xp_current;
+    let done = total_xp.saturating_sub(xp_current).min(span);
+    let pct = if span == 0 { 100 } else { done.saturating_mul(100).checked_div(span).unwrap_or(100) };
+    let remaining = span - done;
+    format!("{remaining} XP ({pct}%)")
 }
 
 fn format_duration(secs: u64) -> String {
@@ -433,5 +453,25 @@ mod tests {
     #[test]
     fn format_id_list_sorts_dedups_and_prefixes() {
         assert_eq!(format_id_list(&[3, 1, 1, 2]), "#1, #2, #3");
+    }
+
+    #[test]
+    fn xp_to_next_level_label_at_zero_xp() {
+        // Level 0, 0 XP: 500 needed, 0% done.
+        assert_eq!(xp_to_next_level_label(0, 0), "500 XP (0%)");
+    }
+
+    #[test]
+    fn xp_to_next_level_label_halfway_through_level_1() {
+        // Level 1 starts at 500 XP, level 2 at 1000 XP.
+        // At 750 XP: 250 done of 500, 50%, 250 remaining.
+        assert_eq!(xp_to_next_level_label(750, 1), "250 XP (50%)");
+    }
+
+    #[test]
+    fn xp_to_next_level_label_at_level_10_boundary() {
+        // Level 10 starts at 5000 XP, level 11 at 6000 XP.
+        // At 5000 XP: 0 done, 0%, 1000 remaining.
+        assert_eq!(xp_to_next_level_label(5_000, 10), "1000 XP (0%)");
     }
 }
