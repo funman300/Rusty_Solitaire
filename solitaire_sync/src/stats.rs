@@ -74,3 +74,53 @@ impl StatsSnapshot {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn win_rate_is_none_before_any_game() {
+        let s = StatsSnapshot::default();
+        assert!(s.win_rate().is_none());
+    }
+
+    #[test]
+    fn win_rate_100_when_all_games_won() {
+        let s = StatsSnapshot {
+            games_played: 5,
+            games_won: 5,
+            ..StatsSnapshot::default()
+        };
+        let rate = s.win_rate().expect("should have a rate");
+        assert!((rate - 100.0).abs() < 0.01, "expected 100.0, got {rate}");
+    }
+
+    #[test]
+    fn win_rate_50_when_half_won() {
+        let s = StatsSnapshot {
+            games_played: 10,
+            games_won: 5,
+            ..StatsSnapshot::default()
+        };
+        let rate = s.win_rate().expect("should have a rate");
+        assert!((rate - 50.0).abs() < 0.01, "expected 50.0, got {rate}");
+    }
+
+    #[test]
+    fn win_rate_0_when_no_wins() {
+        let s = StatsSnapshot {
+            games_played: 3,
+            games_won: 0,
+            ..StatsSnapshot::default()
+        };
+        let rate = s.win_rate().expect("should have a rate");
+        assert!((rate - 0.0).abs() < 0.01, "expected 0.0, got {rate}");
+    }
+
+    #[test]
+    fn fastest_win_seconds_defaults_to_max() {
+        let s = StatsSnapshot::default();
+        assert_eq!(s.fastest_win_seconds, u64::MAX);
+    }
+}

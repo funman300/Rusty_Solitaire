@@ -46,3 +46,36 @@ impl AchievementRecord {
         self.unlock_date = Some(at);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn locked_creates_an_unlocked_record() {
+        let r = AchievementRecord::locked("first_win");
+        assert_eq!(r.id, "first_win");
+        assert!(!r.unlocked);
+        assert!(r.unlock_date.is_none());
+        assert!(!r.reward_granted);
+    }
+
+    #[test]
+    fn unlock_sets_unlocked_and_stores_timestamp() {
+        let mut r = AchievementRecord::locked("first_win");
+        let ts = Utc::now();
+        r.unlock(ts);
+        assert!(r.unlocked);
+        assert_eq!(r.unlock_date, Some(ts));
+    }
+
+    #[test]
+    fn unlock_is_idempotent_and_preserves_earliest_date() {
+        let mut r = AchievementRecord::locked("first_win");
+        let early = DateTime::UNIX_EPOCH;
+        let later = Utc::now();
+        r.unlock(early);
+        r.unlock(later); // should be a no-op
+        assert_eq!(r.unlock_date, Some(early), "earliest unlock date must be preserved");
+    }
+}
