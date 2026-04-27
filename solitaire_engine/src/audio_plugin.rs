@@ -26,7 +26,8 @@ use kira::track::{TrackBuilder, TrackHandle};
 use kira::tween::Tween;
 
 use crate::events::{
-    DrawRequestEvent, GameWonEvent, MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent,
+    CardFlippedEvent, DrawRequestEvent, GameWonEvent, MoveRejectedEvent, MoveRequestEvent,
+    NewGameRequestEvent,
 };
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
 
@@ -85,6 +86,7 @@ impl Plugin for AudioPlugin {
             .add_event::<MoveRejectedEvent>()
             .add_event::<NewGameRequestEvent>()
             .add_event::<GameWonEvent>()
+            .add_event::<CardFlippedEvent>()
             .add_event::<SettingsChangedEvent>()
             .add_systems(
                 Startup,
@@ -98,6 +100,7 @@ impl Plugin for AudioPlugin {
                     play_on_rejected,
                     play_on_new_game,
                     play_on_win,
+                    play_on_card_flip,
                     apply_volume_on_change,
                 ),
             );
@@ -237,6 +240,19 @@ fn play_on_win(
     };
     for _ in events.read() {
         play(&mut audio, &lib.fanfare);
+    }
+}
+
+fn play_on_card_flip(
+    mut events: EventReader<CardFlippedEvent>,
+    mut audio: NonSendMut<AudioState>,
+    lib: Option<Res<SoundLibrary>>,
+) {
+    let Some(lib) = lib else {
+        return;
+    };
+    for _ in events.read() {
+        play(&mut audio, &lib.flip);
     }
 }
 

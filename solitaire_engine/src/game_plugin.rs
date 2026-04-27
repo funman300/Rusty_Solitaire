@@ -175,12 +175,33 @@ fn handle_move(
     mut game: ResMut<GameStateResource>,
     mut changed: EventWriter<StateChangedEvent>,
     mut won: EventWriter<GameWonEvent>,
+    mut flipped: EventWriter<crate::events::CardFlippedEvent>,
     path: Option<Res<GameStatePath>>,
 ) {
     for ev in moves.read() {
         let was_won = game.0.is_won;
+        // Identify the card that will be exposed (and may flip face-up) by the move.
+        // It's the card just below the bottom of the moving stack in the source pile.
+        let flip_candidate_id = game.0.piles.get(&ev.from).and_then(|p| {
+            let n = p.cards.len();
+            if n > ev.count {
+                let c = &p.cards[n - ev.count - 1];
+                if !c.face_up { Some(c.id) } else { None }
+            } else {
+                None
+            }
+        });
         match game.0.move_cards(ev.from.clone(), ev.to.clone(), ev.count) {
             Ok(()) => {
+                // Fire flip event if the candidate card is now face-up.
+                if let Some(fid) = flip_candidate_id {
+                    if game.0.piles.get(&ev.from)
+                        .and_then(|p| p.cards.last())
+                        .is_some_and(|c| c.id == fid && c.face_up)
+                    {
+                        flipped.send(crate::events::CardFlippedEvent(fid));
+                    }
+                }
                 changed.send(StateChangedEvent);
                 if !was_won && game.0.is_won {
                     won.send(GameWonEvent {
@@ -444,5 +465,91 @@ mod tests {
         app.update();
 
         assert!(!path.exists(), "saved file should be deleted after new game");
+    }
+
+    #[test]
+    fn moving_cards_off_face_down_card_fires_card_flipped_event() {
+        use solitaire_core::card::{Card, Rank, Suit};
+        let mut app = test_app(1);
+        // Build a tableau with two cards: a face-down King at bottom, face-up Queen on top.
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            let t = gs.0.piles.get_mut(&PileType::Tableau(0)).unwrap();
+            t.cards.clear();
+            t.cards.push(Card { id: 900, suit: Suit::Spades, rank: Rank::King, face_up: false });
+            t.cards.push(Card { id: 901, suit: Suit::Hearts, rank: Rank::Queen, face_up: true });
+        }
+        // Set up an empty Tableau(1) for the Queen to land on.
+        app.world_mut()
+            .resource_mut::<GameStateResource>()
+            .0
+            .piles
+            .get_mut(&PileType::Tableau(1))
+            .unwrap()
+            .cards
+            .clear();
+
+        // A King must be in Tableau(1) for Queen to land there; skip validation
+        // by placing a King first.
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            let t = gs.0.piles.get_mut(&PileType::Tableau(1)).unwrap();
+            t.cards.push(Card { id: 902, suit: Suit::Clubs, rank: Rank::King, face_up: true });
+        }
+
+        app.world_mut().send_event(MoveRequestEvent {
+            from: PileType::Tableau(0),
+            to: PileType::Tableau(1),
+            count: 1,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<crate::events::CardFlippedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).collect();
+        assert_eq!(fired.len(), 1, "CardFlippedEvent must fire when a face-down card is exposed");
+        assert_eq!(fired[0].0, 900, "event must carry the flipped card's id");
+    }
+
+    #[test]
+    fn moving_cards_off_face_up_card_does_not_fire_card_flipped_event() {
+        use solitaire_core::card::{Card, Rank, Suit};
+        let mut app = test_app(1);
+        // Build a tableau with two face-up cards.
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            let t = gs.0.piles.get_mut(&PileType::Tableau(0)).unwrap();
+            t.cards.clear();
+            t.cards.push(Card { id: 910, suit: Suit::Clubs, rank: Rank::King, face_up: true });
+            t.cards.push(Card { id: 911, suit: Suit::Hearts, rank: Rank::Queen, face_up: true });
+        }
+        app.world_mut()
+            .resource_mut::<GameStateResource>()
+            .0
+            .piles
+            .get_mut(&PileType::Tableau(1))
+            .unwrap()
+            .cards
+            .clear();
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            gs.0.piles
+                .get_mut(&PileType::Tableau(1))
+                .unwrap()
+                .cards
+                .push(Card { id: 912, suit: Suit::Spades, rank: Rank::King, face_up: true });
+        }
+
+        app.world_mut().send_event(MoveRequestEvent {
+            from: PileType::Tableau(0),
+            to: PileType::Tableau(1),
+            count: 1,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<crate::events::CardFlippedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).collect();
+        assert!(fired.is_empty(), "no flip event when exposed card was already face-up");
     }
 }
