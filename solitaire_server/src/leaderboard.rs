@@ -119,7 +119,7 @@ pub async fn opt_in(
     if display_name.is_empty() {
         return Err(AppError::BadRequest("display_name must not be empty".into()));
     }
-    if display_name.len() > DISPLAY_NAME_MAX {
+    if display_name.chars().count() > DISPLAY_NAME_MAX {
         return Err(AppError::BadRequest(format!(
             "display_name must be at most {DISPLAY_NAME_MAX} characters"
         )));

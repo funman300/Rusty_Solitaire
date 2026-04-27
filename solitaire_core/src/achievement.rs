@@ -476,4 +476,105 @@ mod tests {
         assert_eq!(achievement_by_id("first_win").map(|d| d.name), Some("First Win"));
         assert!(achievement_by_id("nonexistent").is_none());
     }
+
+    #[test]
+    fn on_a_roll_requires_streak_of_3() {
+        let mut c = ctx();
+        c.win_streak_current = 2;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"on_a_roll"));
+
+        c.win_streak_current = 3;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"on_a_roll"));
+    }
+
+    #[test]
+    fn unstoppable_requires_streak_of_10() {
+        let mut c = ctx();
+        c.win_streak_current = 9;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"unstoppable"));
+        assert!(ids.contains(&"on_a_roll"), "streak 9 must still satisfy on_a_roll");
+
+        c.win_streak_current = 10;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"unstoppable"));
+        assert!(ids.contains(&"on_a_roll"), "streak 10 must also satisfy on_a_roll");
+    }
+
+    #[test]
+    fn century_requires_100_games_played() {
+        let mut c = ctx();
+        c.games_played = 99;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"century"));
+
+        c.games_played = 100;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"century"));
+    }
+
+    #[test]
+    fn veteran_requires_500_games_played() {
+        let mut c = ctx();
+        c.games_played = 499;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"veteran"));
+        assert!(ids.contains(&"century"), "499 games must also satisfy century");
+
+        c.games_played = 500;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"veteran"));
+        assert!(ids.contains(&"century"), "500 games must also satisfy century");
+    }
+
+    #[test]
+    fn high_scorer_requires_best_single_score_of_5000() {
+        let mut c = ctx();
+        c.best_single_score = 4_999;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"high_scorer"));
+
+        c.best_single_score = 5_000;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"high_scorer"));
+    }
+
+    #[test]
+    fn point_machine_requires_50000_lifetime_score() {
+        let mut c = ctx();
+        c.lifetime_score = 49_999;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"point_machine"));
+
+        c.lifetime_score = 50_000;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"point_machine"));
+    }
+
+    #[test]
+    fn draw_three_master_requires_10_draw_three_wins() {
+        let mut c = ctx();
+        c.draw_three_wins = 9;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"draw_three_master"));
+
+        c.draw_three_wins = 10;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"draw_three_master"));
+    }
+
+    #[test]
+    fn speed_demon_boundary_at_180_seconds() {
+        let mut c = ctx();
+        c.games_won = 1;
+        c.last_win_time_seconds = 179;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"speed_demon"));
+
+        c.last_win_time_seconds = 180;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"speed_demon"));
+    }
 }

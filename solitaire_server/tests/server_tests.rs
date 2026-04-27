@@ -874,6 +874,118 @@ async fn opt_out_hides_then_opt_in_restores() {
     );
 }
 
+/// Opting in with an empty display name returns 400.
+#[tokio::test]
+async fn opt_in_empty_display_name_returns_400() {
+    set_jwt_secret();
+    let app = build_test_router(test_pool().await);
+    let (access, _) = register_user(app.clone(), "empty_name", "pass1234").await;
+
+    let resp = post_authed(
+        app,
+        "/api/leaderboard/opt-in",
+        &access,
+        serde_json::json!({ "display_name": "   " }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "whitespace-only display_name must return 400"
+    );
+}
+
+/// Opting in with a display name longer than 32 characters returns 400.
+#[tokio::test]
+async fn opt_in_too_long_display_name_returns_400() {
+    set_jwt_secret();
+    let app = build_test_router(test_pool().await);
+    let (access, _) = register_user(app.clone(), "long_name", "pass1234").await;
+
+    let long_name = "a".repeat(33);
+    let resp = post_authed(
+        app,
+        "/api/leaderboard/opt-in",
+        &access,
+        serde_json::json!({ "display_name": long_name }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "33-char display_name must return 400"
+    );
+}
+
+/// Exactly 32 ASCII characters is accepted.
+#[tokio::test]
+async fn opt_in_exactly_32_char_display_name_succeeds() {
+    set_jwt_secret();
+    let app = build_test_router(test_pool().await);
+    let (access, _) = register_user(app.clone(), "maxname", "pass1234").await;
+
+    let name = "a".repeat(32);
+    let resp = post_authed(
+        app,
+        "/api/leaderboard/opt-in",
+        &access,
+        serde_json::json!({ "display_name": name }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "32-char display_name must be accepted"
+    );
+}
+
+/// A display name consisting of 32 Unicode emoji (multi-byte chars) must be
+/// accepted — the limit is character count, not byte count.
+#[tokio::test]
+async fn opt_in_32_unicode_chars_display_name_succeeds() {
+    set_jwt_secret();
+    let app = build_test_router(test_pool().await);
+    let (access, _) = register_user(app.clone(), "unicode_name", "pass1234").await;
+
+    // 32 emoji — each is 4 bytes, so 128 bytes total.
+    // A byte-length check would incorrectly reject this.
+    let name = "🎉".repeat(32);
+    let resp = post_authed(
+        app,
+        "/api/leaderboard/opt-in",
+        &access,
+        serde_json::json!({ "display_name": name }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "32-emoji display_name (32 chars, 128 bytes) must be accepted"
+    );
+}
+
+/// A display name with 33 Unicode emoji is rejected.
+#[tokio::test]
+async fn opt_in_33_unicode_chars_display_name_returns_400() {
+    set_jwt_secret();
+    let app = build_test_router(test_pool().await);
+    let (access, _) = register_user(app.clone(), "unicode_long", "pass1234").await;
+
+    let name = "🎉".repeat(33);
+    let resp = post_authed(
+        app,
+        "/api/leaderboard/opt-in",
+        &access,
+        serde_json::json!({ "display_name": name }),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "33-emoji display_name must return 400"
+    );
+}
+
 /// Login with leading/trailing whitespace in the username still succeeds.
 #[tokio::test]
 async fn login_trims_whitespace_from_username() {
