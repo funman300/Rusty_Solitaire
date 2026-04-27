@@ -2,9 +2,9 @@ use bevy::prelude::*;
 use solitaire_data::{load_settings_from, provider_for_backend, settings_file_path, Settings};
 use solitaire_engine::{
     AchievementPlugin, AnimationPlugin, AudioPlugin, AutoCompletePlugin, CardPlugin,
-    ChallengePlugin, DailyChallengePlugin, GamePlugin, HelpPlugin, InputPlugin, LeaderboardPlugin,
-    OnboardingPlugin, PausePlugin, ProgressPlugin, SettingsPlugin, StatsPlugin, SyncPlugin,
-    TablePlugin, TimeAttackPlugin, WeeklyGoalsPlugin,
+    ChallengePlugin, DailyChallengePlugin, GamePlugin, HelpPlugin, HudPlugin, InputPlugin,
+    LeaderboardPlugin, OnboardingPlugin, PausePlugin, ProgressPlugin, SettingsPlugin, StatsPlugin,
+    SyncPlugin, TablePlugin, TimeAttackPlugin, WeeklyGoalsPlugin,
 };
 
 fn main() {
@@ -39,6 +39,7 @@ fn main() {
         .add_plugins(WeeklyGoalsPlugin)
         .add_plugins(ChallengePlugin)
         .add_plugins(TimeAttackPlugin)
+        .add_plugins(HudPlugin)
         .add_plugins(HelpPlugin)
         .add_plugins(PausePlugin)
         .add_plugins(SettingsPlugin::default())
