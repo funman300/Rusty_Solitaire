@@ -743,6 +743,45 @@ mod tests {
         assert!(!g.check_auto_complete());
     }
 
+    #[test]
+    fn auto_complete_false_when_waste_not_empty() {
+        let mut g = new_game();
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        // Leave the waste pile untouched (it may be empty after clearing stock,
+        // so add a card explicitly to ensure the waste guard is exercised).
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.push(Card {
+            id: 99,
+            suit: Suit::Clubs,
+            rank: Rank::Ace,
+            face_up: true,
+        });
+        // Make all tableau cards face-up so only the waste guard is the blocker.
+        for i in 0..7 {
+            for c in g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.iter_mut() {
+                c.face_up = true;
+            }
+        }
+        assert!(!g.check_auto_complete());
+    }
+
+    #[test]
+    fn auto_complete_true_when_all_prerequisites_met() {
+        let mut g = new_game();
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        // Clear all tableau and put a single face-up card — all face-up guard passes.
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 1,
+            suit: Suit::Clubs,
+            rank: Rank::Ace,
+            face_up: true,
+        });
+        assert!(g.check_auto_complete());
+    }
+
     // --- Time bonus ---
 
     #[test]
