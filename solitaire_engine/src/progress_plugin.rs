@@ -208,4 +208,40 @@ mod tests {
         let mut cursor = events.get_cursor();
         assert!(cursor.read(events).next().is_none());
     }
+
+    #[test]
+    fn xp_awarded_event_fired_with_correct_amount() {
+        let mut app = headless_app();
+        // Slow win, no undo → base 50 + no_undo 25 = 75
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 300,
+        });
+        app.update();
+
+        let events = app.world().resource::<Events<XpAwardedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).copied().collect();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].amount, 75);
+    }
+
+    #[test]
+    fn levelup_event_total_xp_matches_progress_resource() {
+        let mut app = headless_app();
+        app.world_mut().resource_mut::<ProgressResource>().0.total_xp = 480;
+
+        app.world_mut().send_event(GameWonEvent {
+            score: 500,
+            time_seconds: 300,
+        });
+        app.update();
+
+        let total_xp = app.world().resource::<ProgressResource>().0.total_xp;
+        let events = app.world().resource::<Events<LevelUpEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).copied().collect();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].total_xp, total_xp);
+    }
 }
