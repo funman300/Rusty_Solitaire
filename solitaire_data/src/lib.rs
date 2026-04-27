@@ -7,8 +7,6 @@ use thiserror::Error;
 pub enum SyncError {
     #[error("unsupported platform for this sync backend")]
     UnsupportedPlatform,
-    // TODO: Replace String with concrete source error types (e.g. reqwest::Error,
-    // serde_json::Error) when real implementations are added in Phase 8.
     #[error("network error: {0}")]
     Network(String),
     #[error("authentication error: {0}")]

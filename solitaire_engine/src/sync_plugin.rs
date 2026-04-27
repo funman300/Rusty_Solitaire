@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use solitaire_data::{
     save_achievements_to, save_progress_to, save_stats_to, AchievementRecord, PlayerProgress,
-    StatsSnapshot, SyncProvider,
+    StatsSnapshot, SyncError, SyncProvider,
 };
 use solitaire_sync::{merge, SyncPayload};
 
@@ -45,7 +45,7 @@ pub struct SyncProviderResource(pub Arc<dyn SyncProvider + Send + Sync>);
 /// Holds a pending pull result transferred from the async compute task to the
 /// main thread. Consumed and cleared by [`poll_pull_result`].
 #[derive(Resource, Default)]
-pub struct PullTaskResult(pub Option<Result<SyncPayload, String>>);
+pub struct PullTaskResult(pub Option<Result<SyncPayload, SyncError>>);
 
 // ---------------------------------------------------------------------------
 // Internal resources
@@ -54,7 +54,7 @@ pub struct PullTaskResult(pub Option<Result<SyncPayload, String>>);
 /// Holds the in-flight pull task so [`poll_pull_result`] can check its status
 /// each frame without blocking the main thread.
 #[derive(Resource, Default)]
-struct PullTask(Option<Task<Result<SyncPayload, String>>>);
+struct PullTask(Option<Task<Result<SyncPayload, SyncError>>>);
 
 // ---------------------------------------------------------------------------
 // Plugin struct
@@ -112,7 +112,7 @@ fn start_pull(
 ) {
     let provider = provider.0.clone();
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        provider.pull().await.map_err(|e| e.to_string())
+        provider.pull().await
     });
     task_res.0 = Some(task);
     status.0 = SyncStatus::Syncing;
@@ -135,7 +135,7 @@ fn handle_manual_sync_request(
     }
     let provider = provider.0.clone();
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        provider.pull().await.map_err(|e| e.to_string())
+        provider.pull().await
     });
     task_res.0 = Some(task);
     status.0 = SyncStatus::Syncing;
@@ -200,7 +200,13 @@ fn poll_pull_result(
         }
         Err(e) => {
             warn!("sync pull failed: {e}");
-            status.0 = SyncStatus::Error(e);
+            let msg = match &e {
+                SyncError::Network(_) => "Can't reach server — check your connection".to_string(),
+                SyncError::Auth(_) => "Login expired — tap Sync Now after re-logging in".to_string(),
+                SyncError::Serialization(_) => format!("Unexpected server response: {e}"),
+                SyncError::UnsupportedPlatform => "Sync not configured".to_string(),
+            };
+            status.0 = SyncStatus::Error(msg);
         }
     }
 }
