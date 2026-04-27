@@ -474,4 +474,28 @@ mod tests {
         // At 5000 XP: 0 done, 0%, 1000 remaining.
         assert_eq!(xp_to_next_level_label(5_000, 10), "1000 XP (0%)");
     }
+
+    // -----------------------------------------------------------------------
+    // format_duration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_duration_zero_seconds() {
+        assert_eq!(format_duration(0), "0m 00s");
+    }
+
+    #[test]
+    fn format_duration_pads_seconds_to_two_digits() {
+        assert_eq!(format_duration(65), "1m 05s");
+    }
+
+    #[test]
+    fn format_duration_exactly_one_hour() {
+        assert_eq!(format_duration(3600), "60m 00s");
+    }
+
+    #[test]
+    fn format_duration_handles_sub_minute() {
+        assert_eq!(format_duration(59), "0m 59s");
+    }
 }
