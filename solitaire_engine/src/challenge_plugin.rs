@@ -198,4 +198,23 @@ mod tests {
         assert_eq!(challenge_progress_label(0), format!("1 / {total}"));
         assert_eq!(challenge_progress_label(2), format!("3 / {total}"));
     }
+
+    #[test]
+    fn pressing_x_below_unlock_level_fires_info_toast() {
+        let mut app = headless_app();
+        // Level 0 is below CHALLENGE_UNLOCK_LEVEL.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyX);
+        app.update();
+
+        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).collect();
+        assert_eq!(fired.len(), 1, "must show a toast explaining the lock");
+        assert!(
+            fired[0].0.contains(&CHALLENGE_UNLOCK_LEVEL.to_string()),
+            "toast must mention the unlock level"
+        );
+    }
 }
