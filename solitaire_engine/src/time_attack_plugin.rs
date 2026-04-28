@@ -31,6 +31,7 @@ pub struct TimeAttackEndedEvent {
     pub wins: u32,
 }
 
+/// Implements the 10-minute Time Attack mode: counts down the session timer, tracks wins per session, and fires `TimeAttackEndedEvent` when time expires.
 pub struct TimeAttackPlugin;
 
 impl Plugin for TimeAttackPlugin {

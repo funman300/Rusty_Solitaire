@@ -73,17 +73,23 @@
 //! | `apply_drag_visual` scale + `CardAnimation` scale | ✓ (same filter) |
 
 pub mod animation;
+pub mod chain;
 pub mod curves;
+pub mod diagnostics;
 pub mod interaction;
 pub mod timing;
+pub mod tuning;
 
 pub use animation::{retarget_animation, win_scatter_targets, CardAnimation};
+pub use chain::AnimationChain;
 pub use curves::{sample_curve, MotionCurve};
+pub use diagnostics::{FrameTimeDiagnostics, WINDOW_SIZE as DIAG_WINDOW_SIZE};
 pub use interaction::{BufferedInput, HoverState, InputBuffer};
 pub use timing::{
     cascade_delay, compute_duration, micro_vary, DEAL_INTERVAL_SECS, MAX_DURATION_SECS,
     MIN_DURATION_SECS, WIN_CASCADE_INTERVAL_SECS,
 };
+pub use tuning::{AnimationTuning, InputPlatform};
 
 use bevy::prelude::*;
 
@@ -94,14 +100,18 @@ use crate::layout::LayoutResource;
 use crate::resources::DragState;
 
 use animation::advance_card_animations;
+use chain::advance_animation_chains;
+use diagnostics::update_frame_time_diagnostics;
 use interaction::{apply_drag_visual, apply_hover_scale, detect_hover, drain_input_buffer};
+use tuning::update_input_platform;
 
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
 /// Registers all systems, resources, and components for curve-based card
-/// animation, hover visuals, drag lift, and input buffering.
+/// animation, hover visuals, drag lift, input buffering, platform-adaptive
+/// tuning, animation chaining, and frame-time diagnostics.
 ///
 /// Safe to register alongside `AnimationPlugin` and `FeedbackAnimPlugin` as
 /// long as no single entity carries both `CardAnim` and `CardAnimation`.
@@ -109,8 +119,8 @@ pub struct CardAnimationPlugin;
 
 impl Plugin for CardAnimationPlugin {
     fn build(&self, app: &mut App) {
-        // Register events and resources that interaction systems depend on,
-        // idempotently — double-registration is safe in Bevy.
+        // Register events and resources idempotently — double-registration is
+        // safe in Bevy.
         app.add_message::<MoveRequestEvent>()
             .add_message::<DrawRequestEvent>()
             .add_message::<UndoRequestEvent>()
@@ -118,12 +128,23 @@ impl Plugin for CardAnimationPlugin {
             .init_resource::<DragState>()
             .init_resource::<HoverState>()
             .init_resource::<InputBuffer>()
+            // Platform-adaptive tuning (desktop by default, switches on touch).
+            .init_resource::<AnimationTuning>()
+            // Rolling frame-time statistics.
+            .init_resource::<FrameTimeDiagnostics>()
             .add_systems(
                 Update,
                 (
-                    // Advance active animations (highest priority — runs first).
+                    // Detect input platform and update tuning — runs first so
+                    // all downstream systems in this frame see the fresh value.
+                    update_input_platform,
+                    // Frame-time diagnostics — cheap, runs unconditionally.
+                    update_frame_time_diagnostics,
+                    // Advance active animations.
                     advance_card_animations,
-                    // Interaction visuals (run after animation to read final positions).
+                    // After each animation finishes, pop the next chain segment.
+                    advance_animation_chains,
+                    // Interaction visuals (run after animation for final positions).
                     detect_hover,
                     apply_hover_scale,
                     apply_drag_visual,

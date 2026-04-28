@@ -140,10 +140,22 @@ impl CardAnimation {
 
 /// Redirects a card to a new destination without snapping or interrupting motion.
 ///
-/// Reads the card's current interpolated position (from a live `CardAnimation` if
-/// present, or from `Transform` if the card is stationary) and starts a fresh
-/// `CardAnimation` from that position. Duration is recalculated from the remaining
-/// distance so short remaining paths feel appropriately quick.
+/// Reads the card's current interpolated position (from a live [`CardAnimation`]
+/// if present, or from `Transform` if stationary) and starts a fresh
+/// [`CardAnimation`] from that position. Duration is recalculated from the
+/// remaining distance so short paths stay quick.
+///
+/// # Velocity continuity
+///
+/// When a card is mid-flight, the new animation starts with a small positive
+/// `elapsed` offset (`carry`) derived from how far through the current animation
+/// the card is. This preserves a sense of forward momentum: the new curve does
+/// not restart from zero velocity, avoiding a visible "lurch" when the target
+/// changes rapidly.
+///
+/// The carry is deliberately small (≤ 10 % of the new duration) so that it
+/// never causes a visible position jump — the card's start position is still
+/// read from the current transform.
 ///
 /// # Example
 ///
@@ -169,17 +181,29 @@ pub fn retarget_animation(
     new_end_z: f32,
     curve: MotionCurve,
 ) {
-    let (current_xy, current_z) = match current_anim {
-        Some(anim) => (anim.current_xy(), transform.translation.z),
-        None => (transform.translation.truncate(), transform.translation.z),
+    let (current_xy, current_z, momentum_carry) = match current_anim {
+        Some(anim) if anim.duration > 0.0 => {
+            // Estimate how far into the current animation we are and carry
+            // a small fraction of that progress into the new animation.
+            // This avoids restarting from zero velocity and makes the motion
+            // feel continuous when the target changes mid-flight.
+            let t = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
+            // Cap at 10 % of the new animation so there's no visible jump.
+            let carry = (t * 0.12).min(0.10);
+            (anim.current_xy(), transform.translation.z, carry)
+        }
+        _ => (transform.translation.truncate(), transform.translation.z, 0.0),
     };
 
     let distance = current_xy.distance(new_end);
+    let duration = compute_duration(distance);
+
     commands.entity(entity).insert(CardAnimation {
         start: current_xy,
         end: new_end,
-        elapsed: 0.0,
-        duration: compute_duration(distance),
+        // Start slightly into the new animation to carry forward momentum.
+        elapsed: momentum_carry * duration,
+        duration,
         curve,
         delay: 0.0,
         start_z: current_z,

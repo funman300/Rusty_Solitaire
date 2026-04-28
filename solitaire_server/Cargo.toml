@@ -29,8 +29,4 @@ tracing-subscriber = { workspace = true }
 dotenvy            = { workspace = true }
 
 [dev-dependencies]
-tower          = { version = "0.5", features = ["util"] }
-solitaire_sync = { workspace = true }
-uuid           = { workspace = true }
-chrono         = { workspace = true }
-jsonwebtoken   = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

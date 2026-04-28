@@ -32,6 +32,8 @@ const BODY_COLOR: Color = Color::srgb(1.0, 0.87, 0.0);
 /// Bright orange used for key-name spans so they stand out from body text.
 const KEY_COLOR: Color = Color::srgb(1.0, 0.55, 0.1);
 
+/// Shows a first-run welcome screen that introduces the controls and draw mode.
+/// Sets `Settings::first_run_complete` once dismissed so it never appears again.
 pub struct OnboardingPlugin;
 
 impl Plugin for OnboardingPlugin {

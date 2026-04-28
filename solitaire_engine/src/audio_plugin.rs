@@ -97,6 +97,7 @@ pub struct MuteState {
     pub music_muted: bool,
 }
 
+/// Plays sound effects and background music via `bevy_kira_audio`. Responds to game events (card place, flip, invalid move, win fanfare) and respects volume settings from `SettingsResource`.
 pub struct AudioPlugin;
 
 impl Plugin for AudioPlugin {

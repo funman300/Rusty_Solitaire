@@ -48,6 +48,9 @@ pub use card_animation::{
     HoverState, InputBuffer, BufferedInput,
     win_scatter_targets, WIN_CASCADE_INTERVAL_SECS, DEAL_INTERVAL_SECS,
     MIN_DURATION_SECS, MAX_DURATION_SECS,
+    AnimationChain,
+    AnimationTuning, InputPlatform,
+    FrameTimeDiagnostics, DIAG_WINDOW_SIZE,
 };
 pub use feedback_anim_plugin::{
     deal_stagger_delay, deal_stagger_secs_for_speed, shake_offset, settle_scale,

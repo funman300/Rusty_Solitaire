@@ -12,20 +12,25 @@
 /// `StatsSnapshot`, the final `GameState`, and wall-clock time.
 #[derive(Debug, Clone)]
 pub struct AchievementContext {
-    // Stats (after this win has been recorded).
+    /// Total number of games played (after this win has been recorded).
     pub games_played: u32,
+    /// Total number of games won (after this win has been recorded).
     pub games_won: u32,
+    /// Current consecutive win streak (after this win has been recorded).
     pub win_streak_current: u32,
+    /// Highest single-game score ever achieved.
     pub best_single_score: u32,
+    /// Cumulative score across all games ever played.
     pub lifetime_score: u64,
+    /// Total wins completed in Draw 3 mode.
     pub draw_three_wins: u32,
 
-    // Progression.
     /// Current daily-challenge completion streak (consecutive days).
     pub daily_challenge_streak: u32,
 
-    // Last-win facts (GameWonEvent + GameState at win time).
+    /// Score achieved in the just-won game.
     pub last_win_score: i32,
+    /// Elapsed seconds for the just-won game.
     pub last_win_time_seconds: u64,
     /// `true` if `undo()` was called at least once during the won game.
     pub last_win_used_undo: bool,
@@ -55,13 +60,17 @@ pub enum Reward {
 /// A single achievement's static metadata + unlock condition.
 #[derive(Debug, Clone, Copy)]
 pub struct AchievementDef {
+    /// Unique string identifier for this achievement (e.g. `"first_win"`).
     pub id: &'static str,
+    /// Human-readable display name shown in the achievements screen.
     pub name: &'static str,
+    /// Flavour text describing how to unlock the achievement.
     pub description: &'static str,
     /// Hidden from the achievements screen until unlocked.
     pub secret: bool,
     /// Reward granted on first unlock. `None` for cosmetic-only recognition.
     pub reward: Option<Reward>,
+    /// Predicate evaluated on every `GameWonEvent` and `StateChangedEvent`. Returns true when the achievement should unlock.
     pub condition: fn(&AchievementContext) -> bool,
 }
 
@@ -475,6 +484,109 @@ mod tests {
     fn achievement_by_id_finds_known_and_returns_none_for_unknown() {
         assert_eq!(achievement_by_id("first_win").map(|d| d.name), Some("First Win"));
         assert!(achievement_by_id("nonexistent").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Direct predicate tests via ctx_defaults()
+    // -----------------------------------------------------------------------
+
+    /// Baseline context representing a single clean one-minute win in Draw-One mode.
+    fn ctx_defaults() -> AchievementContext {
+        AchievementContext {
+            games_played: 1,
+            games_won: 1,
+            win_streak_current: 1,
+            best_single_score: 0,
+            lifetime_score: 0,
+            draw_three_wins: 0,
+            daily_challenge_streak: 0,
+            last_win_score: 0,
+            last_win_time_seconds: 600,
+            last_win_used_undo: false,
+            wall_clock_hour: Some(12),
+            last_win_recycle_count: 0,
+            last_win_is_zen: false,
+        }
+    }
+
+    #[test]
+    fn speed_demon_true_when_under_three_minutes() {
+        let mut c = ctx_defaults();
+        c.last_win_time_seconds = 179;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"speed_demon"), "speed_demon should unlock at 179s");
+    }
+
+    #[test]
+    fn speed_demon_false_when_over_three_minutes() {
+        let mut c = ctx_defaults();
+        c.last_win_time_seconds = 181;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"speed_demon"), "speed_demon must not unlock at 181s");
+    }
+
+    #[test]
+    fn lightning_true_when_under_90_seconds() {
+        let mut c = ctx_defaults();
+        c.last_win_time_seconds = 89;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"lightning"), "lightning should unlock at 89s");
+    }
+
+    #[test]
+    fn lightning_false_at_exactly_90_seconds() {
+        let mut c = ctx_defaults();
+        c.last_win_time_seconds = 90;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"lightning"), "lightning must not unlock at exactly 90s");
+    }
+
+    #[test]
+    fn no_undo_true_when_zero_undos() {
+        let mut c = ctx_defaults();
+        c.last_win_used_undo = false;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"no_undo"), "no_undo should unlock when undo was not used");
+    }
+
+    #[test]
+    fn no_undo_false_when_undo_used() {
+        let mut c = ctx_defaults();
+        c.last_win_used_undo = true;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"no_undo"), "no_undo must not unlock when undo was used");
+    }
+
+    #[test]
+    fn high_scorer_true_when_score_5000_or_more() {
+        let mut c = ctx_defaults();
+        c.best_single_score = 5_000;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"high_scorer"), "high_scorer should unlock at best_single_score=5000");
+    }
+
+    #[test]
+    fn high_scorer_false_when_below_5000() {
+        let mut c = ctx_defaults();
+        c.best_single_score = 4_999;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(!ids.contains(&"high_scorer"), "high_scorer must not unlock at best_single_score=4999");
+    }
+
+    #[test]
+    fn on_a_roll_true_at_streak_3() {
+        let mut c = ctx_defaults();
+        c.win_streak_current = 3;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"on_a_roll"), "on_a_roll should unlock at streak=3");
+    }
+
+    #[test]
+    fn comeback_true_when_three_or_more_recycles() {
+        let mut c = ctx_defaults();
+        c.last_win_recycle_count = 3;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(ids.contains(&"comeback"), "comeback should unlock at last_win_recycle_count=3");
     }
 
     #[test]

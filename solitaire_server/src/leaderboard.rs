@@ -152,3 +152,71 @@ pub async fn opt_in(
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+// ---------------------------------------------------------------------------
+// Tests — data shape and display-name logic; no database required
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use solitaire_sync::LeaderboardEntry;
+
+    /// Helper that constructs a `LeaderboardEntry` with the given display name
+    /// and best score. `best_time_secs` is left as `None`.
+    fn entry(display_name: &str, best_score: Option<i32>) -> LeaderboardEntry {
+        LeaderboardEntry {
+            display_name: display_name.to_string(),
+            best_score,
+            best_time_secs: None,
+            recorded_at: Utc::now(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. A LeaderboardEntry always carries a non-empty display_name.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn leaderboard_entry_has_display_name() {
+        let e = entry("Alice", Some(4_500));
+        assert!(
+            !e.display_name.is_empty(),
+            "display_name must not be empty for a valid leaderboard entry"
+        );
+        assert_eq!(e.display_name, "Alice");
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. A Vec of entries sorts by best_score descending (matching the SQL
+    //    ORDER BY used in get_leaderboard).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn leaderboard_entries_sorted_by_score_descending() {
+        let mut entries = vec![
+            entry("Charlie", Some(1_200)),
+            entry("Alice",   Some(8_000)),
+            entry("Bob",     Some(3_500)),
+            entry("Dave",    None),        // no score — should rank last
+        ];
+
+        // Mirrors the SQL sort:
+        //   CASE WHEN best_score IS NULL THEN 1 ELSE 0 END ASC,
+        //   best_score DESC
+        entries.sort_by(|a, b| {
+            let a_null = a.best_score.is_none() as u8;
+            let b_null = b.best_score.is_none() as u8;
+            a_null
+                .cmp(&b_null)
+                .then_with(|| b.best_score.cmp(&a.best_score))
+        });
+
+        // Scored entries first, in descending order.
+        assert_eq!(entries[0].display_name, "Alice",   "highest scorer must be first");
+        assert_eq!(entries[1].display_name, "Bob",     "second-highest scorer must be second");
+        assert_eq!(entries[2].display_name, "Charlie", "lowest scorer must be third");
+        // Null-score entry sinks to the bottom.
+        assert_eq!(entries[3].display_name, "Dave",    "entry with no score must rank last");
+    }
+}

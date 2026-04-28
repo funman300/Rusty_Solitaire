@@ -35,6 +35,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use super::animation::CardAnimation;
+use super::tuning::AnimationTuning;
 use crate::card_plugin::CardEntity;
 use crate::events::{DrawRequestEvent, MoveRequestEvent, UndoRequestEvent};
 use crate::layout::LayoutResource;
@@ -47,15 +48,6 @@ type CardTransformQuery<'w, 's> =
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/// Scale applied to the card currently under the cursor (1.0 = no change).
-const HOVER_SCALE: f32 = 1.04;
-
-/// Additional scale applied to dragged cards while in flight.
-const DRAG_LIFT_SCALE: f32 = 1.08;
-
-/// Lerp speed for hover scale interpolation (higher = snappier).
-const HOVER_LERP_SPEED: f32 = 14.0;
 
 /// Lerp speed for drag scale interpolation.
 const DRAG_LERP_SPEED: f32 = 20.0;
@@ -162,27 +154,34 @@ pub(crate) fn detect_hover(
 
 /// Applies the hover scale to the currently hovered card via smooth lerp.
 ///
+/// Uses [`AnimationTuning`] to get the platform-appropriate hover scale.
+/// On touch (`hover_scale == 1.0`) this becomes a no-op — there is no
+/// hover affordance on a touchscreen.
+///
 /// Only runs on cards that have **no active [`CardAnimation`]** — animated
 /// cards control their own scale. When hover changes entities, the previous
 /// entity's scale is snapped back to 1.0 to avoid leaving a permanently
 /// enlarged card.
 pub(crate) fn apply_hover_scale(
     time: Res<Time>,
+    tuning: Res<AnimationTuning>,
     mut hover_state: ResMut<HoverState>,
     mut cards: CardTransformQuery,
 ) {
     let dt = time.delta_secs();
     let target_entity = hover_state.entity;
+    let hover_target = tuning.hover_scale;
+    let lerp_speed = tuning.hover_lerp_speed;
 
     for (entity, mut transform) in &mut cards {
         let target_scale = if Some(entity) == target_entity {
-            HOVER_SCALE
+            hover_target
         } else {
             1.0
         };
 
         let current = transform.scale.x;
-        let new_scale = current + (target_scale - current) * (HOVER_LERP_SPEED * dt).min(1.0);
+        let new_scale = current + (target_scale - current) * (lerp_speed * dt).min(1.0);
         transform.scale = Vec3::splat(new_scale);
     }
 
@@ -191,29 +190,36 @@ pub(crate) fn apply_hover_scale(
         cards
             .get(entity)
             .map(|(_, t)| t.scale.x)
-            .unwrap_or(HOVER_SCALE)
+            .unwrap_or(hover_target)
     } else {
         1.0
     };
 }
 
-/// Applies a scale boost and z-lift to dragged card entities.
+/// Applies a scale boost to committed dragged card entities.
 ///
-/// Reads [`DragState`] for the list of card IDs being dragged. Does **not**
-/// modify `translation.xy` — the existing `InputPlugin` owns drag translation.
-/// Only writes `scale` and `translation.z` so the two systems are disjoint.
+/// Uses [`AnimationTuning`] for the platform-correct drag scale. Only applies
+/// to cards whose drag has been *committed* (threshold crossed); cards in the
+/// pending-drag state stay at scale 1.0. Does **not** modify `translation.xy`
+/// — `InputPlugin` owns drag translation.
 pub(crate) fn apply_drag_visual(
     time: Res<Time>,
     drag: Option<Res<DragState>>,
+    tuning: Res<AnimationTuning>,
     mut cards: Query<(Entity, &CardEntity, &mut Transform), (Without<CardAnimation>,)>,
 ) {
     let dt = time.delta_secs();
-    let empty: Vec<u32> = Vec::new();
-    let dragged_ids: &[u32] = drag.as_ref().map_or(empty.as_slice(), |d| &d.cards);
+    let drag_scale = tuning.drag_scale;
+
+    // Only lift cards that are in a *committed* drag. Pending drags (below
+    // threshold) must stay at scale 1.0 to avoid visible premature lift.
+    let (dragged_ids, committed): (&[u32], bool) = drag
+        .as_ref()
+        .map_or((&[], false), |d| (d.cards.as_slice(), d.committed));
 
     for (_, card, mut transform) in &mut cards {
-        let is_dragged = dragged_ids.contains(&card.card_id);
-        let target_scale = if is_dragged { DRAG_LIFT_SCALE } else { 1.0 };
+        let is_active_drag = committed && dragged_ids.contains(&card.card_id);
+        let target_scale = if is_active_drag { drag_scale } else { 1.0 };
         let current = transform.scale.x;
         let new_scale = current + (target_scale - current) * (DRAG_LERP_SPEED * dt).min(1.0);
         transform.scale = Vec3::splat(new_scale);

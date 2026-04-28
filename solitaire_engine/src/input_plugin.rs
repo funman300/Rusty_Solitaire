@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 
 use bevy::ecs::system::SystemParam;
+use bevy::input::touch::{TouchInput, TouchPhase, Touches};
 use bevy::input::ButtonInput;
 use bevy::math::{Vec2, Vec3};
 use bevy::prelude::*;
@@ -28,6 +29,7 @@ use solitaire_core::game_state::GameState;
 use solitaire_core::pile::PileType;
 use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 
+use crate::card_animation::tuning::AnimationTuning;
 use crate::card_plugin::{CardEntity, HintHighlight, HintHighlightTimer, TABLEAU_FAN_FRAC};
 use crate::feedback_anim_plugin::ShakeAnim;
 use solitaire_core::game_state::DrawMode;
@@ -46,18 +48,40 @@ use crate::time_attack_plugin::TimeAttackResource;
 /// Z-depth used for cards while being dragged — above all resting cards.
 const DRAG_Z: f32 = 500.0;
 
-/// Registers keyboard and mouse input systems.
+/// Shared countdown timers for the double-press confirmation flows.
 ///
-/// Drag systems run in a fixed order each frame:
-/// `start_drag` → `follow_drag` → `end_drag`, with `follow_drag` after the
-/// card-position sync so it overrides resting positions for cards being
-/// dragged. `end_drag` runs before `GameMutation` so the `MoveRequestEvent`
-/// it fires is consumed the same frame.
+/// Using a resource (instead of `Local`) lets the three keyboard sub-systems
+/// share the same countdown state without needing to pass values between them.
+#[derive(Resource, Debug, Default)]
+struct KeyboardConfirmState {
+    /// Seconds remaining in the new-game confirmation window (> 0 while open).
+    new_game_countdown: f32,
+    /// True while we are waiting for the second N press to confirm a new game.
+    new_game_pending: bool,
+    /// Seconds remaining in the forfeit confirmation window (> 0 while open).
+    forfeit_countdown: f32,
+}
+
+/// Registers keyboard, mouse, and touch input systems.
+///
+/// Mouse drag pipeline (ordered, left-to-right):
+/// `start_drag` → `follow_drag` → `end_drag`
+///
+/// Touch drag pipeline (ordered, interleaved with mouse):
+/// `touch_start_drag` → `touch_follow_drag` → `touch_end_drag`
+///
+/// Both pipelines share [`DragState`]. Only one can be active at a time —
+/// the second checks `drag.is_idle()` before proceeding, and mouse drags
+/// check `drag.active_touch_id.is_none()`.
+///
+/// All drag systems run before [`GameMutation`] so move events are consumed
+/// in the same frame they are emitted.
 pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HintCycleIndex>()
+            .init_resource::<KeyboardConfirmState>()
             .add_message::<NewGameConfirmEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ForfeitEvent>()
@@ -65,12 +89,20 @@ impl Plugin for InputPlugin {
             .add_systems(
                 Update,
                 (
-                    handle_keyboard,
+                    handle_keyboard_core,
+                    handle_keyboard_hint,
+                    handle_keyboard_forfeit,
                     handle_stock_click,
+                    handle_touch_stock_tap,
                     handle_double_click,
+                    // Mouse drag pipeline.
                     start_drag,
                     follow_drag,
                     end_drag.before(GameMutation),
+                    // Touch drag pipeline (parallel path through DragState).
+                    touch_start_drag,
+                    touch_follow_drag,
+                    touch_end_drag.before(GameMutation),
                 )
                     .chain(),
             )
@@ -85,64 +117,60 @@ const NEW_GAME_CONFIRM_WINDOW: f32 = 3.0;
 /// Seconds after the first G press during which a second G confirms forfeit.
 const FORFEIT_CONFIRM_WINDOW: f32 = 3.0;
 
-/// Bundles all event writers used by `handle_keyboard` so the system stays
-/// within Bevy's 16-parameter limit.
+/// Bundles the event writers needed by the core keyboard handler.
+///
+/// Keeping these in a [`SystemParam`] avoids hitting Bevy's 16-parameter limit.
 #[derive(SystemParam)]
-struct KeyboardMessages<'w> {
+struct CoreKeyboardMessages<'w> {
     undo: MessageWriter<'w, UndoRequestEvent>,
     new_game: MessageWriter<'w, NewGameRequestEvent>,
     confirm_event: MessageWriter<'w, NewGameConfirmEvent>,
     info_toast: MessageWriter<'w, InfoToastEvent>,
     draw: MessageWriter<'w, DrawRequestEvent>,
-    forfeit: MessageWriter<'w, ForfeitEvent>,
-    hint_visual: MessageWriter<'w, HintVisualEvent>,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn handle_keyboard(
+/// Handles the core keyboard shortcuts: U (undo), N (new game + confirmation
+/// window), Z (zen mode), D / Space (draw), and ticks down the new-game
+/// confirmation countdown each frame.
+///
+/// Also resets `forfeit_countdown` whenever U, D, Z, or N are pressed so that
+/// an in-flight forfeit confirmation is cancelled by any other action.
+fn handle_keyboard_core(
     keys: Res<ButtonInput<KeyCode>>,
     paused: Option<Res<PausedResource>>,
     progress: Option<Res<ProgressResource>>,
     game: Option<Res<GameStateResource>>,
     time: Res<Time>,
-    mut confirm_countdown: Local<f32>,
-    mut confirm_pending: Local<bool>,
-    mut forfeit_countdown: Local<f32>,
-    mut ev: KeyboardMessages<'_>,
-    mut commands: Commands,
-    card_entities: Query<(Entity, &CardEntity, &Sprite)>,
-    layout: Option<Res<LayoutResource>>,
-    mut hint_cycle: ResMut<HintCycleIndex>,
+    mut confirm: ResMut<KeyboardConfirmState>,
+    mut ev: CoreKeyboardMessages<'_>,
     mut time_attack: Option<ResMut<TimeAttackResource>>,
 ) {
     if paused.is_some_and(|p| p.0) {
         return;
     }
-    // Tick down any active confirmation window.
-    if *confirm_countdown > 0.0 {
-        *confirm_countdown -= time.delta_secs();
-        if *confirm_countdown <= 0.0 {
-            *confirm_countdown = 0.0;
-            // Countdown expired without a second N press — notify the player.
-            if *confirm_pending {
-                *confirm_pending = false;
+
+    // Tick down the new-game confirmation window each frame.
+    if confirm.new_game_countdown > 0.0 {
+        confirm.new_game_countdown -= time.delta_secs();
+        if confirm.new_game_countdown <= 0.0 {
+            confirm.new_game_countdown = 0.0;
+            if confirm.new_game_pending {
+                confirm.new_game_pending = false;
                 ev.info_toast.write(InfoToastEvent("New game cancelled".to_string()));
             }
         }
     }
-    // Tick down the forfeit confirmation window.
-    if *forfeit_countdown > 0.0 {
-        *forfeit_countdown -= time.delta_secs();
-        if *forfeit_countdown <= 0.0 {
-            *forfeit_countdown = 0.0;
-        }
-    }
 
     if keys.just_pressed(KeyCode::KeyU) {
-        if *forfeit_countdown > 0.0 { *forfeit_countdown = 0.0; }
+        // Cancel any pending forfeit when the player takes another action.
+        confirm.forfeit_countdown = 0.0;
         ev.undo.write(UndoRequestEvent);
     }
+
     if keys.just_pressed(KeyCode::KeyN) {
+        // Cancel any pending forfeit when the player takes another action.
+        confirm.forfeit_countdown = 0.0;
+
         // If a Time Attack session is running, cancel it and start a Classic game.
         if let Some(ref mut session) = time_attack {
             if session.active {
@@ -153,7 +181,7 @@ fn handle_keyboard(
                     seed: None,
                     mode: Some(solitaire_core::game_state::GameMode::Classic),
                 });
-                *confirm_countdown = 0.0;
+                confirm.new_game_countdown = 0.0;
                 return;
             }
         }
@@ -163,22 +191,24 @@ fn handle_keyboard(
         if shift_held || !active_game {
             // Shift+N or no active game — start immediately, no confirmation.
             ev.new_game.write(NewGameRequestEvent::default());
-            *confirm_countdown = 0.0;
-            *confirm_pending = false;
-        } else if *confirm_countdown > 0.0 {
+            confirm.new_game_countdown = 0.0;
+            confirm.new_game_pending = false;
+        } else if confirm.new_game_countdown > 0.0 {
             // Second press within the window — confirmed.
             ev.new_game.write(NewGameRequestEvent::default());
-            *confirm_countdown = 0.0;
-            *confirm_pending = false;
+            confirm.new_game_countdown = 0.0;
+            confirm.new_game_pending = false;
         } else {
             // First press on an active game — require confirmation.
-            *confirm_countdown = NEW_GAME_CONFIRM_WINDOW;
-            *confirm_pending = true;
+            confirm.new_game_countdown = NEW_GAME_CONFIRM_WINDOW;
+            confirm.new_game_pending = true;
             ev.confirm_event.write(NewGameConfirmEvent);
         }
     }
+
     if keys.just_pressed(KeyCode::KeyZ) {
-        if *forfeit_countdown > 0.0 { *forfeit_countdown = 0.0; }
+        // Cancel any pending forfeit when the player takes another action.
+        confirm.forfeit_countdown = 0.0;
         // Zen / Challenge / Time Attack are gated to level >= CHALLENGE_UNLOCK_LEVEL.
         // X is gated separately by ChallengePlugin.
         let level = progress.as_ref().map_or(0, |p| p.0.level);
@@ -193,110 +223,170 @@ fn handle_keyboard(
             )));
         }
     }
+
     if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::Space) {
-        if *forfeit_countdown > 0.0 { *forfeit_countdown = 0.0; }
+        // Cancel any pending forfeit when the player takes another action.
+        confirm.forfeit_countdown = 0.0;
         ev.draw.write(DrawRequestEvent);
     }
-    // H — cycle through all available hints on each press, highlighting the
-    // source card yellow for 1.5 s. The index wraps around once all hints have
-    // been shown. When no moves are available a toast is shown instead.
-    if keys.just_pressed(KeyCode::KeyH) {
-        if *forfeit_countdown > 0.0 { *forfeit_countdown = 0.0; }
-        if let Some(ref g) = game {
-            if g.0.is_won {
-                ev.info_toast.write(InfoToastEvent(
-                    "Game won! Press N for a new game".to_string(),
-                ));
-            } else if let Some(ref layout_res) = layout {
-                    let hints = all_hints(&g.0);
-                    if hints.is_empty() {
-                        ev.info_toast.write(InfoToastEvent("No hints available".to_string()));
-                    } else {
-                        // Pick the hint at the current cycle index (wrapping) and advance.
-                        let idx = hint_cycle.0 % hints.len();
-                        hint_cycle.0 = hint_cycle.0.wrapping_add(1);
-                        let (from, to, _count) = &hints[idx];
-                        // When the hint points at the stock (draw suggestion) there is no
-                        // face-up card to highlight — show a toast instead.
-                        // If the stock is empty, pressing D will recycle the waste rather
-                        // than draw a card, so the toast text must reflect that.
-                        if *from == PileType::Stock {
-                            let stock_empty = g.0.piles
-                                .get(&PileType::Stock)
-                                .is_some_and(|p| p.cards.is_empty());
-                            let msg = if stock_empty {
-                                "Hint: recycle waste (D)".to_string()
-                            } else {
-                                "Hint: draw from stock (D)".to_string()
-                            };
-                            ev.info_toast.write(InfoToastEvent(msg));
-                        } else {
-                            // Find the top face-up card in the source pile and highlight it.
-                            let top_card_id = g.0.piles.get(from)
-                                .and_then(|p| p.cards.last().filter(|c| c.face_up))
-                                .map(|c| c.id);
-                            if let Some(card_id) = top_card_id {
-                                for (entity, card_entity, _sprite) in card_entities.iter() {
-                                    if card_entity.card_id == card_id {
-                                        commands.entity(entity)
-                                            .insert(HintHighlight { remaining: 2.0 })
-                                            .insert(HintHighlightTimer(2.0))
-                                            .insert(Sprite {
-                                                color: Color::srgba(1.0, 1.0, 0.4, 1.0),
-                                                custom_size: Some(layout_res.0.card_size),
-                                                ..default()
-                                            });
-                                        break;
-                                    }
-                                }
-                                // Emit HintVisualEvent so the destination pile
-                                // marker is also tinted gold for 2 s.
-                                ev.hint_visual.write(HintVisualEvent {
-                                    source_card_id: card_id,
-                                    dest_pile: to.clone(),
-                                });
-                            }
-                            // Fire an informational toast describing where the hinted card
-                            // should move so the player always sees the suggestion in text.
-                            let msg = match to {
-                                PileType::Foundation(suit) => {
-                                    let suit_name = match suit {
-                                        Suit::Clubs => "Clubs",
-                                        Suit::Diamonds => "Diamonds",
-                                        Suit::Hearts => "Hearts",
-                                        Suit::Spades => "Spades",
-                                    };
-                                    format!("Hint: move to {suit_name} foundation")
-                                }
-                                PileType::Tableau(col) => {
-                                    format!("Hint: move to tableau (col {})", col + 1)
-                                }
-                                _ => "Hint: move card".to_string(),
-                            };
-                            ev.info_toast.write(InfoToastEvent(msg));
-                        }
-                    }
-            }
-        }
-    }
-    // G — forfeit the current game with a 3-second double-confirm window to
-    // prevent accidental forfeits. First press shows a toast and starts the
-    // countdown; second press within the window sends the ForfeitEvent.
-    if keys.just_pressed(KeyCode::KeyG) {
-        let active_game = game.as_ref().is_some_and(|g| g.0.move_count > 0 && !g.0.is_won);
-        if active_game {
-            if *forfeit_countdown > 0.0 {
-                // Second press within the confirmation window — confirmed.
-                ev.forfeit.write(ForfeitEvent);
-                *forfeit_countdown = 0.0;
-            } else {
-                // First press — start the countdown and warn the player.
-                *forfeit_countdown = FORFEIT_CONFIRM_WINDOW;
-                ev.info_toast.write(InfoToastEvent("Press G again to forfeit".to_string()));
-            }
-        }
-    }
     // Esc is handled by `PausePlugin` (overlay toggle + paused flag).
+}
+
+/// Handles the H key: cycles through all available hints, highlighting the
+/// source card yellow for 2 s and showing a descriptive toast. Resets the
+/// forfeit countdown on each press.
+///
+/// The hint index wraps around once all hints have been cycled through. When no
+/// moves are available a "No hints available" toast is shown instead.
+fn handle_keyboard_hint(
+    keys: Res<ButtonInput<KeyCode>>,
+    paused: Option<Res<PausedResource>>,
+    game: Option<Res<GameStateResource>>,
+    layout: Option<Res<LayoutResource>>,
+    mut confirm: ResMut<KeyboardConfirmState>,
+    mut hint_cycle: ResMut<HintCycleIndex>,
+    mut commands: Commands,
+    card_entities: Query<(Entity, &CardEntity, &Sprite)>,
+    mut info_toast: MessageWriter<InfoToastEvent>,
+    mut hint_visual: MessageWriter<HintVisualEvent>,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+    if !keys.just_pressed(KeyCode::KeyH) {
+        return;
+    }
+
+    // H cancels any in-flight forfeit confirmation.
+    confirm.forfeit_countdown = 0.0;
+
+    let Some(ref g) = game else { return };
+
+    if g.0.is_won {
+        info_toast.write(InfoToastEvent("Game won! Press N for a new game".to_string()));
+        return;
+    }
+
+    let Some(ref layout_res) = layout else { return };
+
+    let hints = all_hints(&g.0);
+    if hints.is_empty() {
+        info_toast.write(InfoToastEvent("No hints available".to_string()));
+        return;
+    }
+
+    // Pick the hint at the current cycle index (wrapping) and advance.
+    let idx = hint_cycle.0 % hints.len();
+    hint_cycle.0 = hint_cycle.0.wrapping_add(1);
+    let (from, to, _count) = &hints[idx];
+
+    // When the hint points at the stock (draw suggestion) there is no
+    // face-up card to highlight — show a toast instead.
+    // If the stock is empty, pressing D will recycle the waste rather
+    // than draw a card, so the toast text must reflect that.
+    if *from == PileType::Stock {
+        let stock_empty = g.0.piles
+            .get(&PileType::Stock)
+            .is_some_and(|p| p.cards.is_empty());
+        let msg = if stock_empty {
+            "Hint: recycle waste (D)".to_string()
+        } else {
+            "Hint: draw from stock (D)".to_string()
+        };
+        info_toast.write(InfoToastEvent(msg));
+        return;
+    }
+
+    // Find the top face-up card in the source pile and highlight it.
+    let top_card_id = g.0.piles.get(from)
+        .and_then(|p| p.cards.last().filter(|c| c.face_up))
+        .map(|c| c.id);
+    if let Some(card_id) = top_card_id {
+        for (entity, card_entity, _sprite) in card_entities.iter() {
+            if card_entity.card_id == card_id {
+                commands.entity(entity)
+                    .insert(HintHighlight { remaining: 2.0 })
+                    .insert(HintHighlightTimer(2.0))
+                    .insert(Sprite {
+                        color: Color::srgba(1.0, 1.0, 0.4, 1.0),
+                        custom_size: Some(layout_res.0.card_size),
+                        ..default()
+                    });
+                break;
+            }
+        }
+        // Emit HintVisualEvent so the destination pile marker is also
+        // tinted gold for 2 s.
+        hint_visual.write(HintVisualEvent {
+            source_card_id: card_id,
+            dest_pile: to.clone(),
+        });
+    }
+
+    // Fire an informational toast describing where the hinted card should
+    // move so the player always sees the suggestion in text.
+    let msg = match to {
+        PileType::Foundation(suit) => {
+            let suit_name = match suit {
+                Suit::Clubs => "Clubs",
+                Suit::Diamonds => "Diamonds",
+                Suit::Hearts => "Hearts",
+                Suit::Spades => "Spades",
+            };
+            format!("Hint: move to {suit_name} foundation")
+        }
+        PileType::Tableau(col) => format!("Hint: move to tableau (col {})", col + 1),
+        _ => "Hint: move card".to_string(),
+    };
+    info_toast.write(InfoToastEvent(msg));
+}
+
+/// Handles the G key: forfeit the current game with a 3-second double-confirm
+/// window to prevent accidental forfeits.
+///
+/// First press shows a toast and starts the countdown.
+/// Second press **within the window** sends [`ForfeitEvent`].
+/// Pressing any other key between presses cancels the countdown
+/// (handled by [`handle_keyboard_core`]).
+fn handle_keyboard_forfeit(
+    keys: Res<ButtonInput<KeyCode>>,
+    paused: Option<Res<PausedResource>>,
+    time: Res<Time>,
+    game: Option<Res<GameStateResource>>,
+    mut confirm: ResMut<KeyboardConfirmState>,
+    mut forfeit: MessageWriter<ForfeitEvent>,
+    mut info_toast: MessageWriter<InfoToastEvent>,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+
+    // Tick down the forfeit confirmation window each frame.
+    if confirm.forfeit_countdown > 0.0 {
+        confirm.forfeit_countdown -= time.delta_secs();
+        if confirm.forfeit_countdown <= 0.0 {
+            confirm.forfeit_countdown = 0.0;
+        }
+    }
+
+    if !keys.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+
+    let active_game = game.as_ref().is_some_and(|g| g.0.move_count > 0 && !g.0.is_won);
+    if !active_game {
+        return;
+    }
+
+    if confirm.forfeit_countdown > 0.0 {
+        // Second press within the confirmation window — confirmed.
+        forfeit.write(ForfeitEvent);
+        confirm.forfeit_countdown = 0.0;
+    } else {
+        // First press — start the countdown and warn the player.
+        confirm.forfeit_countdown = FORFEIT_CONFIRM_WINDOW;
+        info_toast.write(InfoToastEvent("Press G again to forfeit".to_string()));
+    }
 }
 
 /// Resets [`HintCycleIndex`] to `0` whenever the game state changes or a new
@@ -370,7 +460,47 @@ fn handle_stock_click(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Fires [`DrawRequestEvent`] when the player taps the stock pile on a touch screen.
+///
+/// Uses `TouchPhase::Started` (the finger-down moment) for instant responsiveness
+/// — since the stock cannot be dragged, there is no ambiguity between a tap and
+/// the start of a drag on this pile. Does nothing while a drag is in progress.
+fn handle_touch_stock_tap(
+    mut touch_events: EventReader<TouchInput>,
+    paused: Option<Res<PausedResource>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    layout: Option<Res<LayoutResource>>,
+    drag: Res<DragState>,
+    mut draw: MessageWriter<DrawRequestEvent>,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+    if !drag.is_idle() {
+        return;
+    }
+    let Some(layout) = layout else { return };
+
+    for event in touch_events.read() {
+        if event.phase != TouchPhase::Started {
+            continue;
+        }
+        let Some(world) = touch_to_world(&cameras, event.position) else {
+            continue;
+        };
+        let Some(&stock_pos) = layout.0.pile_positions.get(&PileType::Stock) else {
+            continue;
+        };
+        if point_in_rect(world, stock_pos, layout.0.card_size) {
+            draw.write(DrawRequestEvent);
+            break; // one draw per tap frame
+        }
+    }
+}
+
+/// Begins a mouse drag: records the press position and the cards that would be
+/// dragged. Cards are **not** elevated yet — that happens in [`follow_drag`]
+/// once the drag threshold is crossed.
 fn start_drag(
     buttons: Res<ButtonInput<MouseButton>>,
     paused: Option<Res<PausedResource>>,
@@ -379,81 +509,98 @@ fn start_drag(
     layout: Option<Res<LayoutResource>>,
     game: Res<GameStateResource>,
     mut drag: ResMut<DragState>,
-    mut card_visuals: Query<(&CardEntity, &mut Transform, &mut Sprite)>,
 ) {
     if paused.is_some_and(|p| p.0) {
         return;
     }
+    // Only start a new drag when idle (no touch drag running either).
     if !buttons.just_pressed(MouseButton::Left) || !drag.is_idle() {
         return;
     }
-    let Some(layout) = layout else {
-        return;
-    };
-    let Some(world) = cursor_world(&windows, &cameras) else {
-        return;
-    };
+    let Some(layout) = layout else { return };
+    let Some(world) = cursor_world(&windows, &cameras) else { return };
 
-    // Don't try to pick up the stock — that's the draw click.
+    // Don't pick up the stock — that is handled by handle_stock_click.
     let Some((pile, stack_index, card_ids)) = find_draggable_at(world, &game.0, &layout.0) else {
         return;
     };
 
-    let Some(&bottom_id) = card_ids.first() else {
-        return;
-    };
-
-    // Find the bottom drag card's current world position so we can compute
-    // the offset between cursor and that card (grab point).
     let bottom_pos = card_position(&game.0, &layout.0, pile.clone(), stack_index);
-    let cursor_offset = bottom_pos - world;
 
-    // Elevate dragged cards to DRAG_Z and dim them slightly so the board
-    // beneath remains visible during the drag.
-    for (i, id) in card_ids.iter().enumerate() {
-        if let Some((_, mut transform, mut sprite)) = card_visuals
-            .iter_mut()
-            .find(|(entity, _, _)| entity.card_id == *id)
-        {
-            transform.translation.z = DRAG_Z + (i as f32) * 0.01;
-            sprite.color.set_alpha(0.85);
-        }
-    }
-
+    // Store as a pending drag. We do NOT elevate the cards yet — the visual
+    // lift happens in follow_drag once the threshold is crossed.
     drag.cards = card_ids;
     drag.origin_pile = Some(pile);
-    drag.cursor_offset = cursor_offset;
+    drag.cursor_offset = bottom_pos - world;
     drag.origin_z = DRAG_Z;
-    let _ = bottom_id; // retained for clarity, not used further
+    drag.press_pos = world;
+    drag.committed = false;
+    drag.active_touch_id = None;
 }
 
+/// Moves dragged cards with the mouse cursor each frame.
+///
+/// If the drag has not yet been committed (threshold not crossed), checks
+/// whether the cursor has moved far enough from the press position to commit.
+/// On commit, cards are elevated to `DRAG_Z` and dimmed. Does nothing for
+/// touch-driven drags (`drag.active_touch_id.is_some()`).
+#[allow(clippy::too_many_arguments)]
 fn follow_drag(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform)>,
-    drag: Res<DragState>,
+    mut drag: ResMut<DragState>,
     layout: Option<Res<LayoutResource>>,
-    mut card_transforms: Query<(&CardEntity, &mut Transform)>,
+    tuning: Res<AnimationTuning>,
+    mut card_transforms: Query<(&CardEntity, &mut Transform, &mut Sprite)>,
 ) {
-    if drag.is_idle() {
+    // Skip if idle or if a touch drag is running.
+    if drag.is_idle() || drag.active_touch_id.is_some() {
         return;
     }
-    let Some(layout) = layout else {
-        return;
-    };
+    let Some(layout) = layout else { return };
     let Some(world) = cursor_world(&windows, &cameras) else {
+        // Cursor left the window mid-drag. Cancel a pending drag; let a
+        // committed drag freeze at the last known position.
+        if !drag.committed {
+            drag.clear();
+        }
         return;
     };
 
+    // Check drag threshold on the first frames after press.
+    if !drag.committed {
+        // Use screen-space distance (world ≈ screen for 2-D games with no
+        // camera zoom, which is our case).
+        let moved = world.distance(drag.press_pos);
+        if moved < tuning.drag_threshold_px {
+            return; // Still within tap zone — don't start visual drag yet.
+        }
+
+        // Threshold crossed → commit.
+        drag.committed = true;
+
+        // Elevate cards: push to DRAG_Z and dim slightly so the board
+        // beneath stays readable.
+        for (i, &id) in drag.cards.iter().enumerate() {
+            if let Some((_, mut transform, mut sprite)) =
+                card_transforms.iter_mut().find(|(ce, _, _)| ce.card_id == id)
+            {
+                transform.translation.z = DRAG_Z + i as f32 * 0.01;
+                sprite.color.set_alpha(0.85);
+            }
+        }
+    }
+
+    // Move cards to the cursor.
     let bottom_pos = world + drag.cursor_offset;
     let fan = -layout.0.card_size.y * TABLEAU_FAN_FRAC;
 
-    for (i, id) in drag.cards.iter().enumerate() {
-        if let Some((_, mut transform)) = card_transforms
-            .iter_mut()
-            .find(|(entity, _)| entity.card_id == *id)
+    for (i, &id) in drag.cards.iter().enumerate() {
+        if let Some((_, mut transform, _)) =
+            card_transforms.iter_mut().find(|(ce, _, _)| ce.card_id == id)
         {
             transform.translation.x = bottom_pos.x;
-            transform.translation.y = bottom_pos.y + fan * (i as f32);
+            transform.translation.y = bottom_pos.y + fan * i as f32;
         }
     }
 }
@@ -477,7 +624,19 @@ fn end_drag(
         drag.clear();
         return;
     }
+    // Only handle mouse releases; touch releases are handled by touch_end_drag.
     if !buttons.just_released(MouseButton::Left) || drag.is_idle() {
+        return;
+    }
+    if drag.active_touch_id.is_some() {
+        return; // Touch-driven drag — not ours to handle.
+    }
+
+    // If the drag was never committed (user tapped without moving far enough),
+    // treat it as a click: just cancel the pending drag and resync card positions.
+    if !drag.committed {
+        drag.clear();
+        changed.write(StateChangedEvent);
         return;
     }
     let Some(layout) = layout else {
@@ -557,6 +716,220 @@ fn end_drag(
 }
 
 // ---------------------------------------------------------------------------
+// Touch drag pipeline
+// ---------------------------------------------------------------------------
+
+/// Begins a touch drag when a finger first touches a face-up card.
+///
+/// Mirrors [`start_drag`] but uses [`TouchInput`] events instead of mouse
+/// buttons. Records the touch ID in [`DragState`] so only this finger drives
+/// the drag — other fingers are ignored.
+fn touch_start_drag(
+    mut touch_events: EventReader<TouchInput>,
+    paused: Option<Res<PausedResource>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    layout: Option<Res<LayoutResource>>,
+    game: Res<GameStateResource>,
+    mut drag: ResMut<DragState>,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+    // Only one drag at a time.
+    if !drag.is_idle() {
+        return;
+    }
+    let Some(layout) = layout else { return };
+
+    for event in touch_events.read() {
+        if event.phase != TouchPhase::Started {
+            continue;
+        }
+        let Some(world) = touch_to_world(&cameras, event.position) else {
+            continue;
+        };
+        let Some((pile, stack_index, card_ids)) =
+            find_draggable_at(world, &game.0, &layout.0)
+        else {
+            continue;
+        };
+
+        let bottom_pos = card_position(&game.0, &layout.0, pile.clone(), stack_index);
+
+        drag.cards = card_ids;
+        drag.origin_pile = Some(pile);
+        drag.cursor_offset = bottom_pos - world;
+        drag.origin_z = DRAG_Z;
+        drag.press_pos = event.position; // screen-space for threshold comparison
+        drag.committed = false;
+        drag.active_touch_id = Some(event.id);
+        // Process only the first touch that landed on a card.
+        break;
+    }
+}
+
+/// Moves touch-dragged cards with the active finger each frame.
+///
+/// Checks the drag threshold on the first frames after the touch began and
+/// commits (elevates cards) once exceeded. Does nothing for mouse drags.
+#[allow(clippy::too_many_arguments)]
+fn touch_follow_drag(
+    touches: Option<Res<Touches>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    mut drag: ResMut<DragState>,
+    layout: Option<Res<LayoutResource>>,
+    tuning: Res<AnimationTuning>,
+    mut card_transforms: Query<(&CardEntity, &mut Transform, &mut Sprite)>,
+) {
+    let Some(active_id) = drag.active_touch_id else {
+        return; // Mouse drag or idle.
+    };
+    let Some(touches) = touches else { return };
+    let Some(layout) = layout else { return };
+
+    // Look up the driving touch.
+    let Some(touch) = touches.iter().find(|t| t.id() == active_id) else {
+        // Touch no longer active — will be cleaned up by touch_end_drag.
+        return;
+    };
+
+    let Some(world) = touch_to_world(&cameras, touch.position()) else {
+        return;
+    };
+
+    if !drag.committed {
+        // Compare screen-space distance from the original press position.
+        let moved = touch.position().distance(drag.press_pos);
+        if moved < tuning.drag_threshold_px {
+            return;
+        }
+
+        drag.committed = true;
+
+        for (i, &id) in drag.cards.iter().enumerate() {
+            if let Some((_, mut transform, mut sprite)) =
+                card_transforms.iter_mut().find(|(ce, _, _)| ce.card_id == id)
+            {
+                transform.translation.z = DRAG_Z + i as f32 * 0.01;
+                sprite.color.set_alpha(0.85);
+            }
+        }
+    }
+
+    let bottom_pos = world + drag.cursor_offset;
+    let fan = -layout.0.card_size.y * TABLEAU_FAN_FRAC;
+
+    for (i, &id) in drag.cards.iter().enumerate() {
+        if let Some((_, mut transform, _)) =
+            card_transforms.iter_mut().find(|(ce, _, _)| ce.card_id == id)
+        {
+            transform.translation.x = bottom_pos.x;
+            transform.translation.y = bottom_pos.y + fan * i as f32;
+        }
+    }
+}
+
+/// Resolves a touch drag when the finger lifts or is cancelled.
+///
+/// Mirrors [`end_drag`] but reads [`TouchInput`] events instead of mouse
+/// buttons. Uncommitted drags (tap gestures) are cancelled cleanly.
+#[allow(clippy::too_many_arguments)]
+fn touch_end_drag(
+    mut touch_events: EventReader<TouchInput>,
+    paused: Option<Res<PausedResource>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    layout: Option<Res<LayoutResource>>,
+    game: Res<GameStateResource>,
+    mut drag: ResMut<DragState>,
+    mut moves: MessageWriter<MoveRequestEvent>,
+    mut rejected: MessageWriter<MoveRejectedEvent>,
+    mut changed: MessageWriter<StateChangedEvent>,
+    mut commands: Commands,
+    card_entities: Query<(Entity, &CardEntity, &Transform)>,
+) {
+    let Some(active_id) = drag.active_touch_id else {
+        return; // Mouse drag or idle.
+    };
+
+    if paused.is_some_and(|p| p.0) {
+        drag.clear();
+        return;
+    }
+
+    for event in touch_events.read() {
+        if event.id != active_id {
+            continue;
+        }
+        if !matches!(event.phase, TouchPhase::Ended | TouchPhase::Canceled) {
+            continue;
+        }
+
+        // Uncommitted tap — cancel cleanly.
+        if !drag.committed {
+            drag.clear();
+            changed.write(StateChangedEvent);
+            return;
+        }
+
+        let Some(origin) = drag.origin_pile.clone() else {
+            drag.clear();
+            return;
+        };
+        let count = drag.cards.len();
+
+        // Find the drop target using the finger's lift position.
+        let world = touch_to_world(&cameras, event.position);
+        let Some(layout) = layout.as_ref() else {
+            drag.clear();
+            changed.write(StateChangedEvent);
+            return;
+        };
+        let target =
+            world.and_then(|w| find_drop_target(w, &game.0, &layout.0, &origin));
+
+        let mut fired = false;
+        if let Some(target) = target {
+            if target != origin {
+                let bottom_card_id = drag.cards[0];
+                if let Some(bottom_card) = card_by_id(&game.0, bottom_card_id) {
+                    let ok = match &target {
+                        PileType::Foundation(suit) => {
+                            count == 1
+                                && can_place_on_foundation(&bottom_card, &game.0.piles[&target], *suit)
+                        }
+                        PileType::Tableau(_) => {
+                            can_place_on_tableau(&bottom_card, &game.0.piles[&target])
+                        }
+                        _ => false,
+                    };
+                    if ok {
+                        moves.write(MoveRequestEvent { from: origin.clone(), to: target, count });
+                        fired = true;
+                    } else {
+                        rejected.write(MoveRejectedEvent { from: origin.clone(), to: target, count });
+                        for &card_id in &drag.cards {
+                            if let Some((entity, _, transform)) =
+                                card_entities.iter().find(|(_, ce, _)| ce.card_id == card_id)
+                            {
+                                commands.entity(entity).insert(ShakeAnim {
+                                    elapsed: 0.0,
+                                    origin_x: transform.translation.x,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        drag.clear();
+        changed.write(StateChangedEvent);
+        let _ = fired;
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -568,6 +941,18 @@ fn cursor_world(
     let cursor = window.cursor_position()?;
     let (camera, camera_transform) = cameras.single().ok()?;
     camera.viewport_to_world_2d(camera_transform, cursor).ok()
+}
+
+/// Converts a touch screen position (logical pixels, top-left origin) to
+/// world-space 2-D coordinates using the primary camera.
+///
+/// Returns `None` if no camera is present or the projection fails.
+fn touch_to_world(
+    cameras: &Query<(&Camera, &GlobalTransform)>,
+    screen_pos: Vec2,
+) -> Option<Vec2> {
+    let (camera, camera_transform) = cameras.single().ok()?;
+    camera.viewport_to_world_2d(camera_transform, screen_pos).ok()
 }
 
 /// Axis-aligned rectangle hit-test with a center and full size.
@@ -1558,6 +1943,82 @@ mod tests {
 
         assert!(!forfeit_sent, "ForfeitEvent must not fire when no game is active");
         assert_eq!(forfeit_countdown, 0.0, "countdown must remain 0 when no game is active");
+    }
+
+    // -----------------------------------------------------------------------
+    // all_hints / new-game window — pure-function tests added during refactor
+    // -----------------------------------------------------------------------
+
+    /// Pass 3 of `all_hints` should suggest drawing from the stock when there
+    /// are no other moves and the stock is non-empty.
+    #[test]
+    fn all_hints_suggests_draw_when_no_moves_and_stock_nonempty() {
+        use solitaire_core::card::{Card, Rank, Suit};
+        let mut game = GameState::new(1, DrawMode::DrawOne);
+
+        // Remove all foundation, tableau, and waste cards so no pile-to-pile
+        // move exists. Leave one card in the stock.
+        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        }
+        for i in 0..7_usize {
+            game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        game.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        game.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        // Put one card back into the stock so "draw" is a valid suggestion.
+        game.piles.get_mut(&PileType::Stock).unwrap().cards.push(Card {
+            id: 1,
+            suit: Suit::Clubs,
+            rank: Rank::Ace,
+            face_up: false,
+        });
+
+        let hints = all_hints(&game);
+        assert_eq!(hints.len(), 1, "exactly one hint: draw from stock");
+        let (from, to, count) = &hints[0];
+        assert_eq!(*from, PileType::Stock, "hint must come from Stock");
+        assert_eq!(*to, PileType::Waste, "hint must point to Waste");
+        assert_eq!(*count, 1);
+    }
+
+    /// `all_hints` must be empty when both stock and waste are empty and no
+    /// pile-to-pile move exists — the game is truly stuck.
+    #[test]
+    fn all_hints_is_empty_when_truly_stuck() {
+        use solitaire_core::card::{Card, Rank, Suit};
+        let mut game = GameState::new(1, DrawMode::DrawOne);
+
+        // Clear every pile, then put a single card that has nowhere to go.
+        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        }
+        for i in 0..7_usize {
+            game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        game.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        game.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+
+        // Two of Clubs on tableau 0 — can't go to an empty foundation (needs Ace
+        // first) and can't go to any empty tableau column (not a King).
+        game.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 700,
+            suit: Suit::Clubs,
+            rank: Rank::Two,
+            face_up: true,
+        });
+
+        let hints = all_hints(&game);
+        assert!(hints.is_empty(), "no hint should exist when the game is truly stuck");
+    }
+
+    /// Const-assert that `NEW_GAME_CONFIRM_WINDOW` is positive so the
+    /// confirmation countdown actually opens on the first N press.
+    ///
+    /// Mirrors the existing `forfeit_confirm_window_is_positive` test.
+    #[test]
+    fn new_game_confirm_window_is_positive() {
+        const { assert!(NEW_GAME_CONFIRM_WINDOW > 0.0, "NEW_GAME_CONFIRM_WINDOW must be > 0"); }
     }
 
     // -----------------------------------------------------------------------

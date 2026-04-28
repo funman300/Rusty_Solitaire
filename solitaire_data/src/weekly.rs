@@ -9,7 +9,7 @@ use solitaire_core::game_state::DrawMode;
 /// XP awarded each time a weekly goal is just completed.
 pub const WEEKLY_GOAL_XP: u64 = 75;
 
-/// What kind of game outcome counts as progress toward this goal.
+/// Discriminant for the type of weekly goal the player is working toward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeeklyGoalKind {
     /// Any win counts.
@@ -22,7 +22,7 @@ pub enum WeeklyGoalKind {
     WinDrawThree,
 }
 
-/// Static metadata for a single weekly goal.
+/// Static definition of a weekly goal — the goal type, target value, and display strings.
 #[derive(Debug, Clone, Copy)]
 pub struct WeeklyGoalDef {
     pub id: &'static str,
@@ -31,7 +31,7 @@ pub struct WeeklyGoalDef {
     pub kind: WeeklyGoalKind,
 }
 
-/// Per-event facts a goal needs to decide whether it matched.
+/// Runtime snapshot of game metrics used to evaluate weekly goal progress.
 #[derive(Debug, Clone)]
 pub struct WeeklyGoalContext {
     pub time_seconds: u64,

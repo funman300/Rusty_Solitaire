@@ -24,6 +24,8 @@ pub struct ChallengeAdvancedEvent {
     pub new_index: u32,
 }
 
+/// Manages Challenge Mode progression: seeded hard deals, no-undo rules, and advancement through the challenge sequence.
+/// Requires the player to be at least level `CHALLENGE_UNLOCK_LEVEL`.
 pub struct ChallengePlugin;
 
 impl Plugin for ChallengePlugin {

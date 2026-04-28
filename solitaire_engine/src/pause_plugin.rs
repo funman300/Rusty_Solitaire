@@ -48,6 +48,7 @@ pub fn draw_mode_label(mode: DrawMode) -> &'static str {
     }
 }
 
+/// Handles pause and resume: toggles the pause overlay on Esc, freezes game-input systems via `PausedResource`, and saves the in-progress game state to disk.
 pub struct PausePlugin;
 
 impl Plugin for PausePlugin {

@@ -220,3 +220,118 @@ async fn update_leaderboard_if_opted_in(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tests — pure merge logic; no database required
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use solitaire_sync::{AchievementRecord, PlayerProgress, StatsSnapshot, SyncPayload, merge};
+    use uuid::Uuid;
+
+    /// Build a minimal `SyncPayload` with default fields, overridden by the
+    /// caller as needed. Using `Uuid::nil()` keeps every test self-contained.
+    fn make_payload(stats: StatsSnapshot, achievements: Vec<AchievementRecord>) -> SyncPayload {
+        SyncPayload {
+            user_id: Uuid::nil(),
+            stats,
+            achievements,
+            progress: PlayerProgress::default(),
+            last_modified: Utc::now(),
+        }
+    }
+
+    fn default_payload() -> SyncPayload {
+        make_payload(StatsSnapshot::default(), vec![])
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. Merge keeps the higher games_played from the remote side.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_merge_keeps_higher_games_played() {
+        let mut local = default_payload();
+        local.stats.games_played = 10;
+
+        let mut remote = default_payload();
+        remote.stats.games_played = 25; // remote is ahead
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(
+            merged.stats.games_played, 25,
+            "merge must keep the higher games_played value from remote"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Merge keeps the higher best_single_score from the local side.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_merge_keeps_best_single_score() {
+        let mut local = default_payload();
+        local.stats.best_single_score = 8_000; // local is better
+
+        let mut remote = default_payload();
+        remote.stats.best_single_score = 3_500;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(
+            merged.stats.best_single_score, 8_000,
+            "merge must keep the higher best_single_score (local in this case)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Merge never removes an achievement that is unlocked on one side.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_merge_never_removes_unlocked_achievement() {
+        let mut unlocked = AchievementRecord::locked("first_win");
+        unlocked.unlock(Utc::now());
+
+        // local has the achievement unlocked; remote has no achievements at all.
+        let local = make_payload(StatsSnapshot::default(), vec![unlocked]);
+        let remote = make_payload(StatsSnapshot::default(), vec![]);
+
+        let (merged, _) = merge(&local, &remote);
+
+        let found = merged
+            .achievements
+            .iter()
+            .find(|a| a.id == "first_win")
+            .expect("achievement must survive the merge");
+        assert!(
+            found.unlocked,
+            "achievement unlocked on local must remain unlocked after merge with remote that lacks it"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. merge(payload, payload) is idempotent for key numeric fields.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_merge_is_idempotent() {
+        let mut payload = default_payload();
+        payload.stats.games_played = 42;
+        payload.stats.games_won = 20;
+        payload.stats.best_single_score = 5_500;
+        payload.stats.fastest_win_seconds = 90;
+        payload.stats.lifetime_score = 110_000;
+        payload.progress.total_xp = 3_000;
+
+        let (merged, _) = merge(&payload, &payload);
+
+        assert_eq!(merged.stats.games_played, 42, "idempotent: games_played");
+        assert_eq!(merged.stats.games_won, 20, "idempotent: games_won");
+        assert_eq!(merged.stats.best_single_score, 5_500, "idempotent: best_single_score");
+        assert_eq!(merged.stats.fastest_win_seconds, 90, "idempotent: fastest_win_seconds");
+        assert_eq!(merged.stats.lifetime_score, 110_000, "idempotent: lifetime_score");
+        assert_eq!(merged.progress.total_xp, 3_000, "idempotent: total_xp");
+    }
+}

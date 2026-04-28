@@ -63,9 +63,13 @@ impl Rank {
 /// A single playing card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
+    /// Unique identifier for this card within the deal. Stable across moves and undo.
     pub id: u32,
+    /// The card's suit (Clubs, Diamonds, Hearts, Spades).
     pub suit: Suit,
+    /// The card's rank (Ace through King).
     pub rank: Rank,
+    /// Whether the card is visible to the player. Face-down cards may not be moved.
     pub face_up: bool,
 }
 

@@ -9,6 +9,8 @@ use bevy::prelude::*;
 #[derive(Component, Debug)]
 pub struct HelpScreen;
 
+/// Spawns and despawns the help/controls overlay shown when the player presses H (or the help button).
+/// All hotkeys and gesture guides live here.
 pub struct HelpPlugin;
 
 impl Plugin for HelpPlugin {

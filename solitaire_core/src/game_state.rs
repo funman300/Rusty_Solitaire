@@ -64,18 +64,26 @@ struct StateSnapshot {
 /// Full state of an in-progress Klondike Solitaire game.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
+    /// All card piles keyed by pile type. Contains Stock, Waste, 4 Foundations, and 7 Tableau piles.
     #[serde(with = "pile_map_serde")]
     pub piles: HashMap<PileType, Pile>,
+    /// Whether the player draws one or three cards from the stock per turn.
     pub draw_mode: DrawMode,
     /// Top-level mode (Classic / Zen). Defaults to Classic for backwards
     /// compatibility with older save files via `#[serde(default)]`.
     #[serde(default)]
     pub mode: GameMode,
+    /// Current game score. Can be negative (undo penalties subtract from score).
     pub score: i32,
+    /// Total moves made this game, including draws and stock recycles.
     pub move_count: u32,
+    /// Seconds elapsed since the game started, used for time-bonus scoring.
     pub elapsed_seconds: u64,
+    /// RNG seed used to deal this game. Same seed always produces the same layout.
     pub seed: u64,
+    /// True once all 52 cards are on the foundations. No further moves are accepted.
     pub is_won: bool,
+    /// True when the game can be completed without further input (all remaining cards are face-up and in order).
     pub is_auto_completable: bool,
     /// Number of times `undo()` has been successfully invoked this game.
     /// Used by achievement conditions like `no_undo`.
@@ -173,6 +181,7 @@ impl GameState {
                 stock.cards.push(card);
             }
             self.recycle_count = self.recycle_count.saturating_add(1);
+            self.move_count += 1;
             return Ok(());
         }
 
@@ -560,6 +569,24 @@ mod tests {
         }
         g.draw().unwrap(); // second recycle
         assert_eq!(g.recycle_count, 2);
+    }
+
+    #[test]
+    fn move_count_increments_on_recycle() {
+        let mut g = new_game();
+        // Drain stock to waste, recording how many draws it took.
+        let mut draws: u32 = 0;
+        while !g.piles[&PileType::Stock].cards.is_empty() {
+            g.draw().unwrap();
+            draws += 1;
+        }
+        let before = g.move_count;
+        g.draw().unwrap(); // recycle
+        assert_eq!(
+            g.move_count,
+            before + 1,
+            "recycling waste back to stock must increment move_count (was {before}, draws={draws})"
+        );
     }
 
     #[test]

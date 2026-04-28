@@ -62,6 +62,7 @@ struct OptOutTask(Option<Task<Result<(), String>>>);
 // Plugin
 // ---------------------------------------------------------------------------
 
+/// Manages the leaderboard overlay: fetches scores from the sync server, handles opt-in/opt-out, and displays the ranked list of player scores.
 pub struct LeaderboardPlugin;
 
 impl Plugin for LeaderboardPlugin {

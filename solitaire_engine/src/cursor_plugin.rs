@@ -30,6 +30,7 @@ const MARKER_DEFAULT: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
 /// Green tint applied to pile markers that are valid drop targets during drag.
 const MARKER_VALID: Color = Color::srgba(0.15, 0.85, 0.25, 0.55);
 
+/// Renders a custom cursor sprite that follows the pointer and swaps to a grab-hand icon while a card drag is in progress.
 pub struct CursorPlugin;
 
 impl Plugin for CursorPlugin {

@@ -13,7 +13,7 @@ pub use solitaire_sync::StatsSnapshot;
 ///
 /// Import this trait alongside `StatsSnapshot` to use `update_on_win`.
 pub trait StatsExt {
-    /// Record a completed win. Updates all relevant counters and rolling averages.
+    /// Updates rolling statistics from a completed game win. Call once per `GameWonEvent`.
     fn update_on_win(&mut self, score: i32, time_seconds: u64, draw_mode: &DrawMode);
 }
 

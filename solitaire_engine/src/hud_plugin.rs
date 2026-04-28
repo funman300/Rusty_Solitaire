@@ -86,6 +86,7 @@ pub struct HudSelection;
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
 
+/// Renders the in-game HUD: score counter, move counter, elapsed timer, draw-mode indicator, and the auto-complete badge that lights up when the game is solvable without further input.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {

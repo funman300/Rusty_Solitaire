@@ -12,28 +12,72 @@ pub struct GameStateResource(pub GameState);
 
 /// Tracks an in-progress drag operation.
 ///
-/// When `cards` is empty there is no active drag. When non-empty, the listed cards
-/// are being moved by the user and should be rendered at the cursor position.
-#[derive(Resource, Debug, Clone, Default)]
+/// When `cards` is empty there is no active drag. When non-empty, the listed
+/// cards are being moved by the user and should be rendered at the cursor or
+/// touch position.
+///
+/// # Drag threshold
+///
+/// A drag is *pending* when `!cards.is_empty() && !committed`. The drag does
+/// not become *committed* (cards do not visually move) until the pointer has
+/// moved at least `AnimationTuning::drag_threshold_px` pixels from `press_pos`.
+/// This prevents accidental drags on quick taps, especially on touch screens.
+#[derive(Resource, Debug, Clone)]
 pub struct DragState {
+    /// IDs of the cards being dragged (bottom-to-top stacking order).
     pub cards: Vec<u32>,
+    /// Pile the drag originated from.
     pub origin_pile: Option<PileType>,
+    /// World-space offset from the cursor/touch to the bottom card's centre.
     pub cursor_offset: Vec2,
+    /// Z coordinate used for the dragged cards.
     pub origin_z: f32,
+    /// Screen-space position (logical pixels) where the press/touch began.
+    ///
+    /// Used to measure whether the drag threshold has been crossed.
+    pub press_pos: Vec2,
+    /// Whether the drag threshold has been crossed and visual drag is active.
+    ///
+    /// Cards are only lifted and repositioned once `committed = true`.
+    pub committed: bool,
+    /// Touch ID driving this drag, or `None` for a mouse drag.
+    pub active_touch_id: Option<u64>,
+}
+
+impl Default for DragState {
+    fn default() -> Self {
+        Self {
+            cards: Vec::new(),
+            origin_pile: None,
+            cursor_offset: Vec2::ZERO,
+            origin_z: 0.0,
+            press_pos: Vec2::ZERO,
+            committed: false,
+            active_touch_id: None,
+        }
+    }
 }
 
 impl DragState {
-    /// Returns true when no drag is currently in progress.
+    /// Returns `true` when no drag (pending or committed) is in progress.
     pub fn is_idle(&self) -> bool {
         self.cards.is_empty()
     }
 
-    /// Clears the drag state.
+    /// Returns `true` when a drag has been committed (cards are visually lifted).
+    pub fn is_committed(&self) -> bool {
+        self.committed
+    }
+
+    /// Resets all drag state to the idle/default values.
     pub fn clear(&mut self) {
         self.cards.clear();
         self.origin_pile = None;
         self.cursor_offset = Vec2::ZERO;
         self.origin_z = 0.0;
+        self.press_pos = Vec2::ZERO;
+        self.committed = false;
+        self.active_touch_id = None;
     }
 }
 

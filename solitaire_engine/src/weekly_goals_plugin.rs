@@ -21,6 +21,8 @@ pub struct WeeklyGoalCompletedEvent {
     pub description: String,
 }
 
+/// Tracks weekly goal progress (e.g. win N games, play without undo) and fires `WeeklyGoalCompletedEvent` when a goal is met.
+/// Progress resets each Monday.
 pub struct WeeklyGoalsPlugin;
 
 impl Plugin for WeeklyGoalsPlugin {

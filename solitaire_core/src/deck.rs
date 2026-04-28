@@ -12,6 +12,7 @@ const ALL_RANKS: [Rank; 13] = [
 
 /// A standard 52-card deck.
 pub struct Deck {
+    /// All 52 cards in the deck, in deal order.
     pub cards: Vec<Card>,
 }
 

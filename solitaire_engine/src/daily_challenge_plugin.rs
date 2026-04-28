@@ -71,6 +71,8 @@ pub struct DailyChallengeCompletedEvent {
 #[derive(Resource, Default)]
 struct DailyChallengeTask(Option<Task<Option<ChallengeGoal>>>);
 
+/// Fetches today's daily challenge seed and goal from the sync server on startup and tracks completion.
+/// Fires `DailyChallengeCompletedEvent` when the player wins a matching game.
 pub struct DailyChallengePlugin;
 
 impl Plugin for DailyChallengePlugin {

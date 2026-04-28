@@ -17,7 +17,9 @@ pub enum PileType {
 /// A named collection of cards in a specific board position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pile {
+    /// Which pile this is (Stock, Waste, Foundation suit, or Tableau column).
     pub pile_type: PileType,
+    /// Cards in the pile, bottom-to-top stacking order. Last element is the top card.
     pub cards: Vec<Card>,
 }
 

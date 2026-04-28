@@ -149,6 +149,7 @@ pub struct ActiveToast {
 /// Duration of each queued info-toast in seconds.
 const QUEUED_TOAST_SECS: f32 = 2.5;
 
+/// Drives all linear card animations (`CardAnim`), toast notifications, deal stagger, win cascade, and the auto-complete card-slide sequence.
 pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
