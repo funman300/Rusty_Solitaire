@@ -151,7 +151,7 @@ mod tests {
         let session = app.world().resource::<TimeAttackResource>();
         assert!(!session.active);
 
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut cursor = events.get_cursor();
         assert!(cursor.read(events).next().is_none());
     }
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(session.wins, 0);
         assert!((session.remaining_secs - TIME_ATTACK_DURATION_SECS).abs() < 1.0);
 
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -193,7 +193,7 @@ mod tests {
         assert!(!session.active);
         assert_eq!(session.remaining_secs, 0.0);
 
-        let events = app.world().resource::<Events<TimeAttackEndedEvent>>();
+        let events = app.world().resource::<Messages<TimeAttackEndedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -222,7 +222,7 @@ mod tests {
         let session = app.world().resource::<TimeAttackResource>();
         assert_eq!(session.wins, 1);
 
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -286,7 +286,7 @@ mod tests {
         assert!(session.remaining_secs < 0.0, "remaining_secs must not change while paused");
 
         // No ended event must have been emitted.
-        let events = app.world().resource::<Events<TimeAttackEndedEvent>>();
+        let events = app.world().resource::<Messages<TimeAttackEndedEvent>>();
         let mut cursor = events.get_cursor();
         assert!(
             cursor.read(events).next().is_none(),

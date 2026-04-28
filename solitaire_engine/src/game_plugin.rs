@@ -238,10 +238,10 @@ fn spawn_confirm_dialog(commands: &mut Commands, original_request: NewGameReques
                     row_gap: Val::Px(20.0),
                     min_width: Val::Px(360.0),
                     align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.10, 0.12, 0.15)),
-                BorderRadius::all(Val::Px(12.0)),
             ))
             .with_children(|card| {
                 // Heading
@@ -574,10 +574,10 @@ fn spawn_game_over_screen(commands: &mut Commands, score: i32) {
                     row_gap: Val::Px(16.0),
                     min_width: Val::Px(340.0),
                     align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.10, 0.08, 0.08)),
-                BorderRadius::all(Val::Px(12.0)),
             ))
             .with_children(|card| {
                 // Header — explains why the overlay appeared.
@@ -765,7 +765,7 @@ mod tests {
         let mut app = test_app(42);
         app.world_mut().write_message(DrawRequestEvent);
         app.update();
-        let events = app.world().resource::<Events<StateChangedEvent>>();
+        let events = app.world().resource::<Messages<StateChangedEvent>>();
         let mut reader = events.get_cursor();
         assert!(reader.read(events).next().is_some());
     }
@@ -864,7 +864,7 @@ mod tests {
             count: 1,
         });
         app.update();
-        let events = app.world().resource::<Events<StateChangedEvent>>();
+        let events = app.world().resource::<Messages<StateChangedEvent>>();
         let mut reader = events.get_cursor();
         assert!(reader.read(events).next().is_none());
     }
@@ -956,7 +956,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<crate::events::CardFlippedEvent>>();
+        let events = app.world().resource::<Messages<crate::events::CardFlippedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).collect();
         assert_eq!(fired.len(), 1, "CardFlippedEvent must fire when a face-down card is exposed");
@@ -1042,7 +1042,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<crate::events::CardFlippedEvent>>();
+        let events = app.world().resource::<Messages<crate::events::CardFlippedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).collect();
         assert!(fired.is_empty(), "no flip event when exposed card was already face-up");
@@ -1309,7 +1309,7 @@ mod tests {
         );
 
         // Clear the NewGameRequestEvent queue so we start with a clean slate.
-        app.world_mut().resource_mut::<Events<NewGameRequestEvent>>().clear();
+        app.world_mut().resource_mut::<Messages<NewGameRequestEvent>>().clear();
 
         // Simulate Escape press.
         {
@@ -1320,7 +1320,7 @@ mod tests {
         app.update();
 
         // NewGameRequestEvent must have been fired.
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut reader = events.get_cursor();
         assert!(
             reader.read(events).next().is_some(),
@@ -1341,7 +1341,7 @@ mod tests {
         app.world_mut().write_message(UndoRequestEvent);
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut reader = events.get_cursor();
         let fired: Vec<_> = reader.read(events).collect();
         assert_eq!(fired.len(), 1, "exactly one InfoToastEvent must fire on empty-stack undo");
@@ -1360,12 +1360,12 @@ mod tests {
         app.world_mut().write_message(DrawRequestEvent);
         app.update();
         // Clear events from the draw so we start with a clean slate.
-        app.world_mut().resource_mut::<Events<InfoToastEvent>>().clear();
+        app.world_mut().resource_mut::<Messages<InfoToastEvent>>().clear();
 
         app.world_mut().write_message(UndoRequestEvent);
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut reader = events.get_cursor();
         let fired: Vec<_> = reader.read(events).collect();
         assert!(

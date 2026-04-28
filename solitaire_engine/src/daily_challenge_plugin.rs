@@ -255,7 +255,7 @@ mod tests {
         // +100 from the daily bonus
         assert!(progress.total_xp >= DAILY_BONUS_XP);
 
-        let events = app.world().resource::<Events<DailyChallengeCompletedEvent>>();
+        let events = app.world().resource::<Messages<DailyChallengeCompletedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -279,7 +279,7 @@ mod tests {
         let progress = &app.world().resource::<ProgressResource>().0;
         assert_eq!(progress.daily_challenge_streak, 0);
 
-        let events = app.world().resource::<Events<DailyChallengeCompletedEvent>>();
+        let events = app.world().resource::<Messages<DailyChallengeCompletedEvent>>();
         let mut cursor = events.get_cursor();
         assert!(cursor.read(events).next().is_none());
     }
@@ -317,7 +317,7 @@ mod tests {
             .press(KeyCode::KeyC);
         app.update();
 
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -337,7 +337,7 @@ mod tests {
             .press(KeyCode::KeyC);
         app.update();
 
-        let events = app.world().resource::<Events<DailyGoalAnnouncementEvent>>();
+        let events = app.world().resource::<Messages<DailyGoalAnnouncementEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).cloned().collect();
         assert_eq!(fired.len(), 1);
@@ -355,7 +355,7 @@ mod tests {
             .press(KeyCode::KeyC);
         app.update();
 
-        let events = app.world().resource::<Events<DailyGoalAnnouncementEvent>>();
+        let events = app.world().resource::<Messages<DailyGoalAnnouncementEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).cloned().collect();
         assert_eq!(fired.len(), 1);

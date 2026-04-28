@@ -603,10 +603,10 @@ fn spawn_settings_panel(
                     min_width: Val::Px(340.0),
                     max_height: Val::Percent(88.0),
                     overflow: Overflow::scroll_y(),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.11, 0.11, 0.14)),
-                BorderRadius::all(Val::Px(8.0)),
             ))
             .with_children(|card| {
                 // Title
@@ -755,10 +755,10 @@ fn spawn_settings_panel(
                                 height: Val::Px(40.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
+                                border_radius: BorderRadius::all(Val::Px(4.0)),
                                 ..default()
                             },
                             BackgroundColor(bg_color),
-                            BorderRadius::all(Val::Px(4.0)),
                         ))
                         .with_children(|b| {
                             b.spawn((
@@ -801,10 +801,10 @@ fn spawn_settings_panel(
                                 height: Val::Px(40.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
+                                border_radius: BorderRadius::all(Val::Px(4.0)),
                                 ..default()
                             },
                             BackgroundColor(bg_color),
-                            BorderRadius::all(Val::Px(4.0)),
                         ))
                         .with_children(|b| {
                             b.spawn((
@@ -839,10 +839,10 @@ fn spawn_settings_panel(
                         Node {
                             padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
                             justify_content: JustifyContent::Center,
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.20, 0.30, 0.45)),
-                        BorderRadius::all(Val::Px(4.0)),
                     ))
                     .with_children(|b| {
                         b.spawn((
@@ -861,10 +861,10 @@ fn spawn_settings_panel(
                         padding: UiRect::axes(Val::Px(20.0), Val::Px(8.0)),
                         justify_content: JustifyContent::Center,
                         margin: UiRect::top(Val::Px(6.0)),
+                        border_radius: BorderRadius::all(Val::Px(4.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.22, 0.45, 0.22)),
-                    BorderRadius::all(Val::Px(4.0)),
                 ))
                 .with_children(|b| {
                     b.spawn((
@@ -934,10 +934,10 @@ fn icon_button(parent: &mut ChildSpawnerCommands, label: &str, action: SettingsB
                 height: Val::Px(28.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                border_radius: BorderRadius::all(Val::Px(4.0)),
                 ..default()
             },
             BackgroundColor(Color::srgb(0.25, 0.25, 0.30)),
-            BorderRadius::all(Val::Px(4.0)),
         ))
         .with_children(|b| {
             b.spawn((
@@ -995,7 +995,7 @@ mod tests {
         let after = app.world().resource::<SettingsResource>().0.sfx_volume;
         assert!(after < before);
 
-        let events = app.world().resource::<Events<SettingsChangedEvent>>();
+        let events = app.world().resource::<Messages<SettingsChangedEvent>>();
         let mut cursor = events.get_cursor();
         assert_eq!(cursor.read(events).count(), 1);
     }
@@ -1020,7 +1020,7 @@ mod tests {
         press(&mut app, KeyCode::BracketRight);
         app.update();
 
-        let events = app.world().resource::<Events<SettingsChangedEvent>>();
+        let events = app.world().resource::<Messages<SettingsChangedEvent>>();
         let mut cursor = events.get_cursor();
         assert_eq!(cursor.read(events).count(), 0);
     }
@@ -1036,7 +1036,7 @@ mod tests {
         let after = app.world().resource::<SettingsResource>().0.sfx_volume;
         assert!(after >= 0.0, "volume must not go below zero");
 
-        let events = app.world().resource::<Events<SettingsChangedEvent>>();
+        let events = app.world().resource::<Messages<SettingsChangedEvent>>();
         let mut cursor = events.get_cursor();
         assert_eq!(cursor.read(events).count(), 0, "no event when clamped at floor");
     }

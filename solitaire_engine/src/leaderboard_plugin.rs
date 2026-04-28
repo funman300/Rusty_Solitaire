@@ -305,10 +305,10 @@ fn spawn_leaderboard_screen(commands: &mut Commands, entries: Option<&[Leaderboa
                     min_width: Val::Px(420.0),
                     max_height: Val::Percent(80.0),
                     overflow: Overflow::clip_y(),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.09, 0.09, 0.12)),
-                BorderRadius::all(Val::Px(8.0)),
             ))
             .with_children(|card| {
                 // Header
@@ -347,10 +347,10 @@ fn spawn_leaderboard_screen(commands: &mut Commands, entries: Option<&[Leaderboa
                         Node {
                             padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
                             justify_content: JustifyContent::Center,
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.18, 0.35, 0.50)),
-                        BorderRadius::all(Val::Px(4.0)),
                     ))
                     .with_children(|b| {
                         b.spawn((
@@ -366,10 +366,10 @@ fn spawn_leaderboard_screen(commands: &mut Commands, entries: Option<&[Leaderboa
                         Node {
                             padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
                             justify_content: JustifyContent::Center,
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.42, 0.15, 0.15)),
-                        BorderRadius::all(Val::Px(4.0)),
                     ))
                     .with_children(|b| {
                         b.spawn((

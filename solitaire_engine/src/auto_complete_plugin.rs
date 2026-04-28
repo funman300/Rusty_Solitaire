@@ -190,7 +190,7 @@ mod tests {
         app.update(); // detect runs, sets active
         app.update(); // drive fires the move
 
-        let events = app.world().resource::<Events<MoveRequestEvent>>();
+        let events = app.world().resource::<Messages<MoveRequestEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).collect();
         // At least one MoveRequestEvent should have been fired.

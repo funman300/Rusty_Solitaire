@@ -224,10 +224,10 @@ fn spawn_pause_screen(
                             padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.20, 0.30, 0.45)),
-                        BorderRadius::all(Val::Px(4.0)),
                     ))
                     .with_children(|btn| {
                         btn.spawn((
@@ -496,7 +496,7 @@ mod tests {
         );
 
         // Verify a SettingsChangedEvent was fired.
-        let events = app.world().resource::<Events<SettingsChangedEvent>>();
+        let events = app.world().resource::<Messages<SettingsChangedEvent>>();
         let mut cursor = events.get_cursor();
         let count = cursor.read(events).count();
         assert!(count >= 1, "SettingsChangedEvent must be fired on toggle");

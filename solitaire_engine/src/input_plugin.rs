@@ -88,7 +88,7 @@ const FORFEIT_CONFIRM_WINDOW: f32 = 3.0;
 /// Bundles all event writers used by `handle_keyboard` so the system stays
 /// within Bevy's 16-parameter limit.
 #[derive(SystemParam)]
-struct KeyboardEvents<'w> {
+struct KeyboardMessages<'w> {
     undo: MessageWriter<'w, UndoRequestEvent>,
     new_game: MessageWriter<'w, NewGameRequestEvent>,
     confirm_event: MessageWriter<'w, NewGameConfirmEvent>,
@@ -108,7 +108,7 @@ fn handle_keyboard(
     mut confirm_countdown: Local<f32>,
     mut confirm_pending: Local<bool>,
     mut forfeit_countdown: Local<f32>,
-    mut ev: KeyboardEvents,
+    mut ev: KeyboardMessages<'_>,
     mut commands: Commands,
     card_entities: Query<(Entity, &CardEntity, &Sprite)>,
     layout: Option<Res<LayoutResource>>,

@@ -784,7 +784,7 @@ mod tests {
         app.world_mut().write_message(ForfeitEvent);
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut reader = events.get_cursor();
         let messages: Vec<&str> = reader
             .read(events)
@@ -813,7 +813,7 @@ mod tests {
         app.world_mut().write_message(ForfeitEvent);
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut reader = events.get_cursor();
         let messages: Vec<&str> = reader
             .read(events)

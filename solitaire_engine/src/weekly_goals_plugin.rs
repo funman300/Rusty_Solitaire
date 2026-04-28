@@ -228,7 +228,7 @@ mod tests {
         let base_win_xp = solitaire_data::xp_for_win(60, false);
         assert_eq!(p.total_xp - xp_before, base_win_xp + WEEKLY_GOAL_XP);
 
-        let events = app.world().resource::<Events<WeeklyGoalCompletedEvent>>();
+        let events = app.world().resource::<Messages<WeeklyGoalCompletedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).cloned().collect();
         assert!(fired.iter().any(|e| e.goal_id == "weekly_3_fast"));
@@ -286,7 +286,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<LevelUpEvent>>();
+        let events = app.world().resource::<Messages<LevelUpEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert!(!fired.is_empty(), "LevelUpEvent must fire when weekly bonus pushes past a level threshold");

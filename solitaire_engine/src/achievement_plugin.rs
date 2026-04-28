@@ -248,10 +248,10 @@ fn spawn_achievements_screen(commands: &mut Commands, records: &[AchievementReco
                     min_width: Val::Px(380.0),
                     max_height: Val::Percent(80.0),
                     overflow: Overflow::clip_y(),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.09, 0.09, 0.12)),
-                BorderRadius::all(Val::Px(8.0)),
             ))
             .with_children(|card| {
                 // Header
@@ -415,7 +415,7 @@ mod tests {
         assert!(unlocked_first_win);
 
         // Verify the event was emitted.
-        let events = app.world().resource::<Events<AchievementUnlockedEvent>>();
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<String> = cursor.read(events).map(|e| e.0.id.clone()).collect();
         assert!(fired.contains(&"first_win".to_string()));
@@ -433,7 +433,7 @@ mod tests {
 
         // Clear events from first win.
         app.world_mut()
-            .resource_mut::<Events<AchievementUnlockedEvent>>()
+            .resource_mut::<Messages<AchievementUnlockedEvent>>()
             .clear();
 
         app.world_mut().write_message(GameWonEvent {
@@ -442,7 +442,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<AchievementUnlockedEvent>>();
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<String> = cursor.read(events).map(|e| e.0.id.clone()).collect();
         assert!(
@@ -468,7 +468,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<XpAwardedEvent>>();
+        let events = app.world().resource::<Messages<XpAwardedEvent>>();
         let mut cursor = events.get_cursor();
         let xp_events: Vec<u64> = cursor.read(events).map(|e| e.amount).collect();
         // The no_undo achievement (BonusXp 25) must have fired an XpAwardedEvent.
@@ -494,7 +494,7 @@ mod tests {
         app.update();
 
         // "no_undo" awards BonusXp(25). If undo was used it must NOT fire.
-        let events = app.world().resource::<Events<XpAwardedEvent>>();
+        let events = app.world().resource::<Messages<XpAwardedEvent>>();
         let mut cursor = events.get_cursor();
         let xp_events: Vec<u64> = cursor.read(events).map(|e| e.amount).collect();
         assert!(

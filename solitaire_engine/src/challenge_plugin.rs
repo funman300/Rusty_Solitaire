@@ -133,7 +133,7 @@ mod tests {
         let p = &app.world().resource::<ProgressResource>().0;
         assert_eq!(p.challenge_index, 1);
 
-        let events = app.world().resource::<Events<ChallengeAdvancedEvent>>();
+        let events = app.world().resource::<Messages<ChallengeAdvancedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -154,7 +154,7 @@ mod tests {
         let p = &app.world().resource::<ProgressResource>().0;
         assert_eq!(p.challenge_index, 0);
 
-        let events = app.world().resource::<Events<ChallengeAdvancedEvent>>();
+        let events = app.world().resource::<Messages<ChallengeAdvancedEvent>>();
         let mut cursor = events.get_cursor();
         assert!(cursor.read(events).next().is_none());
     }
@@ -168,7 +168,7 @@ mod tests {
             .press(KeyCode::KeyX);
         app.update();
 
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut cursor = events.get_cursor();
         assert!(cursor.read(events).next().is_none());
     }
@@ -188,7 +188,7 @@ mod tests {
             .press(KeyCode::KeyX);
         app.update();
 
-        let events = app.world().resource::<Events<NewGameRequestEvent>>();
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -217,7 +217,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).collect();
         assert_eq!(fired.len(), 1, "exactly one toast must fire on challenge win");
@@ -237,7 +237,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut cursor = events.get_cursor();
         assert!(
             cursor.read(events).next().is_none(),
@@ -254,7 +254,7 @@ mod tests {
             .press(KeyCode::KeyX);
         app.update();
 
-        let events = app.world().resource::<Events<InfoToastEvent>>();
+        let events = app.world().resource::<Messages<InfoToastEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).collect();
         assert_eq!(fired.len(), 1, "must show a toast explaining the lock");

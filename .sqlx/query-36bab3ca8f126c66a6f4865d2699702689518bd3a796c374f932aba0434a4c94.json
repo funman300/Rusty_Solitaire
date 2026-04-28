@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE users SET leaderboard_opt_in = 0 WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "36bab3ca8f126c66a6f4865d2699702689518bd3a796c374f932aba0434a4c94"
+}

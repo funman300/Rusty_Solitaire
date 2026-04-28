@@ -442,10 +442,10 @@ fn spawn_overlay(
                     row_gap: Val::Px(18.0),
                     min_width: Val::Px(320.0),
                     align_items: AlignItems::Center,
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.10, 0.12, 0.10)),
-                BorderRadius::all(Val::Px(12.0)),
             ))
             .with_children(|card| {
                 // Heading
@@ -518,10 +518,10 @@ fn spawn_overlay(
                         padding: UiRect::axes(Val::Px(28.0), Val::Px(12.0)),
                         justify_content: JustifyContent::Center,
                         margin: UiRect::top(Val::Px(8.0)),
+                        border_radius: BorderRadius::all(Val::Px(6.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.22, 0.45, 0.22)),
-                    BorderRadius::all(Val::Px(6.0)),
                 ))
                 .with_children(|b| {
                     b.spawn((

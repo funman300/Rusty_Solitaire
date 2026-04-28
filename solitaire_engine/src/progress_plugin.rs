@@ -187,7 +187,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<LevelUpEvent>>();
+        let events = app.world().resource::<Messages<LevelUpEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1, "exactly one level-up");
@@ -204,7 +204,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<LevelUpEvent>>();
+        let events = app.world().resource::<Messages<LevelUpEvent>>();
         let mut cursor = events.get_cursor();
         assert!(cursor.read(events).next().is_none());
     }
@@ -219,7 +219,7 @@ mod tests {
         });
         app.update();
 
-        let events = app.world().resource::<Events<XpAwardedEvent>>();
+        let events = app.world().resource::<Messages<XpAwardedEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
@@ -238,7 +238,7 @@ mod tests {
         app.update();
 
         let total_xp = app.world().resource::<ProgressResource>().0.total_xp;
-        let events = app.world().resource::<Events<LevelUpEvent>>();
+        let events = app.world().resource::<Messages<LevelUpEvent>>();
         let mut cursor = events.get_cursor();
         let fired: Vec<_> = cursor.read(events).copied().collect();
         assert_eq!(fired.len(), 1);
