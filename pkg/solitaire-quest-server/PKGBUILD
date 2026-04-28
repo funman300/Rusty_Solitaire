@@ -13,36 +13,38 @@ depends=(
     'glibc'
 )
 backup=('etc/solitaire-quest-server/server.env')
+
+# Build from the local workspace (two levels above this PKGBUILD).
+_srcdir="$startdir/../.."
 source=(
-    "$pkgname-$pkgver.tar.gz::https://github.com/funman300/solitaire-quest/archive/v$pkgver.tar.gz"
     'solitaire-quest-server.service'
     'server.env'
 )
 b2sums=('SKIP'
-        'SKIP'
         'SKIP')
 
 prepare() {
-    cd "solitaire-quest-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
+    cd "$_srcdir"
     cargo fetch --locked --target "$(rustc -Vv | grep host | cut -d' ' -f2)"
 }
 
 build() {
-    cd "solitaire-quest-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
+    cd "$_srcdir"
     cargo build --frozen --release -p solitaire_server
 }
 
 check() {
-    cd "solitaire-quest-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
+    cd "$_srcdir"
     cargo test --frozen -p solitaire_server -p solitaire_sync
 }
 
 package() {
-    cd "solitaire-quest-$pkgver"
+    cd "$_srcdir"
+
     # Binary
     install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/solitaire_server"
 
@@ -54,10 +56,8 @@ package() {
     install -Dm0640 "$srcdir/server.env" \
         "$pkgdir/etc/solitaire-quest-server/server.env"
 
-    # License
+    # License and docs
     install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-
-    # Self-hosting guide
     install -Dm0644 README_SERVER.md \
         "$pkgdir/usr/share/doc/$pkgname/README_SERVER.md"
 }

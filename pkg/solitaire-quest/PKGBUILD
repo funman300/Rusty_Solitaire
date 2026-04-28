@@ -15,32 +15,34 @@ depends=(
     'libxkbcommon'
     'systemd-libs'   # libudev.so — required by Bevy input
 )
-source=("$pkgname-$pkgver.tar.gz::https://github.com/funman300/solitaire-quest/archive/v$pkgver.tar.gz")
-b2sums=('SKIP')
+
+# Build from the local workspace (two levels above this PKGBUILD).
+_srcdir="$startdir/../.."
+source=()
+b2sums=()
 
 prepare() {
-    cd "solitaire-quest-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
+    cd "$_srcdir"
     cargo fetch --locked --target "$(rustc -Vv | grep host | cut -d' ' -f2)"
 }
 
 build() {
-    cd "solitaire-quest-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
+    cd "$_srcdir"
     cargo build --frozen --release -p solitaire_app
 }
 
 check() {
-    cd "solitaire-quest-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
-    # Only test the non-Bevy crates — Bevy integration tests require a GPU/display
-    # which is not available in a clean build environment.
+    cd "$_srcdir"
+    # Only test non-Bevy crates — Bevy integration tests require a GPU/display.
     cargo test --frozen -p solitaire_core -p solitaire_sync
 }
 
 package() {
-    cd "solitaire-quest-$pkgver"
+    cd "$_srcdir"
     install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/solitaire_app"
     install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
