@@ -403,8 +403,7 @@ mod tests {
 
     #[test]
     fn build_payload_clones_stats() {
-        let mut stats = StatsSnapshot::default();
-        stats.games_played = 42;
+        let stats = StatsSnapshot { games_played: 42, ..Default::default() };
         let payload = build_payload(&stats, &[], &PlayerProgress::default());
         assert_eq!(payload.stats.games_played, 42);
     }

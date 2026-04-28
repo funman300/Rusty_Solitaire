@@ -988,6 +988,11 @@ pub fn find_hint(game: &GameState) -> Option<(PileType, PileType, usize)> {
     all_hints(game).into_iter().next()
 }
 
+// `Vec3` is referenced only via the `DRAG_Z` constant; keep the import silenced
+// when the compiler can't see it used.
+#[allow(dead_code)]
+const _VEC3_REFERENCED: Option<Vec3> = None;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1428,7 +1433,7 @@ mod tests {
     /// window actually opens on the first G press.
     #[test]
     fn forfeit_confirm_window_is_positive() {
-        assert!(FORFEIT_CONFIRM_WINDOW > 0.0, "FORFEIT_CONFIRM_WINDOW must be > 0");
+        const { assert!(FORFEIT_CONFIRM_WINDOW > 0.0, "FORFEIT_CONFIRM_WINDOW must be > 0"); }
     }
 
     /// Simulate the first G press: countdown was 0, so it should become
@@ -1616,7 +1621,3 @@ mod tests {
     }
 }
 
-// `Vec3` is referenced only via the `DRAG_Z` constant; keep the import silenced
-// when the compiler can't see it used.
-#[allow(dead_code)]
-const _VEC3_REFERENCED: Option<Vec3> = None;

@@ -148,8 +148,7 @@ mod tests {
 
     #[test]
     fn add_xp_saturates_on_overflow() {
-        let mut p = PlayerProgress::default();
-        p.total_xp = u64::MAX - 5;
+        let mut p = PlayerProgress { total_xp: u64::MAX - 5, ..Default::default() };
         p.add_xp(100);
         assert_eq!(p.total_xp, u64::MAX);
     }

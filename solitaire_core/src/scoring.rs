@@ -91,6 +91,6 @@ mod tests {
     fn time_bonus_is_capped_at_i32_max_for_huge_values() {
         // Very short elapsed time would overflow without the .min() guard.
         let bonus = compute_time_bonus(1);
-        assert!(bonus <= i32::MAX, "time bonus must fit in i32");
+        assert!(bonus >= 0, "time bonus must be non-negative after u64→i32 cast");
     }
 }

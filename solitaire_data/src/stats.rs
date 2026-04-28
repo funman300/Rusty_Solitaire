@@ -173,8 +173,7 @@ mod tests {
 
     #[test]
     fn lifetime_score_saturates_at_u64_max() {
-        let mut s = StatsSnapshot::default();
-        s.lifetime_score = u64::MAX - 100;
+        let mut s = StatsSnapshot { lifetime_score: u64::MAX - 100, ..Default::default() };
         s.update_on_win(200, 60, &DrawMode::DrawOne);
         assert_eq!(s.lifetime_score, u64::MAX, "lifetime_score must saturate, not overflow");
     }

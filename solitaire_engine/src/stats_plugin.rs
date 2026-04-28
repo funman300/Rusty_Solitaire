@@ -792,7 +792,7 @@ mod tests {
             .collect();
 
         assert!(
-            messages.iter().any(|m| *m == "Streak of 3 broken!"),
+            messages.contains(&"Streak of 3 broken!"),
             "expected 'Streak of 3 broken!' in toasts, got: {messages:?}"
         );
     }

@@ -201,8 +201,7 @@ mod tests {
 
     #[test]
     fn add_xp_saturates_on_overflow() {
-        let mut p = PlayerProgress::default();
-        p.total_xp = u64::MAX;
+        let mut p = PlayerProgress { total_xp: u64::MAX, ..Default::default() };
         p.add_xp(1);
         assert_eq!(p.total_xp, u64::MAX);
     }
@@ -230,8 +229,7 @@ mod tests {
 
     #[test]
     fn roll_weekly_goals_clears_progress_for_new_week() {
-        let mut p = PlayerProgress::default();
-        p.weekly_goal_week_iso = Some("2026-W16".to_string());
+        let mut p = PlayerProgress { weekly_goal_week_iso: Some("2026-W16".to_string()), ..Default::default() };
         p.weekly_goal_progress.insert("weekly_5_wins".to_string(), 3);
 
         let rolled = p.roll_weekly_goals_if_new_week("2026-W17");
@@ -242,8 +240,7 @@ mod tests {
 
     #[test]
     fn roll_weekly_goals_is_noop_for_same_week() {
-        let mut p = PlayerProgress::default();
-        p.weekly_goal_week_iso = Some("2026-W17".to_string());
+        let mut p = PlayerProgress { weekly_goal_week_iso: Some("2026-W17".to_string()), ..Default::default() };
         p.weekly_goal_progress.insert("weekly_5_wins".to_string(), 2);
 
         let rolled = p.roll_weekly_goals_if_new_week("2026-W17");

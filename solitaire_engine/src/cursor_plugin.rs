@@ -214,7 +214,6 @@ fn point_in_rect(point: Vec2, center: Vec2, size: Vec2) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solitaire_core::card::{Card, Rank};
 
     #[test]
     fn point_in_rect_center_is_inside() {

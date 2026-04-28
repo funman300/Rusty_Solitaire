@@ -207,8 +207,7 @@ mod tests {
 
     #[test]
     fn adjust_sfx_volume_clamps() {
-        let mut s = Settings::default();
-        s.sfx_volume = 0.5;
+        let mut s = Settings { sfx_volume: 0.5, ..Default::default() };
         assert!((s.adjust_sfx_volume(0.3) - 0.8).abs() < 1e-6);
         assert!((s.adjust_sfx_volume(0.5) - 1.0).abs() < 1e-6);
         assert!((s.adjust_sfx_volume(-2.0) - 0.0).abs() < 1e-6);
@@ -217,8 +216,7 @@ mod tests {
 
     #[test]
     fn adjust_music_volume_clamps() {
-        let mut s = Settings::default();
-        s.music_volume = 0.5;
+        let mut s = Settings { music_volume: 0.5, ..Default::default() };
         assert!((s.adjust_music_volume(0.3) - 0.8).abs() < 1e-6);
         assert!((s.adjust_music_volume(0.5) - 1.0).abs() < 1e-6);
         assert!((s.adjust_music_volume(-2.0) - 0.0).abs() < 1e-6);
@@ -241,14 +239,10 @@ mod tests {
 
     #[test]
     fn sanitized_clamps_music_volume() {
-        let mut s = Settings::default();
-        s.music_volume = 2.0;
-        let s = s.sanitized();
+        let s = Settings { music_volume: 2.0, ..Default::default() }.sanitized();
         assert_eq!(s.music_volume, 1.0);
 
-        let mut s2 = Settings::default();
-        s2.music_volume = -0.5;
-        let s2 = s2.sanitized();
+        let s2 = Settings { music_volume: -0.5, ..Default::default() }.sanitized();
         assert_eq!(s2.music_volume, 0.0);
     }
 

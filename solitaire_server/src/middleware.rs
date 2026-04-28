@@ -100,6 +100,22 @@ pub fn validate_refresh_token(token: &str, secret: &str) -> Result<Claims, AppEr
 // Axum extractor — allows handlers to receive AuthenticatedUser directly
 // ---------------------------------------------------------------------------
 
+#[axum::async_trait]
+impl<S> FromRequestParts<S> for AuthenticatedUser
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthenticatedUser>()
+            .cloned()
+            .ok_or(AppError::Unauthorized)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -219,21 +235,5 @@ mod tests {
         let token = make_token("user-xyz", "refresh", -7200);
         let result = validate_refresh_token(&token, SECRET);
         assert!(result.is_err(), "expired refresh token must be rejected");
-    }
-}
-
-#[axum::async_trait]
-impl<S> FromRequestParts<S> for AuthenticatedUser
-where
-    S: Send + Sync,
-{
-    type Rejection = AppError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<AuthenticatedUser>()
-            .cloned()
-            .ok_or(AppError::Unauthorized)
     }
 }

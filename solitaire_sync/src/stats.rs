@@ -135,17 +135,14 @@ mod tests {
 
     #[test]
     fn record_abandoned_resets_win_streak() {
-        let mut s = StatsSnapshot::default();
-        s.win_streak_current = 5;
+        let mut s = StatsSnapshot { win_streak_current: 5, ..Default::default() };
         s.record_abandoned();
         assert_eq!(s.win_streak_current, 0, "abandoned game must break the win streak");
     }
 
     #[test]
     fn record_abandoned_preserves_best_streak() {
-        let mut s = StatsSnapshot::default();
-        s.win_streak_best = 7;
-        s.win_streak_current = 7;
+        let mut s = StatsSnapshot { win_streak_best: 7, win_streak_current: 7, ..Default::default() };
         s.record_abandoned();
         assert_eq!(s.win_streak_best, 7, "best streak must not be reduced on abandon");
         assert_eq!(s.win_streak_current, 0);

@@ -775,8 +775,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins).add_plugins(AnimationPlugin);
 
-        let mut fast_settings = Settings::default();
-        fast_settings.animation_speed = AnimSpeed::Fast;
+        let fast_settings = Settings { animation_speed: AnimSpeed::Fast, ..Default::default() };
         app.world_mut().send_event(SettingsChangedEvent(fast_settings));
         app.update();
 

@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(p.weekly_goal_progress.get("weekly_5_wins"), Some(&1));
         // No-undo + slow win → no_undo goal also ticked, fast goal NOT ticked.
         assert_eq!(p.weekly_goal_progress.get("weekly_3_no_undo"), Some(&1));
-        assert!(p.weekly_goal_progress.get("weekly_3_fast").is_none());
+        assert!(!p.weekly_goal_progress.contains_key("weekly_3_fast"));
     }
 
     #[test]
@@ -188,7 +188,7 @@ mod tests {
         app.update();
         let p = &app.world().resource::<ProgressResource>().0;
         assert_eq!(p.weekly_goal_progress.get("weekly_5_wins"), Some(&1));
-        assert!(p.weekly_goal_progress.get("weekly_3_no_undo").is_none());
+        assert!(!p.weekly_goal_progress.contains_key("weekly_3_no_undo"));
     }
 
     #[test]
