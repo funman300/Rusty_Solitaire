@@ -6,6 +6,7 @@ pub mod animation_plugin;
 pub mod auto_complete_plugin;
 pub mod audio_plugin;
 pub mod card_plugin;
+pub mod font_plugin;
 pub mod feedback_anim_plugin;
 pub mod challenge_plugin;
 pub mod cursor_plugin;
@@ -59,9 +60,10 @@ pub use feedback_anim_plugin::{
 pub use auto_complete_plugin::AutoCompletePlugin;
 pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
 pub use card_plugin::{
-    CardEntity, CardLabel, CardPlugin, HintHighlight, HintHighlightTimer, RightClickHighlight,
-    RightClickHighlightTimer,
+    CardEntity, CardImageSet, CardLabel, CardPlugin, HintHighlight, HintHighlightTimer,
+    RightClickHighlight, RightClickHighlightTimer,
 };
+pub use font_plugin::{FontPlugin, FontResource};
 pub use cursor_plugin::CursorPlugin;
 pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,

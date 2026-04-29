@@ -5,9 +5,17 @@ license.workspace = true
 edition.workspace = true
 publish = false
 
-# Dev-only utility: synthesizes placeholder SFX WAV files into `assets/audio/`.
+# Dev-only utility: synthesizes placeholder SFX WAV files into `assets/audio/`
+# and placeholder PNG images into `assets/cards/` and `assets/backgrounds/`.
 # Not depended on by any other workspace crate.
+
+[dependencies]
+png = "0.17"
 
 [[bin]]
 name = "gen_sfx"
 path = "src/bin/gen_sfx.rs"
+
+[[bin]]
+name = "gen_art"
+path = "src/bin/gen_art.rs"

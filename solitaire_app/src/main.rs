@@ -3,12 +3,24 @@ use solitaire_data::{load_settings_from, provider_for_backend, settings_file_pat
 use solitaire_engine::{
     AchievementPlugin, AnimationPlugin, AudioPlugin, AutoCompletePlugin, CardAnimationPlugin,
     CardPlugin, ChallengePlugin, CursorPlugin, DailyChallengePlugin, FeedbackAnimPlugin,
-    GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
+    FontPlugin, GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
     OnboardingPlugin, PausePlugin, ProfilePlugin, ProgressPlugin, SelectionPlugin, SettingsPlugin,
     StatsPlugin, SyncPlugin, TablePlugin, TimeAttackPlugin, WeeklyGoalsPlugin, WinSummaryPlugin,
 };
 
 fn main() {
+    // Initialise the platform keyring store before any token operations.
+    // On Linux this uses the Secret Service (GNOME Keyring / KWallet); on
+    // macOS it uses the Keychain; on Windows it uses the Credential store.
+    // If the platform has no OS keyring (e.g. a headless CI box), keyring
+    // operations will fail gracefully with TokenError::KeychainUnavailable.
+    if let Err(e) = keyring::use_native_store(true) {
+        eprintln!(
+            "warn: could not initialise OS keyring ({e}); \
+             server sync login will be unavailable"
+        );
+    }
+
     // Load settings before building the app so we can construct the right
     // sync provider. Falls back to defaults if no settings file exists yet.
     let settings: Settings = settings_file_path()
@@ -32,6 +44,7 @@ fn main() {
                 ..default()
             }),
         )
+        .add_plugins(FontPlugin)
         .add_plugins(GamePlugin)
         .add_plugins(TablePlugin)
         .add_plugins(CardPlugin)

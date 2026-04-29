@@ -25,7 +25,8 @@ rand        = "0.8"
 async-trait = "0.1"
 tokio       = { version = "1", features = ["full"] }
 dirs        = "6"
-keyring     = "2"
+keyring     = "4"
+keyring-core = "1"
 reqwest     = { version = "0.13", features = ["json", "rustls", "rustls-native-certs"], default-features = false }
 
 solitaire_core   = { path = "solitaire_core" }

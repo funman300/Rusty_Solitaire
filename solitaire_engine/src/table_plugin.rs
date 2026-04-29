@@ -11,8 +11,20 @@ use solitaire_core::pile::PileType;
 use solitaire_data::settings::Theme;
 
 use crate::events::HintVisualEvent;
-use crate::layout::{compute_layout, Layout, LayoutResource, TABLE_COLOUR};
+use crate::layout::{compute_layout, Layout, LayoutResource};
+#[cfg(test)]
+use crate::layout::TABLE_COLOUR;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
+
+/// Holds pre-loaded [`Handle<Image>`]s for the 5 selectable table backgrounds.
+///
+/// Loaded once at startup by [`load_background_images`].  Index 0 is the
+/// default; indices 1–4 are unlockable.
+#[derive(Resource)]
+pub struct BackgroundImageSet {
+    /// One handle per background slot (indices 0–4).
+    pub handles: Vec<Handle<Image>>,
+}
 
 /// Z-depth used for the background — below everything.
 const Z_BACKGROUND: f32 = -10.0;
@@ -50,6 +62,7 @@ impl Plugin for TablePlugin {
         app.add_message::<WindowResized>()
             .add_message::<SettingsChangedEvent>()
             .add_message::<HintVisualEvent>()
+            .add_systems(Startup, load_background_images.before(setup_table))
             .add_systems(Startup, setup_table)
             .add_systems(
                 Update,
@@ -63,7 +76,50 @@ impl Plugin for TablePlugin {
     }
 }
 
+/// Loads the 5 background PNG files at startup and stores their
+/// [`Handle<Image>`]s in [`BackgroundImageSet`].
+///
+/// The PNGs are embedded at compile time via `include_bytes!()`.  If a file
+/// is missing the build will fail with a clear error rather than a runtime
+/// panic.
+fn load_background_images(images: Option<ResMut<Assets<Image>>>, mut commands: Commands) {
+    let Some(mut images) = images else {
+        // Assets<Image> is absent (e.g. MinimalPlugins in tests) — insert an
+        // empty set so setup_table can proceed using a default handle.
+        commands.insert_resource(BackgroundImageSet { handles: Vec::new() });
+        return;
+    };
+    const BG_BYTES: [&[u8]; 5] = [
+        include_bytes!("../../assets/backgrounds/bg_0.png"),
+        include_bytes!("../../assets/backgrounds/bg_1.png"),
+        include_bytes!("../../assets/backgrounds/bg_2.png"),
+        include_bytes!("../../assets/backgrounds/bg_3.png"),
+        include_bytes!("../../assets/backgrounds/bg_4.png"),
+    ];
+    let handles = BG_BYTES
+        .iter()
+        .map(|bytes| {
+            use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+            let image = Image::from_buffer(
+                bytes,
+                ImageType::Extension("png"),
+                CompressedImageFormats::NONE,
+                true,
+                ImageSampler::default(),
+                bevy::asset::RenderAssetUsages::RENDER_WORLD,
+            )
+            .expect("valid background PNG");
+            images.add(image)
+        })
+        .collect();
+    commands.insert_resource(BackgroundImageSet { handles });
+}
+
 /// Returns the felt colour for a given theme.
+///
+/// Only used in tests — the runtime path now picks a PNG image via
+/// [`BackgroundImageSet`] rather than a solid colour.
+#[cfg(test)]
 fn theme_colour(theme: &Theme) -> Color {
     match theme {
         Theme::Green => Color::srgb(TABLE_COLOUR[0], TABLE_COLOUR[1], TABLE_COLOUR[2]),
@@ -74,6 +130,10 @@ fn theme_colour(theme: &Theme) -> Color {
 
 /// Effective table background colour: unlocked background index overrides the
 /// Theme when `selected_background > 0`.
+///
+/// Only used in tests — the runtime path now picks a PNG image via
+/// [`BackgroundImageSet`] rather than a solid colour.
+#[cfg(test)]
 fn effective_background_colour(theme: &Theme, selected_background: usize) -> Color {
     match selected_background {
         0 => theme_colour(theme),
@@ -93,6 +153,7 @@ fn setup_table(
     windows: Query<&Window>,
     existing_camera: Query<(), With<Camera>>,
     settings: Option<Res<SettingsResource>>,
+    bg_images: Option<Res<BackgroundImageSet>>,
 ) {
     // Only spawn a camera if one does not already exist (e.g. a parent app
     // may have added one in tests).
@@ -107,23 +168,34 @@ fn setup_table(
         .unwrap_or(Vec2::new(1280.0, 800.0));
     let layout = compute_layout(window_size);
 
-    let initial_colour = settings
+    let selected_bg = settings
         .as_ref()
-        .map(|s| effective_background_colour(&s.0.theme, s.0.selected_background))
-        .unwrap_or_else(|| Color::srgb(TABLE_COLOUR[0], TABLE_COLOUR[1], TABLE_COLOUR[2]));
+        .map(|s| s.0.selected_background)
+        .unwrap_or(0);
 
-    spawn_background(&mut commands, window_size, initial_colour);
+    let image_handle = bg_images
+        .as_ref()
+        .and_then(|set| set.handles.get(selected_bg).cloned())
+        .unwrap_or_default();
+
+    spawn_background(&mut commands, window_size, image_handle);
     spawn_pile_markers(&mut commands, &layout);
     commands.insert_resource(LayoutResource(layout));
 }
 
-fn spawn_background(commands: &mut Commands, window_size: Vec2, color: Color) {
-    // Spawn a felt-coloured rectangle that always covers the window. We give
-    // it the window size plus headroom so resizing up doesn't expose edges
-    // before the resize handler runs.
+/// Spawns the felt background sprite using a PNG image handle.
+///
+/// The sprite covers the window at twice the window size so brief resize gaps
+/// are never visible.  The image is tinted `Color::WHITE` (no tint) so the PNG
+/// pixel data is rendered as-is.
+fn spawn_background(commands: &mut Commands, window_size: Vec2, image: Handle<Image>) {
+    // Spawn a sprite covering the window. We give it the window size plus
+    // headroom so resizing up doesn't expose edges before the resize handler
+    // runs.
     commands.spawn((
         Sprite {
-            color,
+            image,
+            color: Color::WHITE,
             custom_size: Some(window_size * 2.0),
             ..default()
         },
@@ -132,16 +204,30 @@ fn spawn_background(commands: &mut Commands, window_size: Vec2, color: Color) {
     ));
 }
 
+/// Reacts to settings changes by updating the background sprite's image handle.
+///
+/// When [`BackgroundImageSet`] is available the selected PNG handle is applied
+/// directly (color is kept at `Color::WHITE` so the PNG pixel data shows
+/// unmodified).  If the resource is not yet ready the sprite is left unchanged.
 fn apply_theme_on_settings_change(
     mut events: MessageReader<SettingsChangedEvent>,
     mut backgrounds: Query<&mut Sprite, With<TableBackground>>,
+    bg_images: Option<Res<BackgroundImageSet>>,
 ) {
     let Some(ev) = events.read().last() else {
         return;
     };
-    let colour = effective_background_colour(&ev.0.theme, ev.0.selected_background);
+    let Some(set) = bg_images else {
+        // BackgroundImageSet not ready yet — leave sprite unchanged.
+        return;
+    };
+    let selected = ev.0.selected_background;
+    let Some(handle) = set.handles.get(selected).cloned() else {
+        return;
+    };
     for mut sprite in &mut backgrounds {
-        sprite.color = colour;
+        sprite.image = handle.clone();
+        sprite.color = Color::WHITE;
     }
 }
 

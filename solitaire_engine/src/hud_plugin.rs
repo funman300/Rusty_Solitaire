@@ -14,6 +14,7 @@ use solitaire_core::pile::PileType;
 use crate::auto_complete_plugin::AutoCompleteState;
 use crate::daily_challenge_plugin::DailyChallengeResource;
 use crate::events::InfoToastEvent;
+use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
 use crate::selection_plugin::SelectionState;
@@ -98,9 +99,13 @@ impl Plugin for HudPlugin {
     }
 }
 
-fn spawn_hud(mut commands: Commands) {
+fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
     let white = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.80));
-    let font = TextFont { font_size: 18.0, ..default() };
+    let font = TextFont {
+        font: font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
+        font_size: 18.0,
+        ..default()
+    };
     commands
         .spawn((
             Node {

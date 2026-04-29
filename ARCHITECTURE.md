@@ -3,7 +3,7 @@
 > **Version:** 1.1  
 > **Language:** Rust (Edition 2021)  
 > **Engine:** Bevy (latest stable)  
-> **Last Updated:** 2026-04-20
+> **Last Updated:** 2026-04-29
 
 ---
 
@@ -67,18 +67,19 @@ solitaire_quest/
 ├── Dockerfile                  # Multi-stage server build
 ├── docker-compose.yml          # Server + Caddy reverse proxy
 │
-├── assets/                     # Audio embedded at compile time via include_bytes!()
-│   ├── cards/                  # Reserved for future art pass (currently unused)
-│   │   ├── faces/
-│   │   └── backs/
-│   ├── backgrounds/            # Reserved for future art pass (currently unused)
-│   ├── fonts/                  # Reserved for future art pass (currently unused)
+├── assets/                     # Assets embedded at compile time via include_bytes!()
+│   ├── cards/
+│   │   ├── faces/face.png      # placeholder (16×16 cream/ivory)
+│   │   └── backs/back_0.png – back_4.png    # placeholder patterns
+│   ├── backgrounds/bg_0.png – bg_4.png      # placeholder textures
+│   ├── fonts/main.ttf          # FiraMono-Medium (170K, OFL)
 │   └── audio/
 │       ├── card_deal.wav
 │       ├── card_flip.wav
 │       ├── card_place.wav
 │       ├── card_invalid.wav
-│       └── win_fanfare.wav
+│       ├── win_fanfare.wav
+│       └── ambient_loop.wav
 │
 ├── solitaire_core/             # Pure Rust game logic — zero external deps beyond rand/serde
 ├── solitaire_sync/             # Shared API types — used by client and server
@@ -143,6 +144,7 @@ Owns:
 - All Bevy UI screens (Home, Stats, Achievements, Settings, Profile)
 - Audio playback systems
 - Sync status display
+- Card, background, and font asset loading (embedded via `include_bytes!()` — no `AssetServer` dependency)
 
 ### `solitaire_server`
 **Dependencies:** `solitaire_sync`, `axum`, `sqlx`, `jsonwebtoken`, `bcrypt`, `tower-governor`, `tracing`, `tokio`, `dotenvy`.
@@ -237,6 +239,7 @@ Done
 |---|---|---|
 | `CardPlugin` | — | Card entity spawning, sprite management, drag-and-drop |
 | `TablePlugin` | — | Pile markers, background, layout calculation |
+| `FontPlugin` | — | Embeds FiraMono-Medium font at compile time; exposes `FontResource` handle |
 | `AnimationPlugin` | — | Slide, flip, win cascade, toast animations |
 | `FeedbackAnimPlugin` | — | Shake, settle, and deal-stagger animations |
 | `AutoCompletePlugin` | Enter | Executes auto-complete when the HUD badge is lit |
@@ -286,6 +289,20 @@ struct StatsResource(StatsSnapshot);
 struct ProgressResource(PlayerProgress);
 struct AchievementsResource(Vec<AchievementRecord>);
 struct SettingsResource(Settings);
+
+// Pre-loaded card face and back PNG handles
+struct CardImageSet {
+    face: Handle<Image>,            // shared face image for all face-up cards
+    backs: [Handle<Image>; 5],      // indexed by selected_card_back setting
+}
+
+// Project-wide font handle (FiraMono-Medium embedded at compile time)
+struct FontResource(Handle<Font>);
+
+// Pre-loaded background PNG handles
+struct BackgroundImageSet {
+    handles: Vec<Handle<Image>>,    // indices 0–4 match selected_background setting
+}
 ```
 
 ### Key Bevy Events
@@ -743,7 +760,7 @@ Audio uses `bevy_kira_audio`. All sound files are `.wav`.
 | `card_place.wav` | Valid card placement |
 | `card_invalid.wav` | Invalid move attempt |
 | `win_fanfare.wav` | Game won |
-| `ambient_loop` | Looping background music — uses `card_flip.wav` looped at very low volume as a placeholder until a dedicated track is added |
+| `ambient_loop.wav` | Looping background music |
 
 Volume is controlled by two independent sliders in Settings (`sfx_volume`, `music_volume`), each stored in `Settings` and applied as `bevy_kira_audio` channel volumes.
 
@@ -755,30 +772,49 @@ Audio systems listen for Bevy events and never block the game thread.
 
 ### Rendering approach
 
-Cards, backgrounds, and UI are rendered **procedurally** — no image files are used. Cards are Bevy `Sprite` entities (colored rectangles) with `Text` children showing rank and suit symbols. Card back colors and background colors are selected by index from compile-time color tables in `card_plugin.rs` and `table_plugin.rs`. All UI text uses Bevy's built-in default font.
+Cards are Bevy `Sprite` entities with `Handle<Image>` from `CardImageSet`. Face-up cards use `face.png` (a single shared image). Face-down cards use `backs/back_N.png` indexed by `settings.selected_card_back`. `Text2d` labels are still overlaid for rank and suit symbols. `CardImageSet` is populated at startup from `include_bytes!()` — no `AssetServer`.
 
-This means the `assets/cards/`, `assets/backgrounds/`, and `assets/fonts/` directories are reserved for a future art pass and are currently empty (`.gitkeep` only).
+Backgrounds are Bevy `Sprite` entities with `Handle<Image>` from `BackgroundImageSet`. `BackgroundImageSet` is populated at startup from `include_bytes!()`.
+
+The font `FiraMono-Medium` is embedded via `include_bytes!()` at startup by `FontPlugin` and exposed as `FontResource` for use by all UI and text systems.
+
+The `assets/` directory layout:
+
+```
+assets/
+├── cards/
+│   ├── faces/face.png          # placeholder (16×16 cream/ivory)
+│   └── backs/back_0.png – back_4.png    # placeholder patterns
+├── backgrounds/bg_0.png – bg_4.png      # placeholder textures
+├── fonts/main.ttf              # FiraMono-Medium (170K, OFL)
+└── audio/
+    ├── card_deal.wav
+    ├── card_flip.wav
+    ├── card_place.wav
+    ├── card_invalid.wav
+    ├── win_fanfare.wav
+    └── ambient_loop.wav
+```
 
 ### Audio
 
-All five sound effect WAV files are embedded at compile time via `include_bytes!()` in `audio_plugin.rs`. There is no runtime asset loading — the binary is fully self-contained.
+All sound effect WAV files are embedded at compile time via `include_bytes!()` in `audio_plugin.rs`. There is no runtime asset loading — the binary is fully self-contained.
 
-| File | Size |
+| File | Trigger |
 |---|---|
-| `card_deal.wav` | SFX |
-| `card_flip.wav` | SFX |
-| `card_place.wav` | SFX |
-| `card_invalid.wav` | SFX |
-| `win_fanfare.wav` | SFX |
-
-The ambient music loop reuses `card_flip.wav` at very low volume as a placeholder; a dedicated `ambient_loop.wav` can be dropped into `assets/audio/` and wired into `audio_plugin.rs` when ready.
+| `card_deal.wav` | New game deal animation |
+| `card_flip.wav` | Card flips face-up |
+| `card_place.wav` | Valid card placement |
+| `card_invalid.wav` | Invalid move attempt |
+| `win_fanfare.wav` | Game won |
+| `ambient_loop.wav` | Looping background music |
 
 ### Future art pass
 
-When image-based card art is added, the recommended approach is:
-- Embed assets via `bevy::asset::embedded_asset!()` macro (keeps the binary self-contained)
+The placeholder PNG files can be replaced with real artwork without any code changes — just drop in new PNGs and rebuild. The texture atlas approach described below is still the recommended upgrade path for card faces:
 - Use a texture atlas (`assets/cards/atlas.png` + layout descriptor) for card faces
 - Individual PNGs for card backs and backgrounds (5 each)
+- All assets remain embedded via `include_bytes!()` to keep the binary self-contained
 
 ---
 
@@ -975,3 +1011,5 @@ Using `axum::test` and an in-memory SQLite database:
 | `SyncProvider` trait, not `SyncBackend` match arms | `SyncPlugin` stays backend-agnostic and testable; new backends can be added without touching the plugin | 2026-04-20 |
 | Dropped WebDAV backend | Redundant once the self-hosted server exists; removing it reduces surface area and simplifies settings UI | 2026-04-20 |
 | Dropped GPGS backend | Redundant with the self-hosted server; adds JNI complexity for no user-visible benefit on the target platforms | 2026-04-28 |
+| PNG assets embedded via `include_bytes!()` | Using `Image::from_buffer()` in startup systems rather than `AssetServer::load()` keeps the binary self-contained and eliminates runtime file-not-found errors | 2026-04-29 |
+| FiraMono-Medium font embedded via `include_bytes!()` | Exposed through `FontResource`; avoids runtime font loading errors on headless systems and ensures consistent text rendering across all platforms | 2026-04-29 |

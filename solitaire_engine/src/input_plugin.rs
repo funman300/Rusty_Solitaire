@@ -252,7 +252,7 @@ fn handle_keyboard_hint(
     mut confirm: ResMut<KeyboardConfirmState>,
     mut hint_cycle: ResMut<HintCycleIndex>,
     mut commands: Commands,
-    card_entities: Query<(Entity, &CardEntity, &Sprite)>,
+    mut card_entities: Query<(Entity, &CardEntity, &mut Sprite)>,
     mut info_toast: MessageWriter<InfoToastEvent>,
     mut hint_visual: MessageWriter<HintVisualEvent>,
 ) {
@@ -308,16 +308,14 @@ fn handle_keyboard_hint(
         .and_then(|p| p.cards.last().filter(|c| c.face_up))
         .map(|c| c.id);
     if let Some(card_id) = top_card_id {
-        for (entity, card_entity, _sprite) in card_entities.iter() {
+        for (entity, card_entity, mut sprite) in card_entities.iter_mut() {
             if card_entity.card_id == card_id {
+                // Tint the card gold without replacing the Sprite (which would
+                // discard the image handle set by CardImageSet).
+                sprite.color = Color::srgba(1.0, 1.0, 0.4, 1.0);
                 commands.entity(entity)
                     .insert(HintHighlight { remaining: 2.0 })
-                    .insert(HintHighlightTimer(2.0))
-                    .insert(Sprite {
-                        color: Color::srgba(1.0, 1.0, 0.4, 1.0),
-                        custom_size: Some(layout_res.0.card_size),
-                        ..default()
-                    });
+                    .insert(HintHighlightTimer(2.0));
                 break;
             }
         }

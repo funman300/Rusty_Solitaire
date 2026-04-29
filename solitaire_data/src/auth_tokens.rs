@@ -8,9 +8,15 @@
 //! [`TokenError::KeychainUnavailable`] — callers should fall back to prompting
 //! the user to log in again.
 //!
+//! Before calling any function in this module the application must initialise
+//! the default keyring store exactly once at startup by calling
+//! `keyring::use_native_store` (e.g. in `solitaire_app::main` before building
+//! the Bevy `App`). If no default store is set, all operations in this module
+//! will return [`TokenError::KeychainUnavailable`].
+//!
 //! # Note: no unit tests — requires live OS keychain.
 
-use keyring::Entry;
+use keyring_core::Entry;
 use thiserror::Error;
 
 /// Errors that can occur when reading or writing tokens in the OS keychain.
@@ -30,12 +36,13 @@ pub enum TokenError {
 /// Service name used to namespace all keychain entries for this application.
 const SERVICE: &str = "solitaire_quest_server";
 
-/// Map a `keyring::Error` to the appropriate `TokenError`.
-fn map_keyring_err(err: keyring::Error, username: &str) -> TokenError {
+/// Map a `keyring_core::Error` to the appropriate `TokenError`.
+fn map_keyring_err(err: keyring_core::Error, username: &str) -> TokenError {
     let msg = err.to_string();
     match err {
-        keyring::Error::NoStorageAccess(_) => TokenError::KeychainUnavailable(msg),
-        keyring::Error::NoEntry => TokenError::NotFound(username.to_string()),
+        keyring_core::Error::NoStorageAccess(_) => TokenError::KeychainUnavailable(msg),
+        keyring_core::Error::NoDefaultStore => TokenError::KeychainUnavailable(msg),
+        keyring_core::Error::NoEntry => TokenError::NotFound(username.to_string()),
         _ => TokenError::Keyring(msg),
     }
 }
@@ -88,17 +95,17 @@ pub fn load_refresh_token(username: &str) -> Result<String, TokenError> {
 pub fn delete_tokens(username: &str) -> Result<(), TokenError> {
     match Entry::new(SERVICE, &format!("{username}_access"))
         .map_err(|e| map_keyring_err(e, username))?
-        .delete_password()
+        .delete_credential()
     {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Ok(()) | Err(keyring_core::Error::NoEntry) => {}
         Err(e) => return Err(map_keyring_err(e, username)),
     }
 
     match Entry::new(SERVICE, &format!("{username}_refresh"))
         .map_err(|e| map_keyring_err(e, username))?
-        .delete_password()
+        .delete_credential()
     {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Ok(()) | Err(keyring_core::Error::NoEntry) => {}
         Err(e) => return Err(map_keyring_err(e, username)),
     }
 

@@ -12,3 +12,4 @@ path = "src/main.rs"
 bevy             = { workspace = true }
 solitaire_engine = { workspace = true }
 solitaire_data   = { workspace = true }
+keyring          = { workspace = true }

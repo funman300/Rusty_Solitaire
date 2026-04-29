@@ -47,6 +47,19 @@ pub const CARD_FACE_COLOUR: Color = Color::srgb(0.98, 0.98, 0.95);
 pub const RED_SUIT_COLOUR: Color = Color::srgb(0.78, 0.12, 0.15);
 pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.08, 0.08, 0.08);
 
+/// Pre-loaded [`Handle<Image>`]s for card face and back PNG textures.
+///
+/// Loaded once at startup by [`load_card_images`].  When this resource is
+/// present, card sprites use the PNG artwork; otherwise they fall back to
+/// solid-colour sprites (used in tests with `MinimalPlugins`).
+#[derive(Resource)]
+pub struct CardImageSet {
+    /// Shared face image used for all face-up cards.
+    pub face: Handle<Image>,
+    /// One handle per unlockable card-back design (indices 0–4).
+    pub backs: [Handle<Image>; 5],
+}
+
 /// Alternative face tint for red-suit cards in color-blind mode — a subtle
 /// blue wash that distinguishes them from black-suit cards without colour alone.
 const CARD_FACE_COLOUR_RED_CBM: Color = Color::srgba(0.85, 0.92, 1.0, 1.0);
@@ -160,6 +173,7 @@ impl Plugin for CardPlugin {
             .add_message::<SettingsChangedEvent>()
             .add_message::<CardFlippedEvent>()
             .add_message::<CardFaceRevealedEvent>()
+            .add_systems(Startup, load_card_images)
             .add_systems(PostStartup, (sync_cards_startup, update_stock_empty_indicator_startup))
             .add_systems(
                 Update,
@@ -177,6 +191,81 @@ impl Plugin for CardPlugin {
                     update_stock_empty_indicator.after(GameMutation),
                 ),
             );
+    }
+}
+
+/// Loads card face and back PNGs at startup and inserts [`CardImageSet`].
+///
+/// The PNGs are embedded at compile time via `include_bytes!()`.  Missing
+/// files are compile errors, not runtime panics.  Under `MinimalPlugins`
+/// (tests) this system is still registered but `Assets<Image>` is unavailable,
+/// so it does nothing and the plugin falls back to solid-colour sprites.
+fn load_card_images(images: Option<ResMut<Assets<Image>>>, mut commands: Commands) {
+    let Some(mut images) = images else {
+        // Assets<Image> is absent (e.g. MinimalPlugins in tests) — skip so
+        // tests can still run.  The plugin falls back to solid-colour sprites.
+        return;
+    };
+    use bevy::asset::RenderAssetUsages;
+    use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
+
+    let load = |bytes: &[u8]| {
+        Image::from_buffer(
+            bytes,
+            ImageType::Extension("png"),
+            CompressedImageFormats::NONE,
+            true,
+            ImageSampler::default(),
+            RenderAssetUsages::RENDER_WORLD,
+        )
+        .expect("valid card PNG")
+    };
+
+    let face = images.add(load(include_bytes!("../../assets/cards/faces/face.png")));
+    let backs = [
+        images.add(load(include_bytes!("../../assets/cards/backs/back_0.png"))),
+        images.add(load(include_bytes!("../../assets/cards/backs/back_1.png"))),
+        images.add(load(include_bytes!("../../assets/cards/backs/back_2.png"))),
+        images.add(load(include_bytes!("../../assets/cards/backs/back_3.png"))),
+        images.add(load(include_bytes!("../../assets/cards/backs/back_4.png"))),
+    ];
+    commands.insert_resource(CardImageSet { face, backs });
+}
+
+/// Builds the [`Sprite`] for a card, using PNG artwork when [`CardImageSet`] is
+/// available and falling back to a solid-colour sprite in tests.
+fn card_sprite(
+    card: &Card,
+    card_size: Vec2,
+    back_colour: Color,
+    color_blind: bool,
+    card_images: Option<&CardImageSet>,
+    selected_back: usize,
+) -> Sprite {
+    if let Some(set) = card_images {
+        let image = if card.face_up {
+            set.face.clone()
+        } else {
+            let idx = selected_back.min(set.backs.len() - 1);
+            set.backs[idx].clone()
+        };
+        Sprite {
+            image,
+            color: Color::WHITE,
+            custom_size: Some(card_size),
+            ..default()
+        }
+    } else {
+        let body_colour = if card.face_up {
+            face_colour(card, color_blind)
+        } else {
+            back_colour
+        };
+        Sprite {
+            color: body_colour,
+            custom_size: Some(card_size),
+            ..default()
+        }
     }
 }
 
@@ -201,14 +290,14 @@ fn sync_cards_startup(
     slide_dur: Option<Res<EffectiveSlideDuration>>,
     settings: Option<Res<SettingsResource>>,
     entities: Query<(Entity, &CardEntity, &Transform)>,
+    card_images: Option<Res<CardImageSet>>,
 ) {
     if let Some(layout) = layout {
         let slide_secs = slide_dur.map_or(0.15, |d| d.slide_secs);
-        let back_colour = settings
-            .as_ref()
-            .map_or_else(|| card_back_colour(0), |s| card_back_colour(s.0.selected_card_back));
+        let selected_back = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
+        let back_colour = card_back_colour(selected_back);
         let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
-        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities);
+        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities, card_images.as_deref(), selected_back);
     }
 }
 
@@ -220,17 +309,17 @@ fn sync_cards_on_change(
     slide_dur: Option<Res<EffectiveSlideDuration>>,
     settings: Option<Res<SettingsResource>>,
     entities: Query<(Entity, &CardEntity, &Transform)>,
+    card_images: Option<Res<CardImageSet>>,
 ) {
     if events.read().next().is_none() {
         return;
     }
     if let Some(layout) = layout {
         let slide_secs = slide_dur.map_or(0.15, |d| d.slide_secs);
-        let back_colour = settings
-            .as_ref()
-            .map_or_else(|| card_back_colour(0), |s| card_back_colour(s.0.selected_card_back));
+        let selected_back = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
+        let back_colour = card_back_colour(selected_back);
         let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
-        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities);
+        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities, card_images.as_deref(), selected_back);
     }
 }
 
@@ -242,6 +331,8 @@ fn sync_cards(
     back_colour: Color,
     color_blind: bool,
     entities: &Query<(Entity, &CardEntity, &Transform)>,
+    card_images: Option<&CardImageSet>,
+    selected_back: usize,
 ) {
     let positions = card_positions(game, layout);
 
@@ -266,10 +357,10 @@ fn sync_cards(
             Some(&(entity, cur)) => {
                 update_card_entity(
                     &mut commands, entity, card, position, z, layout,
-                    slide_secs, back_colour, color_blind, cur,
+                    slide_secs, back_colour, color_blind, cur, card_images, selected_back,
                 )
             }
-            None => spawn_card_entity(&mut commands, card, position, z, layout, back_colour, color_blind),
+            None => spawn_card_entity(&mut commands, card, position, z, layout, back_colour, color_blind, card_images, selected_back),
         }
     }
 }
@@ -358,21 +449,23 @@ fn face_colour(card: &Card, color_blind: bool) -> Color {
     }
 }
 
-fn spawn_card_entity(commands: &mut Commands, card: &Card, pos: Vec2, z: f32, layout: &Layout, back_colour: Color, color_blind: bool) {
-    let body_colour = if card.face_up {
-        face_colour(card, color_blind)
-    } else {
-        back_colour
-    };
+fn spawn_card_entity(
+    commands: &mut Commands,
+    card: &Card,
+    pos: Vec2,
+    z: f32,
+    layout: &Layout,
+    back_colour: Color,
+    color_blind: bool,
+    card_images: Option<&CardImageSet>,
+    selected_back: usize,
+) {
+    let sprite = card_sprite(card, layout.card_size, back_colour, color_blind, card_images, selected_back);
 
     commands
         .spawn((
             CardEntity { card_id: card.id },
-            Sprite {
-                color: body_colour,
-                custom_size: Some(layout.card_size),
-                ..default()
-            },
+            sprite,
             Transform::from_xyz(pos.x, pos.y, z),
             Visibility::default(),
         ))
@@ -405,21 +498,13 @@ fn update_card_entity(
     back_colour: Color,
     color_blind: bool,
     cur: Vec3,
+    card_images: Option<&CardImageSet>,
+    selected_back: usize,
 ) {
-    let body_colour = if card.face_up {
-        face_colour(card, color_blind)
-    } else {
-        back_colour
-    };
-
     let target = Vec3::new(pos.x, pos.y, z);
 
     // Always refresh the visual appearance.
-    commands.entity(entity).insert(Sprite {
-        color: body_colour,
-        custom_size: Some(layout.card_size),
-        ..default()
-    });
+    commands.entity(entity).insert(card_sprite(card, layout.card_size, back_colour, color_blind, card_images, selected_back));
 
     // Slide to the new position when it differs meaningfully; snap otherwise.
     if (cur.truncate() - target.truncate()).length() > 1.0 && slide_secs > 0.0 {
@@ -653,20 +738,24 @@ fn tick_hint_highlight(
     mut query: Query<(Entity, &mut HintHighlight, &mut Sprite, &CardEntity)>,
     game: Res<GameStateResource>,
     settings: Option<Res<SettingsResource>>,
+    card_images: Option<Res<CardImageSet>>,
 ) {
     let back_idx = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
+    let use_images = card_images.is_some();
     for (entity, mut hint, mut sprite, card_entity) in query.iter_mut() {
         hint.remaining -= time.delta_secs();
         if hint.remaining <= 0.0 {
-            // Restore normal face-up colour.
-            let is_face_up = game.0.piles.values()
-                .flat_map(|p| p.cards.iter())
-                .find(|c| c.id == card_entity.card_id)
-                .is_some_and(|c| c.face_up);
-            sprite.color = if is_face_up {
-                CARD_FACE_COLOUR
+            // Restore the normal sprite colour.
+            // When image-based rendering is active, WHITE is the neutral tint;
+            // otherwise restore the solid colour appropriate to the card state.
+            sprite.color = if use_images {
+                Color::WHITE
             } else {
-                card_back_colour(back_idx)
+                let is_face_up = game.0.piles.values()
+                    .flat_map(|p| p.cards.iter())
+                    .find(|c| c.id == card_entity.card_id)
+                    .is_some_and(|c| c.face_up);
+                if is_face_up { CARD_FACE_COLOUR } else { card_back_colour(back_idx) }
             };
             commands
                 .entity(entity)
