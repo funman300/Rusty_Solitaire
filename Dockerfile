@@ -6,10 +6,6 @@ FROM rust:slim AS builder
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y pkg-config libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY . .
 
 # Tell sqlx to use the cached query metadata instead of a live database.
@@ -22,11 +18,11 @@ RUN cargo build --release -p solitaire_server
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y libssl3 ca-certificates \
+    && apt-get install -y ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/solitaire_server /usr/local/bin/solitaire_server
 
-EXPOSE 8080
+EXPOSE ${SERVER_PORT:-8080}
 
 ENTRYPOINT ["/usr/local/bin/solitaire_server"]
