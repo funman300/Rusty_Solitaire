@@ -289,10 +289,9 @@ impl GameState {
             .ok_or(MoveError::InvalidSource)?
             .cards
             .last_mut()
+            && !top.face_up
         {
-            if !top.face_up {
-                top.face_up = true;
-            }
+            top.face_up = true;
         }
 
         self.piles.get_mut(&to).ok_or(MoveError::InvalidDestination)?.cards.append(&mut moved);

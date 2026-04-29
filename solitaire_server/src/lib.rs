@@ -19,7 +19,11 @@ use axum::{
 };
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::{
+    governor::GovernorConfigBuilder,
+    key_extractor::SmartIpKeyExtractor,
+    GovernorLayer,
+};
 
 /// Shared application state injected into every Axum handler via [`axum::extract::State`].
 ///
@@ -80,6 +84,7 @@ fn build_router_inner(state: AppState, rate_limit: bool) -> Router {
         // burst_size = 10, replenish every 6 seconds = 10/min steady-state.
         let governor_conf = Arc::new(
             GovernorConfigBuilder::default()
+                .key_extractor(SmartIpKeyExtractor)
                 .per_second(6)
                 .burst_size(10)
                 .finish()
