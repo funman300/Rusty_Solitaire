@@ -196,111 +196,36 @@ impl Plugin for CardPlugin {
     }
 }
 
-/// Loads card face and back PNGs at startup and inserts [`CardImageSet`].
+/// Loads card face and back PNGs at startup via [`AssetServer`] and inserts
+/// [`CardImageSet`].
 ///
-/// The PNGs are embedded at compile time via `include_bytes!()`.  Missing
-/// files are compile errors, not runtime panics.  Under `MinimalPlugins`
-/// (tests) this system is still registered but `Assets<Image>` is unavailable,
-/// so it does nothing and the plugin falls back to solid-colour sprites.
-fn load_card_images(images: Option<ResMut<Assets<Image>>>, mut commands: Commands) {
-    let Some(mut images) = images else {
+/// Faces: `assets/cards/faces/{RANK}{SUIT}.png`  (e.g. `AC.png`, `10H.png`)
+/// Backs: `assets/cards/backs/back_{0..4}.png`
+///
+/// Under `MinimalPlugins` (tests) `AssetServer` is absent, so the system
+/// returns without inserting `CardImageSet` and the plugin falls back to
+/// solid-colour sprites.
+fn load_card_images(asset_server: Option<Res<AssetServer>>, mut commands: Commands) {
+    let Some(asset_server) = asset_server else {
         return;
     };
-    use bevy::asset::RenderAssetUsages;
-    use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 
-    let load = |bytes: &[u8]| {
-        Image::from_buffer(
-            bytes,
-            ImageType::Extension("png"),
-            CompressedImageFormats::NONE,
-            true,
-            ImageSampler::default(),
-            RenderAssetUsages::RENDER_WORLD,
-        )
-        .expect("valid card PNG")
-    };
-
-    // 52 face images: faces[suit][rank]
-    // Suit: Clubs=0, Diamonds=1, Hearts=2, Spades=3
-    // Rank: Ace=0 … King=12
-    const FACE_BYTES: [[&[u8]; 13]; 4] = [
-        // Clubs
-        [
-            include_bytes!("../../assets/cards/faces/a_c.png"),
-            include_bytes!("../../assets/cards/faces/2_c.png"),
-            include_bytes!("../../assets/cards/faces/3_c.png"),
-            include_bytes!("../../assets/cards/faces/4_c.png"),
-            include_bytes!("../../assets/cards/faces/5_c.png"),
-            include_bytes!("../../assets/cards/faces/6_c.png"),
-            include_bytes!("../../assets/cards/faces/7_c.png"),
-            include_bytes!("../../assets/cards/faces/8_c.png"),
-            include_bytes!("../../assets/cards/faces/9_c.png"),
-            include_bytes!("../../assets/cards/faces/10_c.png"),
-            include_bytes!("../../assets/cards/faces/j_c.png"),
-            include_bytes!("../../assets/cards/faces/q_c.png"),
-            include_bytes!("../../assets/cards/faces/k_c.png"),
-        ],
-        // Diamonds
-        [
-            include_bytes!("../../assets/cards/faces/a_d.png"),
-            include_bytes!("../../assets/cards/faces/2_d.png"),
-            include_bytes!("../../assets/cards/faces/3_d.png"),
-            include_bytes!("../../assets/cards/faces/4_d.png"),
-            include_bytes!("../../assets/cards/faces/5_d.png"),
-            include_bytes!("../../assets/cards/faces/6_d.png"),
-            include_bytes!("../../assets/cards/faces/7_d.png"),
-            include_bytes!("../../assets/cards/faces/8_d.png"),
-            include_bytes!("../../assets/cards/faces/9_d.png"),
-            include_bytes!("../../assets/cards/faces/10_d.png"),
-            include_bytes!("../../assets/cards/faces/j_d.png"),
-            include_bytes!("../../assets/cards/faces/q_d.png"),
-            include_bytes!("../../assets/cards/faces/k_d.png"),
-        ],
-        // Hearts
-        [
-            include_bytes!("../../assets/cards/faces/a_h.png"),
-            include_bytes!("../../assets/cards/faces/2_h.png"),
-            include_bytes!("../../assets/cards/faces/3_h.png"),
-            include_bytes!("../../assets/cards/faces/4_h.png"),
-            include_bytes!("../../assets/cards/faces/5_h.png"),
-            include_bytes!("../../assets/cards/faces/6_h.png"),
-            include_bytes!("../../assets/cards/faces/7_h.png"),
-            include_bytes!("../../assets/cards/faces/8_h.png"),
-            include_bytes!("../../assets/cards/faces/9_h.png"),
-            include_bytes!("../../assets/cards/faces/10_h.png"),
-            include_bytes!("../../assets/cards/faces/j_h.png"),
-            include_bytes!("../../assets/cards/faces/q_h.png"),
-            include_bytes!("../../assets/cards/faces/k_h.png"),
-        ],
-        // Spades
-        [
-            include_bytes!("../../assets/cards/faces/a_s.png"),
-            include_bytes!("../../assets/cards/faces/2_s.png"),
-            include_bytes!("../../assets/cards/faces/3_s.png"),
-            include_bytes!("../../assets/cards/faces/4_s.png"),
-            include_bytes!("../../assets/cards/faces/5_s.png"),
-            include_bytes!("../../assets/cards/faces/6_s.png"),
-            include_bytes!("../../assets/cards/faces/7_s.png"),
-            include_bytes!("../../assets/cards/faces/8_s.png"),
-            include_bytes!("../../assets/cards/faces/9_s.png"),
-            include_bytes!("../../assets/cards/faces/10_s.png"),
-            include_bytes!("../../assets/cards/faces/j_s.png"),
-            include_bytes!("../../assets/cards/faces/q_s.png"),
-            include_bytes!("../../assets/cards/faces/k_s.png"),
-        ],
-    ];
+    // Suit index: Clubs=0, Diamonds=1, Hearts=2, Spades=3
+    const SUIT_CHARS: [&str; 4] = ["C", "D", "H", "S"];
+    // Rank index: Ace=0 … King=12
+    const RANK_STRS: [&str; 13] = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
     let faces: [[Handle<Image>; 13]; 4] = std::array::from_fn(|suit| {
-        std::array::from_fn(|rank| images.add(load(FACE_BYTES[suit][rank])))
+        std::array::from_fn(|rank| {
+            asset_server.load(format!(
+                "cards/faces/{}{}.png",
+                RANK_STRS[rank], SUIT_CHARS[suit]
+            ))
+        })
     });
-    let backs = [
-        images.add(load(include_bytes!("../../assets/cards/backs/back_0.png"))),
-        images.add(load(include_bytes!("../../assets/cards/backs/back_1.png"))),
-        images.add(load(include_bytes!("../../assets/cards/backs/back_2.png"))),
-        images.add(load(include_bytes!("../../assets/cards/backs/back_3.png"))),
-        images.add(load(include_bytes!("../../assets/cards/backs/back_4.png"))),
-    ];
+    let backs = std::array::from_fn(|i| {
+        asset_server.load(format!("cards/backs/back_{i}.png"))
+    });
     commands.insert_resource(CardImageSet { faces, backs });
 }
 

@@ -1,6 +1,6 @@
 // Register FontPlugin in solitaire_engine/src/lib.rs before use.
 
-//! Embeds FiraMono-Medium as the project font and exposes it via [`FontResource`].
+//! Loads FiraMono-Medium via the Bevy `AssetServer` and exposes it via [`FontResource`].
 
 use bevy::prelude::*;
 
@@ -17,20 +17,11 @@ impl Plugin for FontPlugin {
     }
 }
 
-fn load_font(fonts: Option<ResMut<Assets<Font>>>, mut commands: Commands) {
-    let Some(mut fonts) = fonts else {
-        // Assets<Font> absent (e.g. MinimalPlugins in tests) — insert default.
+fn load_font(asset_server: Option<Res<AssetServer>>, mut commands: Commands) {
+    let Some(asset_server) = asset_server else {
+        // AssetServer absent (e.g. MinimalPlugins in tests) — insert default.
         commands.insert_resource(FontResource(Handle::default()));
         return;
     };
-    let bytes: &'static [u8] = include_bytes!("../../assets/fonts/main.ttf");
-    match Font::try_from_bytes(bytes.to_vec()) {
-        Ok(font) => {
-            commands.insert_resource(FontResource(fonts.add(font)));
-        }
-        Err(e) => {
-            warn!("failed to load main.ttf: {e}; falling back to Bevy default font");
-            commands.insert_resource(FontResource(Handle::default()));
-        }
-    }
+    commands.insert_resource(FontResource(asset_server.load("fonts/main.ttf")));
 }

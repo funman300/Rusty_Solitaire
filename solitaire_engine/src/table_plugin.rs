@@ -9,7 +9,7 @@ use bevy::window::WindowResized;
 use solitaire_core::card::Suit;
 use solitaire_core::pile::PileType;
 
-use crate::events::HintVisualEvent;
+use crate::events::{HintVisualEvent, StateChangedEvent};
 use crate::layout::{compute_layout, Layout, LayoutResource};
 #[cfg(test)]
 use crate::layout::TABLE_COLOUR;
@@ -63,6 +63,7 @@ impl Plugin for TablePlugin {
         app.add_message::<WindowResized>()
             .add_message::<SettingsChangedEvent>()
             .add_message::<HintVisualEvent>()
+            .add_message::<StateChangedEvent>()
             .add_systems(Startup, load_background_images.before(setup_table))
             .add_systems(Startup, setup_table)
             .add_systems(
@@ -77,41 +78,17 @@ impl Plugin for TablePlugin {
     }
 }
 
-/// Loads the 5 background PNG files at startup and stores their
-/// [`Handle<Image>`]s in [`BackgroundImageSet`].
-///
-/// The PNGs are embedded at compile time via `include_bytes!()`.  If a file
-/// is missing the build will fail with a clear error rather than a runtime
-/// panic.
-fn load_background_images(images: Option<ResMut<Assets<Image>>>, mut commands: Commands) {
-    let Some(mut images) = images else {
-        // Assets<Image> is absent (e.g. MinimalPlugins in tests) — insert an
+/// Loads the 5 background PNG files at startup via the Bevy `AssetServer` and
+/// stores their [`Handle<Image>`]s in [`BackgroundImageSet`].
+fn load_background_images(asset_server: Option<Res<AssetServer>>, mut commands: Commands) {
+    let Some(asset_server) = asset_server else {
+        // AssetServer absent (e.g. MinimalPlugins in tests) — insert an
         // empty set so setup_table can proceed using a default handle.
         commands.insert_resource(BackgroundImageSet { handles: Vec::new() });
         return;
     };
-    const BG_BYTES: [&[u8]; 5] = [
-        include_bytes!("../../assets/backgrounds/bg_0.png"),
-        include_bytes!("../../assets/backgrounds/bg_1.png"),
-        include_bytes!("../../assets/backgrounds/bg_2.png"),
-        include_bytes!("../../assets/backgrounds/bg_3.png"),
-        include_bytes!("../../assets/backgrounds/bg_4.png"),
-    ];
-    let handles = BG_BYTES
-        .iter()
-        .map(|bytes| {
-            use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
-            let image = Image::from_buffer(
-                bytes,
-                ImageType::Extension("png"),
-                CompressedImageFormats::NONE,
-                true,
-                ImageSampler::default(),
-                bevy::asset::RenderAssetUsages::RENDER_WORLD,
-            )
-            .expect("valid background PNG");
-            images.add(image)
-        })
+    let handles = (0..5)
+        .map(|i| asset_server.load(format!("backgrounds/bg_{i}.png")))
         .collect();
     commands.insert_resource(BackgroundImageSet { handles });
 }
@@ -298,10 +275,12 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn on_window_resized(
     mut events: MessageReader<WindowResized>,
     mut layout_res: Option<ResMut<LayoutResource>>,
+    mut state_changed: MessageWriter<StateChangedEvent>,
     mut backgrounds: Query<
         (&mut Sprite, &mut Transform),
         (With<TableBackground>, Without<PileMarker>),
@@ -331,6 +310,9 @@ fn on_window_resized(
             transform.translation.y = pos.y;
         }
     }
+
+    // Reposition card sprites to the new layout.
+    state_changed.write(StateChangedEvent);
 }
 
 // ---------------------------------------------------------------------------
