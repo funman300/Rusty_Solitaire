@@ -88,7 +88,9 @@ pub use resources::{DragState, GameStateResource, HintCycleIndex, SettingsScroll
 pub use selection_plugin::{SelectionHighlight, SelectionPlugin, SelectionState};
 pub use stats_plugin::{StatsPlugin, StatsResource, StatsScreen, StatsUpdate};
 pub use sync_plugin::{SyncPlugin, SyncProviderResource};
-pub use table_plugin::{HintPileHighlight, PileMarker, TableBackground, TablePlugin};
+pub use table_plugin::{
+    BackgroundImageSet, HintPileHighlight, PileMarker, TableBackground, TablePlugin,
+};
 pub use time_attack_plugin::{
     TimeAttackEndedEvent, TimeAttackPlugin, TimeAttackResource, TIME_ATTACK_DURATION_SECS,
 };
