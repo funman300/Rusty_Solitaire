@@ -18,7 +18,9 @@ use crate::progress_plugin::ProgressResource;
 use crate::events::{
     HelpRequestEvent, InfoToastEvent, NewGameRequestEvent, PauseRequestEvent,
     StartChallengeRequestEvent, StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent,
-    StartZenRequestEvent, UndoRequestEvent,
+    StartZenRequestEvent, ToggleAchievementsRequestEvent, ToggleLeaderboardRequestEvent,
+    ToggleProfileRequestEvent, ToggleSettingsRequestEvent, ToggleStatsRequestEvent,
+    UndoRequestEvent,
 };
 use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
@@ -143,6 +145,27 @@ pub enum ModeOption {
     TimeAttack,
 }
 
+/// Marker on the "Menu" action button. Click toggles the [`MenuPopover`]
+/// which exposes the Stats / Achievements / Profile / Settings /
+/// Leaderboard overlays without needing the S/A/P/O/L hotkeys.
+#[derive(Component, Debug)]
+pub struct MenuButton;
+
+/// Marker on the dropdown panel that opens below the [`MenuButton`].
+#[derive(Component, Debug)]
+pub struct MenuPopover;
+
+/// One row inside the [`MenuPopover`]. The variant selects which
+/// `Toggle*RequestEvent` the click handler fires.
+#[derive(Component, Debug, Clone, Copy)]
+pub enum MenuOption {
+    Stats,
+    Achievements,
+    Profile,
+    Settings,
+    Leaderboard,
+}
+
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
 
@@ -170,6 +193,11 @@ impl Plugin for HudPlugin {
             .add_message::<StartChallengeRequestEvent>()
             .add_message::<StartTimeAttackRequestEvent>()
             .add_message::<StartDailyChallengeRequestEvent>()
+            .add_message::<ToggleStatsRequestEvent>()
+            .add_message::<ToggleAchievementsRequestEvent>()
+            .add_message::<ToggleProfileRequestEvent>()
+            .add_message::<ToggleSettingsRequestEvent>()
+            .add_message::<ToggleLeaderboardRequestEvent>()
             .add_systems(Startup, (spawn_hud, spawn_action_buttons))
             .add_systems(Update, update_hud.after(GameMutation))
             .add_systems(Update, announce_auto_complete.after(GameMutation))
@@ -183,6 +211,8 @@ impl Plugin for HudPlugin {
                     handle_help_button,
                     handle_modes_button,
                     handle_mode_option_click,
+                    handle_menu_button,
+                    handle_menu_option_click,
                     paint_action_buttons,
                 ),
             );
@@ -292,6 +322,7 @@ fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Comma
             ZIndex(Z_HUD),
         ))
         .with_children(|row| {
+            spawn_action_button(row, MenuButton, "Menu \u{25BE}", &font);
             spawn_action_button(row, UndoButton, "Undo", &font);
             spawn_action_button(row, PauseButton, "Pause", &font);
             spawn_action_button(row, HelpButton, "Help", &font);
@@ -511,6 +542,130 @@ fn handle_mode_option_click(
             }
             ModeOption::TimeAttack => {
                 time_attack.write(StartTimeAttackRequestEvent);
+            }
+        }
+    }
+    if clicked_any
+        && let Ok(entity) = popovers.single() {
+            commands.entity(entity).despawn();
+        }
+}
+
+/// Toggles the [`MenuPopover`]: spawns it on first click, despawns it on
+/// second click. The popover lists the five overlays previously only
+/// reachable via the S / A / P / O / L hotkeys.
+fn handle_menu_button(
+    interaction_query: Query<&Interaction, (With<MenuButton>, Changed<Interaction>)>,
+    popovers: Query<Entity, With<MenuPopover>>,
+    font_res: Option<Res<FontResource>>,
+    mut commands: Commands,
+) {
+    let pressed = interaction_query
+        .iter()
+        .any(|i| *i == Interaction::Pressed);
+    if !pressed {
+        return;
+    }
+    if let Ok(entity) = popovers.single() {
+        commands.entity(entity).despawn();
+    } else {
+        spawn_menu_popover(&mut commands, font_res.as_deref());
+    }
+}
+
+/// Spawns the menu popover anchored just below the action bar, with one
+/// row per overlay. Each row dispatches its corresponding
+/// `Toggle*RequestEvent` so the existing toggle handler runs (and the
+/// HUD never duplicates spawn / despawn / fetch logic).
+fn spawn_menu_popover(commands: &mut Commands, font_res: Option<&FontResource>) {
+    let font = TextFont {
+        font: font_res.map(|f| f.0.clone()).unwrap_or_default(),
+        font_size: 15.0,
+        ..default()
+    };
+
+    let rows: [(MenuOption, &'static str); 5] = [
+        (MenuOption::Stats, "Stats"),
+        (MenuOption::Achievements, "Achievements"),
+        (MenuOption::Profile, "Profile"),
+        (MenuOption::Settings, "Settings"),
+        (MenuOption::Leaderboard, "Leaderboard"),
+    ];
+
+    commands
+        .spawn((
+            MenuPopover,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(12.0),
+                top: Val::Px(50.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border_radius: BorderRadius::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.10, 0.12, 0.15, 0.96)),
+            ZIndex(Z_HUD + 5),
+        ))
+        .with_children(|panel| {
+            for (option, label) in rows {
+                panel
+                    .spawn((
+                        option,
+                        ActionButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::Center,
+                            min_width: Val::Px(150.0),
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ACTION_BTN_IDLE),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+                    });
+            }
+        });
+}
+
+/// Dispatches the click on a menu row to the matching toggle event,
+/// then despawns the popover.
+#[allow(clippy::too_many_arguments)]
+fn handle_menu_option_click(
+    interaction_query: Query<(&Interaction, &MenuOption), Changed<Interaction>>,
+    popovers: Query<Entity, With<MenuPopover>>,
+    mut stats: MessageWriter<ToggleStatsRequestEvent>,
+    mut achievements: MessageWriter<ToggleAchievementsRequestEvent>,
+    mut profile: MessageWriter<ToggleProfileRequestEvent>,
+    mut settings: MessageWriter<ToggleSettingsRequestEvent>,
+    mut leaderboard: MessageWriter<ToggleLeaderboardRequestEvent>,
+    mut commands: Commands,
+) {
+    let mut clicked_any = false;
+    for (interaction, option) in &interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        clicked_any = true;
+        match option {
+            MenuOption::Stats => {
+                stats.write(ToggleStatsRequestEvent);
+            }
+            MenuOption::Achievements => {
+                achievements.write(ToggleAchievementsRequestEvent);
+            }
+            MenuOption::Profile => {
+                profile.write(ToggleProfileRequestEvent);
+            }
+            MenuOption::Settings => {
+                settings.write(ToggleSettingsRequestEvent);
+            }
+            MenuOption::Leaderboard => {
+                leaderboard.write(ToggleLeaderboardRequestEvent);
             }
         }
     }

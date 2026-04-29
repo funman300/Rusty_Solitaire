@@ -17,7 +17,9 @@ use solitaire_data::{
     save_progress_to,
 };
 
-use crate::events::{AchievementUnlockedEvent, GameWonEvent, XpAwardedEvent};
+use crate::events::{
+    AchievementUnlockedEvent, GameWonEvent, ToggleAchievementsRequestEvent, XpAwardedEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::{LevelUpEvent, ProgressResource, ProgressStoragePath, ProgressUpdate};
 use crate::resources::GameStateResource;
@@ -73,6 +75,7 @@ impl Plugin for AchievementPlugin {
             .add_message::<AchievementUnlockedEvent>()
             .add_message::<GameWonEvent>()
             .add_message::<XpAwardedEvent>()
+            .add_message::<ToggleAchievementsRequestEvent>()
             // Run after GameMutation (so GameWonEvent is available), after
             // StatsUpdate (so stats reflect this win), and after ProgressUpdate
             // (so daily_challenge_streak is up to date for daily_devotee).
@@ -197,14 +200,17 @@ pub fn display_name_for(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-/// Toggle the achievements overlay with the `A` key.
+/// Toggle the achievements overlay — `A` keyboard accelerator or
+/// `ToggleAchievementsRequestEvent` from the HUD Menu popover.
 fn toggle_achievements_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<ToggleAchievementsRequestEvent>,
     achievements: Res<AchievementsResource>,
     screens: Query<Entity, With<AchievementsScreen>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyA) {
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyA) && !button_clicked {
         return;
     }
     if let Ok(entity) = screens.single() {

@@ -14,7 +14,7 @@ use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
 use solitaire_data::settings::SyncBackend;
 use solitaire_sync::LeaderboardEntry;
 
-use crate::events::InfoToastEvent;
+use crate::events::{InfoToastEvent, ToggleLeaderboardRequestEvent};
 use crate::settings_plugin::SettingsResource;
 use crate::sync_plugin::SyncProviderResource;
 
@@ -73,6 +73,7 @@ impl Plugin for LeaderboardPlugin {
             .init_resource::<ClosedThisFrame>()
             .init_resource::<OptInTask>()
             .init_resource::<OptOutTask>()
+            .add_message::<ToggleLeaderboardRequestEvent>()
             .add_systems(
                 Update,
                 (
@@ -99,18 +100,22 @@ fn reset_closed_flag(mut flag: ResMut<ClosedThisFrame>) {
     flag.0 = false;
 }
 
-/// `L` key — open or close the leaderboard panel.
-/// On open, starts a new fetch if no data is cached or a fetch is not in flight.
+/// `L` keyboard accelerator or `ToggleLeaderboardRequestEvent` from the
+/// HUD Menu popover — open or close the leaderboard panel. On open,
+/// starts a new fetch if no data is cached or a fetch is not in flight.
+#[allow(clippy::too_many_arguments)]
 fn toggle_leaderboard_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<ToggleLeaderboardRequestEvent>,
     screens: Query<Entity, With<LeaderboardScreen>>,
     data: Res<LeaderboardResource>,
     provider: Option<Res<SyncProviderResource>>,
     mut task_res: ResMut<LeaderboardFetchTask>,
     mut closed_flag: ResMut<ClosedThisFrame>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyL) {
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyL) && !button_clicked {
         return;
     }
     if let Ok(entity) = screens.single() {

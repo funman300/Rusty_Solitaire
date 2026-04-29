@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use solitaire_core::game_state::DrawMode;
 use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, AnimSpeed, Settings};
 
-use crate::events::ManualSyncRequestEvent;
+use crate::events::{ManualSyncRequestEvent, ToggleSettingsRequestEvent};
 use crate::progress_plugin::ProgressResource;
 use crate::resources::{SettingsScrollPos, SyncStatus, SyncStatusResource};
 
@@ -146,6 +146,7 @@ impl Plugin for SettingsPlugin {
             .init_resource::<SettingsScrollPos>()
             .add_message::<SettingsChangedEvent>()
             .add_message::<ManualSyncRequestEvent>()
+            .add_message::<ToggleSettingsRequestEvent>()
             .add_message::<bevy::input::mouse::MouseWheel>()
             .add_systems(Update, (handle_volume_keys, toggle_settings_screen, scroll_settings_panel));
 
@@ -206,12 +207,15 @@ fn handle_volume_keys(
     changed.write(SettingsChangedEvent(settings.0.clone()));
 }
 
-/// Opens or closes the Settings panel when `O` is pressed.
+/// Opens or closes the Settings panel — `O` keyboard accelerator or
+/// `ToggleSettingsRequestEvent` from the HUD Menu popover.
 fn toggle_settings_screen(
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<ToggleSettingsRequestEvent>,
     mut screen: ResMut<SettingsScreen>,
 ) {
-    if keys.just_pressed(KeyCode::KeyO) {
+    let button_clicked = requests.read().count() > 0;
+    if keys.just_pressed(KeyCode::KeyO) || button_clicked {
         screen.0 = !screen.0;
     }
 }

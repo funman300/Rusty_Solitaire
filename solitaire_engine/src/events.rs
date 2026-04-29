@@ -129,6 +129,31 @@ pub struct StartTimeAttackRequestEvent;
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct StartDailyChallengeRequestEvent;
 
+/// Request to toggle the Stats overlay. Fired by the HUD Menu-popover
+/// "Stats" row alongside the existing `S` accelerator.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct ToggleStatsRequestEvent;
+
+/// Request to toggle the Achievements overlay. Fired by the HUD
+/// Menu-popover "Achievements" row alongside the existing `A` accelerator.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct ToggleAchievementsRequestEvent;
+
+/// Request to toggle the Profile overlay. Fired by the HUD Menu-popover
+/// "Profile" row alongside the existing `P` accelerator.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct ToggleProfileRequestEvent;
+
+/// Request to toggle the Settings overlay. Fired by the HUD Menu-popover
+/// "Settings" row alongside the existing `O` accelerator.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct ToggleSettingsRequestEvent;
+
+/// Request to toggle the Leaderboard overlay. Fired by the HUD
+/// Menu-popover "Leaderboard" row alongside the existing `L` accelerator.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct ToggleLeaderboardRequestEvent;
+
 /// Fired by `SyncPlugin` after a pull task resolves and the merged result has
 /// been persisted to disk. `Ok(SyncResponse)` carries the merged payload plus
 /// any `ConflictReport`s the merge produced. `Err(String)` carries a

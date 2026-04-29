@@ -10,6 +10,7 @@ use solitaire_core::achievement::achievement_by_id;
 use solitaire_data::SyncBackend;
 
 use crate::achievement_plugin::AchievementsResource;
+use crate::events::ToggleProfileRequestEvent;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::{SyncStatus, SyncStatusResource};
 use crate::settings_plugin::SettingsResource;
@@ -24,7 +25,8 @@ pub struct ProfilePlugin;
 
 impl Plugin for ProfilePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, toggle_profile_screen);
+        app.add_message::<ToggleProfileRequestEvent>()
+            .add_systems(Update, toggle_profile_screen);
     }
 }
 
@@ -32,6 +34,7 @@ impl Plugin for ProfilePlugin {
 fn toggle_profile_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<ToggleProfileRequestEvent>,
     settings: Option<Res<SettingsResource>>,
     sync_status: Option<Res<SyncStatusResource>>,
     progress: Option<Res<ProgressResource>>,
@@ -39,7 +42,8 @@ fn toggle_profile_screen(
     stats: Option<Res<StatsResource>>,
     screens: Query<Entity, With<ProfileScreen>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyP) {
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyP) && !button_clicked {
         return;
     }
     if let Ok(entity) = screens.single() {

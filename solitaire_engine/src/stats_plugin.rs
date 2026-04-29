@@ -17,7 +17,9 @@ use solitaire_data::{
 
 use crate::auto_complete_plugin::AutoCompleteState;
 use crate::challenge_plugin::challenge_progress_label;
-use crate::events::{ForfeitEvent, GameWonEvent, InfoToastEvent, NewGameRequestEvent};
+use crate::events::{
+    ForfeitEvent, GameWonEvent, InfoToastEvent, NewGameRequestEvent, ToggleStatsRequestEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
@@ -81,6 +83,7 @@ impl Plugin for StatsPlugin {
             .add_message::<NewGameRequestEvent>()
             .add_message::<ForfeitEvent>()
             .add_message::<InfoToastEvent>()
+            .add_message::<ToggleStatsRequestEvent>()
             // record_abandoned must read `move_count` BEFORE handle_new_game
             // clobbers it with a fresh game. These are NOT in StatsUpdate because
             // StatsUpdate (as a set) is ordered after GameMutation by external
@@ -181,12 +184,14 @@ fn handle_forfeit(
 fn toggle_stats_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<ToggleStatsRequestEvent>,
     stats: Res<StatsResource>,
     progress: Option<Res<ProgressResource>>,
     time_attack: Option<Res<TimeAttackResource>>,
     screens: Query<Entity, With<StatsScreen>>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyS) {
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyS) && !button_clicked {
         return;
     }
     if let Ok(entity) = screens.single() {
