@@ -251,7 +251,7 @@ The "Shortcut" column lists optional keyboard accelerators. Every action in this
 | `CursorPlugin` | — | Custom cursor sprite during drag |
 | `SelectionPlugin` | — | Keyboard-driven card selection |
 | `GamePlugin` | N | Core game state resource, new-game flow, win/game-over overlays |
-| `HudPlugin` | — | Score, move counter, timer, auto-complete badge |
+| `HudPlugin` | — | Score, move counter, timer, auto-complete badge, and the top-right action button bar (Undo / Pause / Help / New Game). Each button fires the same request event the corresponding hotkey does. |
 | `StatsPlugin` | S | Stats overlay and persistence |
 | `ProgressPlugin` | — | XP/level system, persistence |
 | `AchievementPlugin` | A | Unlock evaluation, toast events, persistence |

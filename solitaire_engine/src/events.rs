@@ -86,6 +86,19 @@ pub struct AchievementUnlockedEvent(pub AchievementRecord);
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct ManualSyncRequestEvent;
 
+/// Request to toggle the pause overlay. Fired by the HUD "Pause" button so
+/// the same toggle path runs whether the player presses `Esc` or clicks.
+/// Consumed by `pause_plugin::toggle_pause`, which honours the same drag /
+/// game-over / selection guards either way.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct PauseRequestEvent;
+
+/// Request to toggle the help / controls overlay. Fired by the HUD "Help"
+/// button alongside the existing `F1` accelerator so the overlay is
+/// reachable without a keyboard. Consumed by `help_plugin::toggle_help_screen`.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct HelpRequestEvent;
+
 /// Fired by `SyncPlugin` after a pull task resolves and the merged result has
 /// been persisted to disk. `Ok(SyncResponse)` carries the merged payload plus
 /// any `ConflictReport`s the merge produced. `Err(String)` carries a

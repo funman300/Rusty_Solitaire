@@ -19,7 +19,7 @@ use bevy::prelude::*;
 use solitaire_core::game_state::DrawMode;
 use solitaire_data::save_game_state_to;
 
-use crate::events::StateChangedEvent;
+use crate::events::{PauseRequestEvent, StateChangedEvent};
 use crate::game_plugin::{GameOverScreen, GameStatePath};
 use crate::progress_plugin::ProgressResource;
 use crate::resources::{DragState, GameStateResource};
@@ -58,6 +58,7 @@ impl Plugin for PausePlugin {
         // events first, but calling add_event again is always safe.
         app.add_message::<SettingsChangedEvent>()
             .add_message::<StateChangedEvent>()
+            .add_message::<PauseRequestEvent>()
             .init_resource::<PausedResource>()
             .add_systems(
                 Update,
@@ -75,6 +76,7 @@ impl Plugin for PausePlugin {
 fn toggle_pause(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<PauseRequestEvent>,
     mut paused: ResMut<PausedResource>,
     screens: Query<Entity, With<PauseScreen>>,
     game_over_screens: Query<Entity, With<GameOverScreen>>,
@@ -87,7 +89,11 @@ fn toggle_pause(
     mut changed: MessageWriter<StateChangedEvent>,
     selection: Option<Res<SelectionState>>,
 ) {
-    if !keys.just_pressed(KeyCode::Escape) {
+    // Either Esc or a click on the HUD "Pause" button (which fires
+    // PauseRequestEvent) opens or closes the overlay. Drain the queue so a
+    // burst of clicks doesn't queue future toggles.
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::Escape) && !button_clicked {
         return;
     }
     // If a card is currently selected, let SelectionPlugin handle this Escape

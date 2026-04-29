@@ -1,30 +1,39 @@
 //! Toggleable on-screen help / cheat sheet showing keyboard bindings.
 //!
-//! Press **F1** to toggle. Listed shortcuts are grouped by intent —
+//! Reachable from the HUD "Help" button (per the UI-first principle); `F1`
+//! is an optional accelerator. Listed shortcuts are grouped by intent —
 //! gameplay, modes, and overlays.
 
 use bevy::prelude::*;
+
+use crate::events::HelpRequestEvent;
 
 /// Marker on the help overlay root node.
 #[derive(Component, Debug)]
 pub struct HelpScreen;
 
-/// Spawns and despawns the help/controls overlay shown when the player presses H (or the help button).
-/// All hotkeys and gesture guides live here.
+/// Spawns and despawns the help / controls overlay shown when the player
+/// clicks the "Help" HUD button or presses `F1`. All hotkeys and gesture
+/// guides live here.
 pub struct HelpPlugin;
 
 impl Plugin for HelpPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, toggle_help_screen);
+        app.add_message::<HelpRequestEvent>()
+            .add_systems(Update, toggle_help_screen);
     }
 }
 
 fn toggle_help_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<HelpRequestEvent>,
     screens: Query<Entity, With<HelpScreen>>,
 ) {
-    if !keys.just_pressed(KeyCode::F1) {
+    // Either F1 or a click on the HUD "Help" button (which fires
+    // HelpRequestEvent) toggles the overlay.
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::F1) && !button_clicked {
         return;
     }
     if let Ok(entity) = screens.single() {

@@ -67,14 +67,17 @@ pub use font_plugin::{FontPlugin, FontResource};
 pub use cursor_plugin::CursorPlugin;
 pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,
-    ForfeitEvent, GameWonEvent, HintVisualEvent, InfoToastEvent, ManualSyncRequestEvent,
-    MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent,
-    StateChangedEvent, SyncCompleteEvent, UndoRequestEvent, XpAwardedEvent,
+    ForfeitEvent, GameWonEvent, HelpRequestEvent, HintVisualEvent, InfoToastEvent,
+    ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent,
+    NewGameRequestEvent, PauseRequestEvent, StateChangedEvent, SyncCompleteEvent,
+    UndoRequestEvent, XpAwardedEvent,
 };
 pub use game_plugin::{ConfirmNewGameScreen, GameMutation, GameOverScreen, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};
 pub use home_plugin::{HomePlugin, HomeScreen};
-pub use hud_plugin::{HudAutoComplete, HudPlugin};
+pub use hud_plugin::{
+    ActionButton, HelpButton, HudAutoComplete, HudPlugin, NewGameButton, PauseButton, UndoButton,
+};
 pub use leaderboard_plugin::{LeaderboardPlugin, LeaderboardResource, LeaderboardScreen};
 pub use input_plugin::InputPlugin;
 pub use onboarding_plugin::{OnboardingPlugin, OnboardingScreen};

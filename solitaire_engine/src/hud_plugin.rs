@@ -13,7 +13,9 @@ use solitaire_core::pile::PileType;
 
 use crate::auto_complete_plugin::AutoCompleteState;
 use crate::daily_challenge_plugin::DailyChallengeResource;
-use crate::events::{InfoToastEvent, NewGameRequestEvent};
+use crate::events::{
+    HelpRequestEvent, InfoToastEvent, NewGameRequestEvent, PauseRequestEvent, UndoRequestEvent,
+};
 use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
@@ -84,30 +86,72 @@ pub struct HudDrawCycle;
 #[derive(Component, Debug)]
 pub struct HudSelection;
 
-/// Marker on the New Game action button anchored top-right of the play area.
-/// Click fires [`NewGameRequestEvent`]; the existing `ConfirmNewGameScreen`
-/// modal then handles confirmation when a game is in progress.
+/// Marker shared by every clickable HUD action button so a single
+/// `paint_action_buttons` system can recolour them on hover/press without
+/// each button needing its own paint handler.
+#[derive(Component, Debug)]
+pub struct ActionButton;
+
+/// Marker on the "New Game" action button anchored top-right of the play
+/// area. Click fires [`NewGameRequestEvent`]; the existing
+/// `ConfirmNewGameScreen` modal handles confirmation when a game is in
+/// progress.
 #[derive(Component, Debug)]
 pub struct NewGameButton;
+
+/// Marker on the "Undo" action button. Click fires [`UndoRequestEvent`],
+/// mirroring the `U` keyboard accelerator.
+#[derive(Component, Debug)]
+pub struct UndoButton;
+
+/// Marker on the "Pause" action button. Click fires [`PauseRequestEvent`],
+/// mirroring the `Esc` keyboard accelerator. The pause overlay's own resume
+/// affordance dismisses it from the paused state.
+#[derive(Component, Debug)]
+pub struct PauseButton;
+
+/// Marker on the "Help" action button. Click fires [`HelpRequestEvent`],
+/// mirroring the `F1` keyboard accelerator.
+#[derive(Component, Debug)]
+pub struct HelpButton;
 
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
 
-/// Idle / hover / pressed colours for the New Game action button.
-const NEW_GAME_BTN_IDLE: Color = Color::srgb(0.20, 0.55, 0.85);
-const NEW_GAME_BTN_HOVER: Color = Color::srgb(0.28, 0.65, 0.95);
-const NEW_GAME_BTN_PRESSED: Color = Color::srgb(0.15, 0.45, 0.75);
+/// Idle / hover / pressed colours shared by every action button.
+const ACTION_BTN_IDLE: Color = Color::srgb(0.20, 0.55, 0.85);
+const ACTION_BTN_HOVER: Color = Color::srgb(0.28, 0.65, 0.95);
+const ACTION_BTN_PRESSED: Color = Color::srgb(0.15, 0.45, 0.75);
 
 /// Renders the in-game HUD: score counter, move counter, elapsed timer, draw-mode indicator, and the auto-complete badge that lights up when the game is solvable without further input.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (spawn_hud, spawn_new_game_button))
+        // The click handlers write to messages registered elsewhere
+        // (`NewGameRequestEvent` in `GamePlugin`, `UndoRequestEvent` in
+        // `GamePlugin`, `PauseRequestEvent` in `PausePlugin`,
+        // `HelpRequestEvent` in `HelpPlugin`). Re-register defensively so the
+        // HUD plugin works in isolation under `MinimalPlugins` (tests).
+        // `add_message` is idempotent.
+        app.add_message::<NewGameRequestEvent>()
+            .add_message::<UndoRequestEvent>()
+            .add_message::<PauseRequestEvent>()
+            .add_message::<HelpRequestEvent>()
+            .add_systems(Startup, (spawn_hud, spawn_action_buttons))
             .add_systems(Update, update_hud.after(GameMutation))
             .add_systems(Update, announce_auto_complete.after(GameMutation))
             .add_systems(Update, update_selection_hud)
-            .add_systems(Update, (handle_new_game_button, paint_new_game_button));
+            .add_systems(
+                Update,
+                (
+                    handle_new_game_button,
+                    handle_undo_button,
+                    handle_pause_button,
+                    handle_help_button,
+                    paint_action_buttons,
+                ),
+            );
     }
 }
 
@@ -186,15 +230,15 @@ fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
         });
 }
 
-/// Spawns the New Game action button anchored to the top-right of the
-/// window. Click fires [`NewGameRequestEvent`]; the existing
-/// `ConfirmNewGameScreen` modal in `GamePlugin` handles confirmation when
-/// a game is in progress, and starts a fresh deal otherwise.
+/// Spawns the action button bar anchored to the top-right of the window.
+/// Each child is a clickable button mirroring a keyboard accelerator —
+/// per the UI-first principle (CLAUDE.md / ARCHITECTURE.md §1) the buttons
+/// are the primary entry point and the hotkeys are optional.
 ///
-/// Per the UI-first principle (CLAUDE.md / ARCHITECTURE.md §1), this
-/// button is the primary entry point for starting a new game. The `N`
-/// keyboard shortcut is an optional accelerator.
-fn spawn_new_game_button(font_res: Option<Res<FontResource>>, mut commands: Commands) {
+/// Order (left → right): Undo, Pause, Help, New Game. New Game is rightmost
+/// because it's the most consequential action; the destructive button sits
+/// on its own visual edge.
+fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Commands) {
     let font = TextFont {
         font: font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
         font_size: 16.0,
@@ -202,35 +246,57 @@ fn spawn_new_game_button(font_res: Option<Res<FontResource>>, mut commands: Comm
     };
     commands
         .spawn((
-            NewGameButton,
-            Button,
             Node {
                 position_type: PositionType::Absolute,
                 right: Val::Px(12.0),
                 top: Val::Px(8.0),
-                padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
-                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(8.0),
                 align_items: AlignItems::Center,
-                border_radius: BorderRadius::all(Val::Px(6.0)),
                 ..default()
             },
-            BackgroundColor(NEW_GAME_BTN_IDLE),
             ZIndex(Z_HUD),
         ))
-        .with_children(|b| {
-            b.spawn((
-                Text::new("New Game"),
-                font,
-                TextColor(Color::WHITE),
-            ));
+        .with_children(|row| {
+            spawn_action_button(row, UndoButton, "Undo", &font);
+            spawn_action_button(row, PauseButton, "Pause", &font);
+            spawn_action_button(row, HelpButton, "Help", &font);
+            spawn_action_button(row, NewGameButton, "New Game", &font);
         });
 }
 
-/// Click handler for the New Game button — fires `NewGameRequestEvent`.
-///
+/// Spawns a single action button as a child of `row`. Each button shares
+/// the same node geometry, idle colour, and `ActionButton` marker so
+/// `paint_action_buttons` can recolour all of them with one query.
+fn spawn_action_button<M: Component>(
+    row: &mut ChildSpawnerCommands,
+    marker: M,
+    label: &str,
+    font: &TextFont,
+) {
+    row.spawn((
+        marker,
+        ActionButton,
+        Button,
+        Node {
+            padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::Px(6.0)),
+            ..default()
+        },
+        BackgroundColor(ACTION_BTN_IDLE),
+    ))
+    .with_children(|b| {
+        b.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+    });
+}
+
 /// `Changed<Interaction>` filter ensures we only react on the frame the
 /// interaction state transitions, avoiding repeat events while the button
-/// is held down.
+/// is held down. Each click handler fires the corresponding request event,
+/// which `pause_plugin` / `help_plugin` / `game_plugin` consume alongside
+/// their existing keyboard handlers.
 fn handle_new_game_button(
     interaction_query: Query<&Interaction, (With<NewGameButton>, Changed<Interaction>)>,
     mut new_game: MessageWriter<NewGameRequestEvent>,
@@ -242,20 +308,54 @@ fn handle_new_game_button(
     }
 }
 
-/// Visual feedback for the New Game button — paints idle / hover / pressed
-/// states by mutating the `BackgroundColor` whenever the interaction state
-/// changes.
-fn paint_new_game_button(
+fn handle_undo_button(
+    interaction_query: Query<&Interaction, (With<UndoButton>, Changed<Interaction>)>,
+    mut undo: MessageWriter<UndoRequestEvent>,
+) {
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            undo.write(UndoRequestEvent);
+        }
+    }
+}
+
+fn handle_pause_button(
+    interaction_query: Query<&Interaction, (With<PauseButton>, Changed<Interaction>)>,
+    mut pause: MessageWriter<PauseRequestEvent>,
+) {
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            pause.write(PauseRequestEvent);
+        }
+    }
+}
+
+fn handle_help_button(
+    interaction_query: Query<&Interaction, (With<HelpButton>, Changed<Interaction>)>,
+    mut help: MessageWriter<HelpRequestEvent>,
+) {
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            help.write(HelpRequestEvent);
+        }
+    }
+}
+
+/// Visual feedback for every action button — paints idle / hover / pressed
+/// states by mutating `BackgroundColor` whenever the interaction state
+/// changes. One query covers all action buttons via the shared
+/// `ActionButton` marker.
+fn paint_action_buttons(
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
-        (With<NewGameButton>, Changed<Interaction>),
+        (With<ActionButton>, Changed<Interaction>),
     >,
 ) {
     for (interaction, mut bg) in &mut buttons {
         bg.0 = match interaction {
-            Interaction::Pressed => NEW_GAME_BTN_PRESSED,
-            Interaction::Hovered => NEW_GAME_BTN_HOVER,
-            Interaction::None => NEW_GAME_BTN_IDLE,
+            Interaction::Pressed => ACTION_BTN_PRESSED,
+            Interaction::Hovered => ACTION_BTN_HOVER,
+            Interaction::None => ACTION_BTN_IDLE,
         };
     }
 }
