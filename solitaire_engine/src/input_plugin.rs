@@ -183,6 +183,7 @@ fn handle_keyboard_core(
                 ev.new_game.write(NewGameRequestEvent {
                     seed: None,
                     mode: Some(solitaire_core::game_state::GameMode::Classic),
+                    confirmed: false,
                 });
                 confirm.new_game_countdown = 0.0;
                 return;
@@ -218,6 +219,7 @@ fn handle_keyboard_core(
             ev.new_game.write(NewGameRequestEvent {
                 seed: None,
                 mode: Some(solitaire_core::game_state::GameMode::Zen),
+                confirmed: false,
             });
         } else {
             ev.info_toast.write(InfoToastEvent(format!(

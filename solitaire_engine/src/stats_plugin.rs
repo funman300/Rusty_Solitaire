@@ -554,7 +554,7 @@ mod tests {
             .move_count = 3;
 
         app.world_mut()
-            .write_message(NewGameRequestEvent { seed: Some(999), mode: None });
+            .write_message(NewGameRequestEvent { seed: Some(999), mode: None, confirmed: false });
         app.update();
 
         let stats = &app.world().resource::<StatsResource>().0;
@@ -567,7 +567,7 @@ mod tests {
     fn new_game_without_moves_does_not_record_abandoned() {
         let mut app = headless_app();
         app.world_mut()
-            .write_message(NewGameRequestEvent { seed: Some(42), mode: None });
+            .write_message(NewGameRequestEvent { seed: Some(42), mode: None, confirmed: false });
         app.update();
 
         let stats = &app.world().resource::<StatsResource>().0;

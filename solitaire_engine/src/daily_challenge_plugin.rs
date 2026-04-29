@@ -197,6 +197,7 @@ fn handle_start_daily_request(
         new_game.write(NewGameRequestEvent {
             seed: Some(daily.seed),
             mode: None,
+            confirmed: false,
         });
         let desc = daily
             .goal_description

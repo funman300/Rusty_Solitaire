@@ -90,6 +90,7 @@ fn handle_start_challenge_request(
     new_game.write(NewGameRequestEvent {
         seed: Some(seed),
         mode: Some(GameMode::Challenge),
+        confirmed: false,
     });
 }
 

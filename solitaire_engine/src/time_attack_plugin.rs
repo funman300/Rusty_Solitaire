@@ -74,6 +74,7 @@ fn handle_start_time_attack_request(
     new_game.write(NewGameRequestEvent {
         seed: None,
         mode: Some(GameMode::TimeAttack),
+        confirmed: false,
     });
 }
 
@@ -112,6 +113,7 @@ fn auto_deal_on_time_attack_win(
         new_game.write(NewGameRequestEvent {
             seed: None,
             mode: Some(GameMode::TimeAttack),
+            confirmed: false,
         });
     }
 }

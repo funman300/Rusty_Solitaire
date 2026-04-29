@@ -742,6 +742,7 @@ mod tests {
         app.world_mut().write_message(NewGameRequestEvent {
             seed: None,
             mode: Some(GameMode::Zen),
+            confirmed: false,
         });
         app.update();
 

@@ -164,9 +164,12 @@ fn handle_new_game(
         // If an active game is in progress, intercept and show a confirm dialog.
         // A game is "active" when moves have been made and it is not yet won.
         let needs_confirm = game.0.move_count > 0 && !game.0.is_won;
-        // Skip confirmation if a ConfirmNewGameScreen already exists (prevents duplicates).
+        // Skip confirmation if a ConfirmNewGameScreen already exists (prevents
+        // duplicates) or if the event itself was already confirmed by the
+        // player pressing Y on the modal — without the `confirmed` check the
+        // modal would be respawned the frame after the despawn flushes.
         let confirm_already_open = !confirm_screens.is_empty();
-        if needs_confirm && !confirm_already_open {
+        if needs_confirm && !confirm_already_open && !ev.confirmed {
             // Despawn any stale game-over overlay before showing confirm dialog.
             for entity in &game_over_screens {
                 commands.entity(entity).despawn();
@@ -300,12 +303,15 @@ fn handle_confirm_input(
 
     if confirmed {
         commands.entity(entity).despawn();
-        // Re-send with move_count already 0 would bypass the dialog next time.
-        // We fire the event — handle_new_game will skip the dialog because
-        // the screen is despawned before the next read.
+        // Set `confirmed: true` so handle_new_game skips the dialog spawn
+        // and goes straight to the start-game branch. Without this flag the
+        // modal would respawn the frame after the despawn flushes (because
+        // confirm_screens is empty by then) and the new game would never
+        // actually start.
         new_game.write(NewGameRequestEvent {
             seed: original.0.seed,
             mode: original.0.mode,
+            confirmed: true,
         });
     } else if cancelled {
         commands.entity(entity).despawn();
@@ -790,7 +796,7 @@ mod tests {
             .map(|c| c.id)
             .collect();
 
-        app.world_mut().write_message(NewGameRequestEvent { seed: Some(999), mode: None });
+        app.world_mut().write_message(NewGameRequestEvent { seed: Some(999), mode: None, confirmed: false });
         app.update();
 
         let after: Vec<u32> = app
@@ -908,7 +914,7 @@ mod tests {
 
         let mut app = test_app(1);
         app.insert_resource(GameStatePath(Some(path.clone())));
-        app.world_mut().write_message(NewGameRequestEvent { seed: Some(2), mode: None });
+        app.world_mut().write_message(NewGameRequestEvent { seed: Some(2), mode: None, confirmed: false });
         app.update();
 
         assert!(!path.exists(), "saved file should be deleted after new game");
@@ -1120,7 +1126,7 @@ mod tests {
         // Simulate an active game with moves made.
         app.world_mut().resource_mut::<GameStateResource>().0.move_count = 5;
         app.world_mut()
-            .write_message(NewGameRequestEvent { seed: None, mode: None });
+            .write_message(NewGameRequestEvent { seed: None, mode: None, confirmed: false });
         app.update();
 
         let count = app
@@ -1141,7 +1147,7 @@ mod tests {
             "test assumes a fresh game with no moves"
         );
         app.world_mut()
-            .write_message(NewGameRequestEvent { seed: None, mode: None });
+            .write_message(NewGameRequestEvent { seed: None, mode: None, confirmed: false });
         app.update();
 
         let count = app

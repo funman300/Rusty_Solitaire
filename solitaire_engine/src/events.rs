@@ -29,6 +29,13 @@ pub struct UndoRequestEvent;
 pub struct NewGameRequestEvent {
     pub seed: Option<u64>,
     pub mode: Option<GameMode>,
+    /// `true` when this request originated from the user confirming the
+    /// abandon-current-game modal (Y / Enter on `ConfirmNewGameScreen`).
+    /// `handle_new_game` skips spawning the dialog when this is set,
+    /// otherwise it would respawn the modal in the frame after the player
+    /// presses Y (the despawn-on-Y has flushed by then) and the new game
+    /// would never actually start.
+    pub confirmed: bool,
 }
 
 /// Fired by `GamePlugin` after any successful state mutation. Rendering and
