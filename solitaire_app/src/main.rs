@@ -30,19 +30,29 @@ fn main() {
 
     App::new()
         .add_plugins(
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Solitaire Quest".into(),
-                    resolution: (1280u32, 800u32).into(),
-                    resize_constraints: bevy::window::WindowResizeConstraints {
-                        min_width: 800.0,
-                        min_height: 600.0,
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Solitaire Quest".into(),
+                        resolution: (1280u32, 800u32).into(),
+                        resize_constraints: bevy::window::WindowResizeConstraints {
+                            min_width: 800.0,
+                            min_height: 600.0,
+                            ..default()
+                        },
                         ..default()
-                    },
+                    }),
+                    ..default()
+                })
+                // The `assets/` directory lives at the workspace root, but
+                // Bevy resolves `AssetPlugin::file_path` relative to the
+                // binary package's `CARGO_MANIFEST_DIR` (`solitaire_app/`).
+                // Point one level up so `cargo run -p solitaire_app` finds
+                // card faces, backs, backgrounds, and the UI font.
+                .set(bevy::asset::AssetPlugin {
+                    file_path: "../assets".to_string(),
                     ..default()
                 }),
-                ..default()
-            }),
         )
         .add_plugins(FontPlugin)
         .add_plugins(GamePlugin)
