@@ -4,6 +4,7 @@ use bevy::prelude::Message;
 use solitaire_core::game_state::GameMode;
 use solitaire_core::pile::PileType;
 use solitaire_data::AchievementRecord;
+use solitaire_sync::SyncResponse;
 
 /// Request to move `count` cards from `from` to `to`. Fired by input systems,
 /// consumed by `GamePlugin`.
@@ -77,6 +78,16 @@ pub struct AchievementUnlockedEvent(pub AchievementRecord);
 /// starting a new pull task if one is not already in flight.
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct ManualSyncRequestEvent;
+
+/// Fired by `SyncPlugin` after a pull task resolves and the merged result has
+/// been persisted to disk. `Ok(SyncResponse)` carries the merged payload plus
+/// any `ConflictReport`s the merge produced. `Err(String)` carries a
+/// human-readable failure message (network, auth, serialization, etc.).
+///
+/// UI systems listen for this to refresh views without polling
+/// `SyncStatusResource`. See [ARCHITECTURE.md §4](../../ARCHITECTURE.md).
+#[derive(Message, Debug, Clone)]
+pub struct SyncCompleteEvent(pub Result<SyncResponse, String>);
 
 /// Fired by `InputPlugin` when N is pressed while a game is in progress
 /// but confirmation has not yet been received. The animation plugin shows

@@ -69,7 +69,7 @@ pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,
     ForfeitEvent, GameWonEvent, HintVisualEvent, InfoToastEvent, ManualSyncRequestEvent,
     MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent,
-    StateChangedEvent, UndoRequestEvent, XpAwardedEvent,
+    StateChangedEvent, SyncCompleteEvent, UndoRequestEvent, XpAwardedEvent,
 };
 pub use game_plugin::{ConfirmNewGameScreen, GameMutation, GameOverScreen, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};

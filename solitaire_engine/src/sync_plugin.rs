@@ -22,10 +22,10 @@ use solitaire_data::{
     save_achievements_to, save_progress_to, save_stats_to, AchievementRecord, PlayerProgress,
     StatsSnapshot, SyncError, SyncProvider,
 };
-use solitaire_sync::{merge, SyncPayload};
+use solitaire_sync::{merge, SyncPayload, SyncResponse};
 
 use crate::achievement_plugin::{AchievementsResource, AchievementsStoragePath};
-use crate::events::ManualSyncRequestEvent;
+use crate::events::{ManualSyncRequestEvent, SyncCompleteEvent};
 use crate::progress_plugin::{ProgressResource, ProgressStoragePath};
 use crate::resources::{SyncStatus, SyncStatusResource};
 use crate::stats_plugin::{StatsResource, StatsStoragePath};
@@ -94,6 +94,7 @@ impl Plugin for SyncPlugin {
             .init_resource::<PullTaskResult>()
             .init_resource::<PullTask>()
             .add_message::<ManualSyncRequestEvent>()
+            .add_message::<SyncCompleteEvent>()
             .add_systems(Startup, start_pull)
             .add_systems(Update, (poll_pull_result, handle_manual_sync_request))
             .add_systems(Last, push_on_exit);
@@ -161,6 +162,7 @@ fn poll_pull_result(
     achievements_path: Res<AchievementsStoragePath>,
     mut progress: ResMut<ProgressResource>,
     progress_path: Res<ProgressStoragePath>,
+    mut complete_writer: MessageWriter<SyncCompleteEvent>,
 ) {
     let Some(task) = task_res.0.as_mut() else {
         return;
@@ -173,7 +175,7 @@ fn poll_pull_result(
     match result {
         Ok(remote) => {
             let local = build_payload(&stats.0, &achievements.0, &progress.0);
-            let (merged, _conflicts) = merge(&local, &remote);
+            let (merged, conflicts) = merge(&local, &remote);
 
             // Persist merged state atomically.
             if let Some(p) = &stats_path.0
@@ -190,10 +192,17 @@ fn poll_pull_result(
                 }
 
             // Update in-world resources.
-            stats.0 = merged.stats;
-            achievements.0 = merged.achievements;
-            progress.0 = merged.progress;
-            status.0 = SyncStatus::LastSynced(Utc::now());
+            let now = Utc::now();
+            stats.0 = merged.stats.clone();
+            achievements.0 = merged.achievements.clone();
+            progress.0 = merged.progress.clone();
+            status.0 = SyncStatus::LastSynced(now);
+
+            complete_writer.write(SyncCompleteEvent(Ok(SyncResponse {
+                merged,
+                server_time: now,
+                conflicts,
+            })));
         }
         Err(SyncError::UnsupportedPlatform) => {
             // No backend configured — not an error, just leave status as Idle.
@@ -207,7 +216,8 @@ fn poll_pull_result(
                 SyncError::Serialization(_) => format!("Unexpected server response: {e}"),
                 SyncError::UnsupportedPlatform => unreachable!("handled above"),
             };
-            status.0 = SyncStatus::Error(msg);
+            status.0 = SyncStatus::Error(msg.clone());
+            complete_writer.write(SyncCompleteEvent(Err(msg)));
         }
     }
 }
