@@ -10,7 +10,7 @@ use solitaire_core::card::Suit;
 use solitaire_core::pile::PileType;
 
 use crate::events::{HintVisualEvent, StateChangedEvent};
-use crate::layout::{compute_layout, Layout, LayoutResource};
+use crate::layout::{compute_layout, Layout, LayoutResource, LayoutSystem};
 #[cfg(test)]
 use crate::layout::TABLE_COLOUR;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
@@ -69,7 +69,7 @@ impl Plugin for TablePlugin {
             .add_systems(
                 Update,
                 (
-                    on_window_resized,
+                    on_window_resized.in_set(LayoutSystem::UpdateOnResize),
                     apply_theme_on_settings_change,
                     apply_hint_pile_highlight,
                     tick_hint_pile_highlights,
@@ -275,12 +275,10 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn on_window_resized(
     mut events: MessageReader<WindowResized>,
     mut layout_res: Option<ResMut<LayoutResource>>,
-    mut state_changed: MessageWriter<StateChangedEvent>,
     mut backgrounds: Query<
         (&mut Sprite, &mut Transform),
         (With<TableBackground>, Without<PileMarker>),
@@ -311,8 +309,12 @@ fn on_window_resized(
         }
     }
 
-    // Reposition card sprites to the new layout.
-    state_changed.write(StateChangedEvent);
+    // Card sprites are repositioned by `card_plugin::snap_cards_on_window_resize`
+    // running `.after(LayoutSystem::UpdateOnResize)` — that system snaps card
+    // transforms directly to the new layout instead of going through
+    // `StateChangedEvent → sync_cards → CardAnim` which would retarget the
+    // slide tween every frame during a corner drag (the visible "snap back
+    // and forth" jitter).
 }
 
 // ---------------------------------------------------------------------------

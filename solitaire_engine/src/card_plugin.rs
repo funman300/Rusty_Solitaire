@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::color::Color;
 use bevy::prelude::*;
+use bevy::window::WindowResized;
 use solitaire_core::card::{Card, Rank, Suit};
 use solitaire_core::game_state::{DrawMode, GameState};
 use solitaire_core::pile::PileType;
@@ -23,7 +24,7 @@ use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 use crate::animation_plugin::{CardAnim, EffectiveSlideDuration};
 use crate::events::{CardFaceRevealedEvent, CardFlippedEvent, StateChangedEvent};
 use crate::game_plugin::GameMutation;
-use crate::layout::{Layout, LayoutResource};
+use crate::layout::{Layout, LayoutResource, LayoutSystem};
 use crate::pause_plugin::PausedResource;
 use crate::resources::{DragState, GameStateResource};
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
@@ -191,6 +192,7 @@ impl Plugin for CardPlugin {
                     clear_right_click_highlights_on_state_change.after(GameMutation),
                     clear_right_click_highlights_on_pause,
                     update_stock_empty_indicator.after(GameMutation),
+                    snap_cards_on_window_resize.after(LayoutSystem::UpdateOnResize),
                 ),
             );
     }
@@ -1105,6 +1107,63 @@ fn update_stock_empty_indicator(
         return;
     }
     let Some(layout) = layout else { return };
+    apply_stock_empty_indicator(
+        &mut commands,
+        &game.0,
+        &mut pile_markers,
+        &label_children,
+        &layout.0,
+    );
+}
+
+/// Snaps every card sprite to its target position when the window is resized.
+///
+/// This replaces the old "fire `StateChangedEvent` from `on_window_resized`"
+/// path. That path went through `sync_cards_on_change` → `update_card_entity`,
+/// which inserts a `CardAnim` slide tween whenever the card moves more than
+/// 1 unit. During a corner drag, every frame's `WindowResized` event
+/// retargeted the tween from the card's mid-slide position, so cards never
+/// reached steady state — the visible "snap back and forth" jitter.
+///
+/// Cards now snap directly (no slide), matching the instant repositioning
+/// already used for backgrounds and pile markers in
+/// `table_plugin::on_window_resized`. Any in-flight `CardAnim` is removed so
+/// it cannot keep writing the old target translation after the snap.
+///
+/// The "↺" stock-empty label's `font_size` is derived from
+/// `layout.card_size.x`, so this system also reapplies the stock indicator —
+/// otherwise the label would not rescale on resize once
+/// `update_stock_empty_indicator` stopped firing on resize.
+///
+/// Scheduled `.after(LayoutSystem::UpdateOnResize)` so `LayoutResource` has
+/// been refreshed by `table_plugin::on_window_resized` before this runs.
+#[allow(clippy::type_complexity)]
+fn snap_cards_on_window_resize(
+    mut events: MessageReader<WindowResized>,
+    mut commands: Commands,
+    game: Option<Res<GameStateResource>>,
+    layout: Option<Res<LayoutResource>>,
+    mut entities: Query<(Entity, &CardEntity, &mut Transform)>,
+    mut pile_markers: Query<(Entity, &PileMarker, &mut Sprite)>,
+    label_children: Query<(Entity, &ChildOf), With<StockEmptyLabel>>,
+) {
+    if events.read().next().is_none() {
+        return;
+    }
+    let Some(game) = game else { return };
+    let Some(layout) = layout else { return };
+
+    let mut targets: HashMap<u32, (Vec2, f32)> = HashMap::new();
+    for (card, pos, z) in card_positions(&game.0, &layout.0) {
+        targets.insert(card.id, (pos, z));
+    }
+    for (entity, marker, mut transform) in &mut entities {
+        if let Some(&(pos, z)) = targets.get(&marker.card_id) {
+            transform.translation = Vec3::new(pos.x, pos.y, z);
+            commands.entity(entity).remove::<CardAnim>();
+        }
+    }
+
     apply_stock_empty_indicator(
         &mut commands,
         &game.0,

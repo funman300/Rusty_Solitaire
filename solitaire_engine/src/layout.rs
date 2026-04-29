@@ -6,9 +6,21 @@
 use std::collections::HashMap;
 
 use bevy::math::Vec2;
-use bevy::prelude::Resource;
+use bevy::prelude::{Resource, SystemSet};
 use solitaire_core::card::Suit;
 use solitaire_core::pile::PileType;
+
+/// Schedule labels for layout-related systems so cross-plugin ordering is
+/// explicit instead of relying on Bevy's automatic resource-conflict ordering
+/// (which only forces non-parallel execution, not a particular order).
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LayoutSystem {
+    /// The system that updates [`LayoutResource`], the table background, and
+    /// pile markers in response to a `WindowResized` event. Card-snap systems
+    /// (in `card_plugin`) run `.after(LayoutSystem::UpdateOnResize)` so they
+    /// see the fresh layout.
+    UpdateOnResize,
+}
 
 /// Minimum supported window dimensions. Layout is still computed below this
 /// size but cards will be small.
