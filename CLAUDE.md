@@ -77,6 +77,7 @@ cargo clippy -p solitaire_core -- -D warnings
 - Resources own shared state. Events communicate between systems. Components own per-entity data.
 - All UI screens are built with Bevy UI (`bevy::ui`). Never mix UI layout and game logic in the same system.
 - Layout is recomputed on `WindowResized` — never assume a fixed window size.
+- **UI-first.** Every player-triggered action (new game, undo, draw, pause, open stats / settings / help / profile / leaderboard, switch mode, etc.) must be reachable from a visible UI control. Keyboard shortcuts are optional accelerators — never the sole entry point. New gameplay features ship with the UI control alongside the system that backs it; do not merge a feature that is keyboard-only.
 
 ---
 

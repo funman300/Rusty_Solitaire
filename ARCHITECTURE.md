@@ -51,6 +51,7 @@ Solitaire Quest is a cross-platform Klondike Solitaire game written in Rust, tar
 - **No panics in game logic.** Every state transition returns `Result<_, MoveError>`. Panics are only acceptable in startup/configuration code.
 - **One language, one repo.** The game client, sync client, shared types, and sync server are all Rust crates in a single Cargo workspace.
 - **Plugin-based Bevy architecture.** Each major feature is a Bevy `Plugin`. Systems are small and single-purpose. Cross-system communication uses Bevy `Event`s.
+- **UI-first interaction.** Every player-triggered action — new game, undo, draw, pause, open stats / settings / help / profile / leaderboard, etc. — must be reachable from a visible UI control. Keyboard shortcuts exist only as optional accelerators for power users; they are never the sole entry point. A player using only mouse or touch must be able to perform every action. New gameplay features ship with the UI control alongside the system that backs it.
 
 ---
 
@@ -235,7 +236,9 @@ Done
 
 ### Bevy Plugins
 
-| Plugin | Key | Responsibility |
+The "Shortcut" column lists optional keyboard accelerators. Every action in this table must also be reachable from a visible UI control (button, menu item, on-screen affordance) per the UI-first design principle in §1; the shortcut is a power-user convenience, not the sole entry point.
+
+| Plugin | Shortcut | Responsibility |
 |---|---|---|
 | `CardPlugin` | — | Card entity spawning, sprite management, drag-and-drop |
 | `TablePlugin` | — | Pile markers, background, layout calculation |
