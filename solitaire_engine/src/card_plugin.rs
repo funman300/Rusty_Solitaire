@@ -1116,7 +1116,8 @@ fn update_stock_empty_indicator(
     );
 }
 
-/// Snaps every card sprite to its target position when the window is resized.
+/// Snaps every card sprite to its target position and size when the window
+/// is resized.
 ///
 /// This replaces the old "fire `StateChangedEvent` from `on_window_resized`"
 /// path. That path went through `sync_cards_on_change` → `update_card_entity`,
@@ -1125,10 +1126,11 @@ fn update_stock_empty_indicator(
 /// retargeted the tween from the card's mid-slide position, so cards never
 /// reached steady state — the visible "snap back and forth" jitter.
 ///
-/// Cards now snap directly (no slide), matching the instant repositioning
-/// already used for backgrounds and pile markers in
-/// `table_plugin::on_window_resized`. Any in-flight `CardAnim` is removed so
-/// it cannot keep writing the old target translation after the snap.
+/// Calls `sync_cards` with `slide_secs = 0.0` so `update_card_entity` snaps
+/// instantly (line `(cur - target).length() > 1.0 && slide_secs > 0.0` falls
+/// to the snap branch), refreshes the `Sprite` with the new
+/// `layout.card_size` (so cards visibly resize, not just reposition), and
+/// removes any in-flight `CardAnim`.
 ///
 /// The "↺" stock-empty label's `font_size` is derived from
 /// `layout.card_size.x`, so this system also reapplies the stock indicator —
@@ -1137,13 +1139,15 @@ fn update_stock_empty_indicator(
 ///
 /// Scheduled `.after(LayoutSystem::UpdateOnResize)` so `LayoutResource` has
 /// been refreshed by `table_plugin::on_window_resized` before this runs.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn snap_cards_on_window_resize(
     mut events: MessageReader<WindowResized>,
     mut commands: Commands,
     game: Option<Res<GameStateResource>>,
     layout: Option<Res<LayoutResource>>,
-    mut entities: Query<(Entity, &CardEntity, &mut Transform)>,
+    settings: Option<Res<SettingsResource>>,
+    card_images: Option<Res<CardImageSet>>,
+    entities: Query<(Entity, &CardEntity, &Transform)>,
     mut pile_markers: Query<(Entity, &PileMarker, &mut Sprite)>,
     label_children: Query<(Entity, &ChildOf), With<StockEmptyLabel>>,
 ) {
@@ -1153,16 +1157,21 @@ fn snap_cards_on_window_resize(
     let Some(game) = game else { return };
     let Some(layout) = layout else { return };
 
-    let mut targets: HashMap<u32, (Vec2, f32)> = HashMap::new();
-    for (card, pos, z) in card_positions(&game.0, &layout.0) {
-        targets.insert(card.id, (pos, z));
-    }
-    for (entity, marker, mut transform) in &mut entities {
-        if let Some(&(pos, z)) = targets.get(&marker.card_id) {
-            transform.translation = Vec3::new(pos.x, pos.y, z);
-            commands.entity(entity).remove::<CardAnim>();
-        }
-    }
+    let selected_back = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
+    let back_colour = card_back_colour(selected_back);
+    let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
+
+    sync_cards(
+        commands.reborrow(),
+        &game.0,
+        &layout.0,
+        0.0,
+        back_colour,
+        color_blind,
+        &entities,
+        card_images.as_deref(),
+        selected_back,
+    );
 
     apply_stock_empty_indicator(
         &mut commands,
