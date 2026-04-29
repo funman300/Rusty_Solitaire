@@ -18,7 +18,10 @@ use chrono::{Local, NaiveDate};
 use solitaire_data::{daily_seed_for, save_progress_to};
 use solitaire_sync::ChallengeGoal;
 
-use crate::events::{GameWonEvent, InfoToastEvent, NewGameRequestEvent, XpAwardedEvent};
+use crate::events::{
+    GameWonEvent, InfoToastEvent, NewGameRequestEvent, StartDailyChallengeRequestEvent,
+    XpAwardedEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::{ProgressResource, ProgressStoragePath, ProgressUpdate};
 use crate::resources::GameStateResource;
@@ -83,6 +86,7 @@ impl Plugin for DailyChallengePlugin {
             .add_message::<DailyGoalAnnouncementEvent>()
             .add_message::<GameWonEvent>()
             .add_message::<NewGameRequestEvent>()
+            .add_message::<StartDailyChallengeRequestEvent>()
             .add_message::<XpAwardedEvent>()
             .add_systems(Startup, fetch_server_challenge)
             .add_systems(Update, poll_server_challenge)
@@ -189,22 +193,26 @@ fn handle_daily_completion(
 
 fn handle_start_daily_request(
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<StartDailyChallengeRequestEvent>,
     daily: Res<DailyChallengeResource>,
     mut new_game: MessageWriter<NewGameRequestEvent>,
     mut announce: MessageWriter<DailyGoalAnnouncementEvent>,
 ) {
-    if keys.just_pressed(KeyCode::KeyC) {
-        new_game.write(NewGameRequestEvent {
-            seed: Some(daily.seed),
-            mode: None,
-            confirmed: false,
-        });
-        let desc = daily
-            .goal_description
-            .clone()
-            .unwrap_or_else(|| "Daily Challenge".to_string());
-        announce.write(DailyGoalAnnouncementEvent(desc));
+    // Either C or the HUD Modes-popover "Daily Challenge" row triggers this.
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyC) && !button_clicked {
+        return;
     }
+    new_game.write(NewGameRequestEvent {
+        seed: Some(daily.seed),
+        mode: None,
+        confirmed: false,
+    });
+    let desc = daily
+        .goal_description
+        .clone()
+        .unwrap_or_else(|| "Daily Challenge".to_string());
+    announce.write(DailyGoalAnnouncementEvent(desc));
 }
 
 #[cfg(test)]

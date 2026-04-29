@@ -8,7 +8,9 @@ use bevy::prelude::*;
 use solitaire_core::game_state::GameMode;
 
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
-use crate::events::{GameWonEvent, InfoToastEvent, NewGameRequestEvent};
+use crate::events::{
+    GameWonEvent, InfoToastEvent, NewGameRequestEvent, StartTimeAttackRequestEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
@@ -40,6 +42,7 @@ impl Plugin for TimeAttackPlugin {
             .add_message::<TimeAttackEndedEvent>()
             .add_message::<GameWonEvent>()
             .add_message::<NewGameRequestEvent>()
+            .add_message::<StartTimeAttackRequestEvent>()
             .add_message::<InfoToastEvent>()
             .add_systems(
                 Update,
@@ -52,12 +55,15 @@ impl Plugin for TimeAttackPlugin {
 
 fn handle_start_time_attack_request(
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<StartTimeAttackRequestEvent>,
     progress: Res<ProgressResource>,
     mut session: ResMut<TimeAttackResource>,
     mut new_game: MessageWriter<NewGameRequestEvent>,
     mut info_toast: MessageWriter<InfoToastEvent>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyT) {
+    // Either T or the HUD Modes-popover "Time Attack" row triggers this.
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyT) && !button_clicked {
         return;
     }
     if progress.0.level < CHALLENGE_UNLOCK_LEVEL {

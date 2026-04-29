@@ -99,6 +99,36 @@ pub struct PauseRequestEvent;
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct HelpRequestEvent;
 
+/// Request to start a Zen-mode game. Fired by the HUD Modes-popover "Zen"
+/// row alongside the existing `Z` accelerator. The handler in
+/// `input_plugin` enforces the level gate (Zen unlocks at level 5) and
+/// shows an informational toast when locked.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct StartZenRequestEvent;
+
+/// Request to start the next Challenge-mode game. Fired by the HUD
+/// Modes-popover "Challenge" row alongside the existing `X` accelerator.
+/// The handler in `challenge_plugin` enforces the level gate, picks the
+/// next seed from `progress.challenge_index`, and writes the
+/// corresponding `NewGameRequestEvent`.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct StartChallengeRequestEvent;
+
+/// Request to start a Time Attack session. Fired by the HUD
+/// Modes-popover "Time Attack" row alongside the existing `T`
+/// accelerator. The handler in `time_attack_plugin` enforces the level
+/// gate, initialises `TimeAttackResource`, and writes the corresponding
+/// `NewGameRequestEvent`.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct StartTimeAttackRequestEvent;
+
+/// Request to start today's Daily Challenge. Fired by the HUD
+/// Modes-popover "Daily Challenge" row alongside the existing `C`
+/// accelerator. The handler in `daily_challenge_plugin` reads
+/// `DailyChallengeResource::seed` and writes a `NewGameRequestEvent`.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct StartDailyChallengeRequestEvent;
+
 /// Fired by `SyncPlugin` after a pull task resolves and the merged result has
 /// been persisted to disk. `Ok(SyncResponse)` carries the merged payload plus
 /// any `ConflictReport`s the merge produced. `Err(String)` carries a

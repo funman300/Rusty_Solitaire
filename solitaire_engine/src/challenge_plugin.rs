@@ -8,7 +8,9 @@ use bevy::prelude::*;
 use solitaire_core::game_state::GameMode;
 use solitaire_data::{challenge_count, challenge_seed_for, save_progress_to};
 
-use crate::events::{GameWonEvent, InfoToastEvent, NewGameRequestEvent};
+use crate::events::{
+    GameWonEvent, InfoToastEvent, NewGameRequestEvent, StartChallengeRequestEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::{ProgressResource, ProgressStoragePath, ProgressUpdate};
 use crate::resources::GameStateResource;
@@ -33,6 +35,7 @@ impl Plugin for ChallengePlugin {
         app.add_message::<ChallengeAdvancedEvent>()
             .add_message::<GameWonEvent>()
             .add_message::<NewGameRequestEvent>()
+            .add_message::<StartChallengeRequestEvent>()
             .add_message::<InfoToastEvent>()
             // Run after ProgressUpdate so we don't fight ProgressPlugin's add_xp.
             .add_systems(Update, advance_on_challenge_win.after(ProgressUpdate))
@@ -70,11 +73,14 @@ fn advance_on_challenge_win(
 
 fn handle_start_challenge_request(
     keys: Res<ButtonInput<KeyCode>>,
+    mut requests: MessageReader<StartChallengeRequestEvent>,
     progress: Res<ProgressResource>,
     mut new_game: MessageWriter<NewGameRequestEvent>,
     mut info_toast: MessageWriter<InfoToastEvent>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyX) {
+    // Either X or the HUD Modes-popover "Challenge" row triggers this.
+    let button_clicked = requests.read().count() > 0;
+    if !keys.just_pressed(KeyCode::KeyX) && !button_clicked {
         return;
     }
     if progress.0.level < CHALLENGE_UNLOCK_LEVEL {

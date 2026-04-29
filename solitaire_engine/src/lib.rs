@@ -69,14 +69,16 @@ pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,
     ForfeitEvent, GameWonEvent, HelpRequestEvent, HintVisualEvent, InfoToastEvent,
     ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameConfirmEvent,
-    NewGameRequestEvent, PauseRequestEvent, StateChangedEvent, SyncCompleteEvent,
-    UndoRequestEvent, XpAwardedEvent,
+    NewGameRequestEvent, PauseRequestEvent, StartChallengeRequestEvent,
+    StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent, StartZenRequestEvent,
+    StateChangedEvent, SyncCompleteEvent, UndoRequestEvent, XpAwardedEvent,
 };
 pub use game_plugin::{ConfirmNewGameScreen, GameMutation, GameOverScreen, GamePlugin, GameStatePath};
 pub use help_plugin::{HelpPlugin, HelpScreen};
 pub use home_plugin::{HomePlugin, HomeScreen};
 pub use hud_plugin::{
-    ActionButton, HelpButton, HudAutoComplete, HudPlugin, NewGameButton, PauseButton, UndoButton,
+    ActionButton, HelpButton, HudAutoComplete, HudPlugin, ModeOption, ModesButton, ModesPopover,
+    NewGameButton, PauseButton, UndoButton,
 };
 pub use leaderboard_plugin::{LeaderboardPlugin, LeaderboardResource, LeaderboardScreen};
 pub use input_plugin::InputPlugin;

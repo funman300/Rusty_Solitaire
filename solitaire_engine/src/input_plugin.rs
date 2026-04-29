@@ -36,7 +36,8 @@ use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::events::{
     DrawRequestEvent, ForfeitEvent, HintVisualEvent, InfoToastEvent, MoveRejectedEvent,
-    MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
+    MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent, StartZenRequestEvent,
+    StateChangedEvent, UndoRequestEvent,
 };
 use crate::game_plugin::GameMutation;
 use crate::pause_plugin::PausedResource;
@@ -84,6 +85,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<HintCycleIndex>()
             .init_resource::<KeyboardConfirmState>()
             .add_message::<NewGameConfirmEvent>()
+            .add_message::<StartZenRequestEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ForfeitEvent>()
             .add_message::<HintVisualEvent>()
@@ -147,6 +149,7 @@ fn handle_keyboard_core(
     mut ev: CoreKeyboardMessages<'_>,
     mut time_attack: Option<ResMut<TimeAttackResource>>,
     selection: Option<Res<SelectionState>>,
+    mut zen_requests: MessageReader<StartZenRequestEvent>,
 ) {
     if paused.is_some_and(|p| p.0) {
         return;
@@ -209,11 +212,13 @@ fn handle_keyboard_core(
         }
     }
 
-    if keys.just_pressed(KeyCode::KeyZ) {
+    let zen_clicked = zen_requests.read().count() > 0;
+    if keys.just_pressed(KeyCode::KeyZ) || zen_clicked {
         // Cancel any pending forfeit when the player takes another action.
         confirm.forfeit_countdown = 0.0;
         // Zen / Challenge / Time Attack are gated to level >= CHALLENGE_UNLOCK_LEVEL.
-        // X is gated separately by ChallengePlugin.
+        // X is gated separately by ChallengePlugin. Either Z or the HUD
+        // Modes-popover "Zen" row reaches this branch.
         let level = progress.as_ref().map_or(0, |p| p.0.level);
         if level >= CHALLENGE_UNLOCK_LEVEL {
             ev.new_game.write(NewGameRequestEvent {

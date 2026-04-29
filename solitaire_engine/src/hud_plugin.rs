@@ -12,9 +12,13 @@ use solitaire_core::game_state::{DrawMode, GameMode};
 use solitaire_core::pile::PileType;
 
 use crate::auto_complete_plugin::AutoCompleteState;
+use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::daily_challenge_plugin::DailyChallengeResource;
+use crate::progress_plugin::ProgressResource;
 use crate::events::{
-    HelpRequestEvent, InfoToastEvent, NewGameRequestEvent, PauseRequestEvent, UndoRequestEvent,
+    HelpRequestEvent, InfoToastEvent, NewGameRequestEvent, PauseRequestEvent,
+    StartChallengeRequestEvent, StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent,
+    StartZenRequestEvent, UndoRequestEvent,
 };
 use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
@@ -115,6 +119,30 @@ pub struct PauseButton;
 #[derive(Component, Debug)]
 pub struct HelpButton;
 
+/// Marker on the "Modes" action button. Click toggles the [`ModesPopover`]
+/// (a small dropdown panel) below the action bar. Each popover row starts
+/// the corresponding game mode.
+#[derive(Component, Debug)]
+pub struct ModesButton;
+
+/// Marker on the dropdown panel that opens below the [`ModesButton`].
+/// Spawned on first click, despawned on second click or on mode select.
+#[derive(Component, Debug)]
+pub struct ModesPopover;
+
+/// One row inside the [`ModesPopover`]. The variant carries which event
+/// the click handler should fire — Classic uses `NewGameRequestEvent`
+/// directly, the others go through their `Start*RequestEvent` so the
+/// existing keyboard handler's level gate / resource setup runs.
+#[derive(Component, Debug, Clone, Copy)]
+pub enum ModeOption {
+    Classic,
+    DailyChallenge,
+    Zen,
+    Challenge,
+    TimeAttack,
+}
+
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
 
@@ -128,16 +156,20 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        // The click handlers write to messages registered elsewhere
-        // (`NewGameRequestEvent` in `GamePlugin`, `UndoRequestEvent` in
-        // `GamePlugin`, `PauseRequestEvent` in `PausePlugin`,
-        // `HelpRequestEvent` in `HelpPlugin`). Re-register defensively so the
-        // HUD plugin works in isolation under `MinimalPlugins` (tests).
-        // `add_message` is idempotent.
+        // The click handlers write to messages registered elsewhere by their
+        // owning plugins (`GamePlugin`, `PausePlugin`, `HelpPlugin`,
+        // `challenge_plugin`, `daily_challenge_plugin`, `time_attack_plugin`,
+        // `input_plugin`). Re-register defensively so the HUD plugin works in
+        // isolation under `MinimalPlugins` (tests). `add_message` is
+        // idempotent.
         app.add_message::<NewGameRequestEvent>()
             .add_message::<UndoRequestEvent>()
             .add_message::<PauseRequestEvent>()
             .add_message::<HelpRequestEvent>()
+            .add_message::<StartZenRequestEvent>()
+            .add_message::<StartChallengeRequestEvent>()
+            .add_message::<StartTimeAttackRequestEvent>()
+            .add_message::<StartDailyChallengeRequestEvent>()
             .add_systems(Startup, (spawn_hud, spawn_action_buttons))
             .add_systems(Update, update_hud.after(GameMutation))
             .add_systems(Update, announce_auto_complete.after(GameMutation))
@@ -149,6 +181,8 @@ impl Plugin for HudPlugin {
                     handle_undo_button,
                     handle_pause_button,
                     handle_help_button,
+                    handle_modes_button,
+                    handle_mode_option_click,
                     paint_action_buttons,
                 ),
             );
@@ -261,6 +295,7 @@ fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Comma
             spawn_action_button(row, UndoButton, "Undo", &font);
             spawn_action_button(row, PauseButton, "Pause", &font);
             spawn_action_button(row, HelpButton, "Help", &font);
+            spawn_action_button(row, ModesButton, "Modes \u{25BE}", &font);
             spawn_action_button(row, NewGameButton, "New Game", &font);
         });
 }
@@ -339,6 +374,150 @@ fn handle_help_button(
             help.write(HelpRequestEvent);
         }
     }
+}
+
+/// Toggles the [`ModesPopover`]: spawns it on first click, despawns it on
+/// second click. Mode rows are populated per the player's current level so
+/// only unlocked options appear.
+fn handle_modes_button(
+    interaction_query: Query<&Interaction, (With<ModesButton>, Changed<Interaction>)>,
+    popovers: Query<Entity, With<ModesPopover>>,
+    progress: Option<Res<ProgressResource>>,
+    daily: Option<Res<DailyChallengeResource>>,
+    font_res: Option<Res<FontResource>>,
+    mut commands: Commands,
+) {
+    let pressed = interaction_query
+        .iter()
+        .any(|i| *i == Interaction::Pressed);
+    if !pressed {
+        return;
+    }
+    if let Ok(entity) = popovers.single() {
+        commands.entity(entity).despawn();
+    } else {
+        spawn_modes_popover(
+            &mut commands,
+            progress.as_deref(),
+            daily.as_deref(),
+            font_res.as_deref(),
+        );
+    }
+}
+
+/// Spawns the modes popover anchored just below the action bar's right
+/// edge. Always includes Classic; includes Daily Challenge when a daily
+/// resource is loaded; includes Zen / Challenge / Time Attack once the
+/// player reaches the challenge unlock level.
+fn spawn_modes_popover(
+    commands: &mut Commands,
+    progress: Option<&ProgressResource>,
+    daily: Option<&DailyChallengeResource>,
+    font_res: Option<&FontResource>,
+) {
+    let level = progress.map_or(0, |p| p.0.level);
+    let font = TextFont {
+        font: font_res.map(|f| f.0.clone()).unwrap_or_default(),
+        font_size: 15.0,
+        ..default()
+    };
+
+    let mut rows: Vec<(ModeOption, &'static str)> = vec![(ModeOption::Classic, "Classic")];
+    if daily.is_some() {
+        rows.push((ModeOption::DailyChallenge, "Daily Challenge"));
+    }
+    if level >= CHALLENGE_UNLOCK_LEVEL {
+        rows.push((ModeOption::Zen, "Zen"));
+        rows.push((ModeOption::Challenge, "Challenge"));
+        rows.push((ModeOption::TimeAttack, "Time Attack"));
+    }
+
+    commands
+        .spawn((
+            ModesPopover,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(12.0),
+                top: Val::Px(50.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border_radius: BorderRadius::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.10, 0.12, 0.15, 0.96)),
+            ZIndex(Z_HUD + 5),
+        ))
+        .with_children(|panel| {
+            for (option, label) in rows {
+                panel
+                    .spawn((
+                        option,
+                        ActionButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::Center,
+                            min_width: Val::Px(150.0),
+                            border_radius: BorderRadius::all(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ACTION_BTN_IDLE),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+                    });
+            }
+        });
+}
+
+/// Dispatches the click on a popover row to the matching request event,
+/// then despawns the popover.
+///
+/// Classic uses [`NewGameRequestEvent`] directly; the other modes use
+/// their `Start*RequestEvent` so the existing keyboard handler runs
+/// (level gates, `TimeAttackResource` setup, daily seed lookup, etc.) —
+/// the popover stays a thin entry point and never duplicates that logic.
+#[allow(clippy::too_many_arguments)]
+fn handle_mode_option_click(
+    interaction_query: Query<(&Interaction, &ModeOption), Changed<Interaction>>,
+    popovers: Query<Entity, With<ModesPopover>>,
+    mut new_game: MessageWriter<NewGameRequestEvent>,
+    mut zen: MessageWriter<StartZenRequestEvent>,
+    mut challenge: MessageWriter<StartChallengeRequestEvent>,
+    mut time_attack: MessageWriter<StartTimeAttackRequestEvent>,
+    mut daily: MessageWriter<StartDailyChallengeRequestEvent>,
+    mut commands: Commands,
+) {
+    let mut clicked_any = false;
+    for (interaction, option) in &interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        clicked_any = true;
+        match option {
+            ModeOption::Classic => {
+                new_game.write(NewGameRequestEvent::default());
+            }
+            ModeOption::DailyChallenge => {
+                daily.write(StartDailyChallengeRequestEvent);
+            }
+            ModeOption::Zen => {
+                zen.write(StartZenRequestEvent);
+            }
+            ModeOption::Challenge => {
+                challenge.write(StartChallengeRequestEvent);
+            }
+            ModeOption::TimeAttack => {
+                time_attack.write(StartTimeAttackRequestEvent);
+            }
+        }
+    }
+    if clicked_any
+        && let Ok(entity) = popovers.single() {
+            commands.entity(entity).despawn();
+        }
 }
 
 /// Visual feedback for every action button — paints idle / hover / pressed
