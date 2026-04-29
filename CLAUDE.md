@@ -47,7 +47,9 @@ cargo clippy -p solitaire_core -- -D warnings
 
 - `solitaire_core` and `solitaire_sync` must never gain Bevy or network dependencies.
 - No `unwrap()` or `panic!()` in game logic. All state transitions return `Result<_, MoveError>`.
-- Audio assets are embedded at compile time using `include_bytes!()` in `audio_plugin.rs`. Cards and backgrounds are rendered procedurally (colored `Sprite` entities + text) — no image files are used and no `AssetServer` is needed.
+- Audio assets are embedded at compile time using `include_bytes!()` in `audio_plugin.rs`.
+- Card faces (52 PNGs in `assets/cards/faces/`), card backs (`assets/cards/backs/back_N.png`), board backgrounds (`assets/backgrounds/bg_N.png`), and the UI font (`assets/fonts/main.ttf`) are loaded at runtime via `AssetServer::load()` and stored as `Handle<Image>`/`Handle<Font>` in the `CardImageSet`, `BackgroundImageSet`, and `FontResource` resources. The `assets/` directory must ship alongside the binary.
+- Asset-loading systems take `Option<Res<AssetServer>>` so they degrade cleanly under `MinimalPlugins` (tests). When `CardImageSet` is absent, `card_plugin` falls back to a `Text2d` rank+suit overlay; when `BackgroundImageSet` is absent, the board falls back to a solid colour.
 - Atomic file writes only: write to `filename.json.tmp`, then `rename()`.
 - Passwords and tokens are stored in the OS keychain via the `keyring` crate — never in plaintext files or logs.
 - Sync runs on `AsyncComputeTaskPool` — never block the Bevy main thread.
