@@ -13,7 +13,7 @@ use solitaire_core::pile::PileType;
 
 use crate::auto_complete_plugin::AutoCompleteState;
 use crate::daily_challenge_plugin::DailyChallengeResource;
-use crate::events::InfoToastEvent;
+use crate::events::{InfoToastEvent, NewGameRequestEvent};
 use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
@@ -84,18 +84,30 @@ pub struct HudDrawCycle;
 #[derive(Component, Debug)]
 pub struct HudSelection;
 
+/// Marker on the New Game action button anchored top-right of the play area.
+/// Click fires [`NewGameRequestEvent`]; the existing `ConfirmNewGameScreen`
+/// modal then handles confirmation when a game is in progress.
+#[derive(Component, Debug)]
+pub struct NewGameButton;
+
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
 const Z_HUD: i32 = 50;
+
+/// Idle / hover / pressed colours for the New Game action button.
+const NEW_GAME_BTN_IDLE: Color = Color::srgb(0.20, 0.55, 0.85);
+const NEW_GAME_BTN_HOVER: Color = Color::srgb(0.28, 0.65, 0.95);
+const NEW_GAME_BTN_PRESSED: Color = Color::srgb(0.15, 0.45, 0.75);
 
 /// Renders the in-game HUD: score counter, move counter, elapsed timer, draw-mode indicator, and the auto-complete badge that lights up when the game is solvable without further input.
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_hud)
+        app.add_systems(Startup, (spawn_hud, spawn_new_game_button))
             .add_systems(Update, update_hud.after(GameMutation))
             .add_systems(Update, announce_auto_complete.after(GameMutation))
-            .add_systems(Update, update_selection_hud);
+            .add_systems(Update, update_selection_hud)
+            .add_systems(Update, (handle_new_game_button, paint_new_game_button));
     }
 }
 
@@ -172,6 +184,80 @@ fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
                 TextColor(Color::srgb(1.0, 1.0, 0.5)),
             ));
         });
+}
+
+/// Spawns the New Game action button anchored to the top-right of the
+/// window. Click fires [`NewGameRequestEvent`]; the existing
+/// `ConfirmNewGameScreen` modal in `GamePlugin` handles confirmation when
+/// a game is in progress, and starts a fresh deal otherwise.
+///
+/// Per the UI-first principle (CLAUDE.md / ARCHITECTURE.md §1), this
+/// button is the primary entry point for starting a new game. The `N`
+/// keyboard shortcut is an optional accelerator.
+fn spawn_new_game_button(font_res: Option<Res<FontResource>>, mut commands: Commands) {
+    let font = TextFont {
+        font: font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
+        font_size: 16.0,
+        ..default()
+    };
+    commands
+        .spawn((
+            NewGameButton,
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(12.0),
+                top: Val::Px(8.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::all(Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(NEW_GAME_BTN_IDLE),
+            ZIndex(Z_HUD),
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new("New Game"),
+                font,
+                TextColor(Color::WHITE),
+            ));
+        });
+}
+
+/// Click handler for the New Game button — fires `NewGameRequestEvent`.
+///
+/// `Changed<Interaction>` filter ensures we only react on the frame the
+/// interaction state transitions, avoiding repeat events while the button
+/// is held down.
+fn handle_new_game_button(
+    interaction_query: Query<&Interaction, (With<NewGameButton>, Changed<Interaction>)>,
+    mut new_game: MessageWriter<NewGameRequestEvent>,
+) {
+    for interaction in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            new_game.write(NewGameRequestEvent::default());
+        }
+    }
+}
+
+/// Visual feedback for the New Game button — paints idle / hover / pressed
+/// states by mutating the `BackgroundColor` whenever the interaction state
+/// changes.
+fn paint_new_game_button(
+    mut buttons: Query<
+        (&Interaction, &mut BackgroundColor),
+        (With<NewGameButton>, Changed<Interaction>),
+    >,
+) {
+    for (interaction, mut bg) in &mut buttons {
+        bg.0 = match interaction {
+            Interaction::Pressed => NEW_GAME_BTN_PRESSED,
+            Interaction::Hovered => NEW_GAME_BTN_HOVER,
+            Interaction::None => NEW_GAME_BTN_IDLE,
+        };
+    }
 }
 
 /// Formats a time-limit value in seconds as `"mm:ss"` for HUD display.
