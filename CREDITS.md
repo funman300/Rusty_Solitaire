@@ -51,9 +51,6 @@ LGPL-3.0. The art is consumed as unmodified PNG files at runtime; the game
 binary statically links no LGPL code, so distribution as a self-contained
 binary plus the `assets/` directory satisfies the LGPL's relinking clause.
 
-<!-- TODO: confirm exact upstream URL — likely https://github.com/htdebeer/SVG-cards or the xCards repo it spawned. The orchestrator will fill this in. -->
-Upstream source: `[source URL needed]`
-
 ### Backgrounds
 
 | File(s) | Source | License |
