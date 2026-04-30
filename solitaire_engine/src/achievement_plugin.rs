@@ -20,10 +20,18 @@ use solitaire_data::{
 use crate::events::{
     AchievementUnlockedEvent, GameWonEvent, ToggleAchievementsRequestEvent, XpAwardedEvent,
 };
+use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::{LevelUpEvent, ProgressResource, ProgressStoragePath, ProgressUpdate};
 use crate::resources::GameStateResource;
 use crate::stats_plugin::{StatsResource, StatsUpdate};
+use crate::ui_modal::{
+    spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
+};
+use crate::ui_theme::{
+    ACCENT_PRIMARY, BORDER_SUBTLE, STATE_SUCCESS, TEXT_DISABLED, TEXT_PRIMARY, TEXT_SECONDARY,
+    TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_1, Z_MODAL_PANEL,
+};
 
 /// Marker on the achievements overlay root node.
 #[derive(Component, Debug)]
@@ -86,7 +94,8 @@ impl Plugin for AchievementPlugin {
                     .after(StatsUpdate)
                     .after(ProgressUpdate),
             )
-            .add_systems(Update, toggle_achievements_screen);
+            .add_systems(Update, toggle_achievements_screen)
+            .add_systems(Update, handle_achievements_close_button);
     }
 }
 
@@ -200,6 +209,10 @@ pub fn display_name_for(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// Marker on the "Done" button inside the Achievements modal.
+#[derive(Component, Debug)]
+pub struct AchievementsCloseButton;
+
 /// Toggle the achievements overlay — `A` keyboard accelerator or
 /// `ToggleAchievementsRequestEvent` from the HUD Menu popover.
 fn toggle_achievements_screen(
@@ -207,6 +220,7 @@ fn toggle_achievements_screen(
     keys: Res<ButtonInput<KeyCode>>,
     mut requests: MessageReader<ToggleAchievementsRequestEvent>,
     achievements: Res<AchievementsResource>,
+    font_res: Option<Res<FontResource>>,
     screens: Query<Entity, With<AchievementsScreen>>,
 ) {
     let button_clicked = requests.read().count() > 0;
@@ -216,141 +230,131 @@ fn toggle_achievements_screen(
     if let Ok(entity) = screens.single() {
         commands.entity(entity).despawn();
     } else {
-        spawn_achievements_screen(&mut commands, &achievements.0);
+        spawn_achievements_screen(&mut commands, &achievements.0, font_res.as_deref());
     }
 }
 
-fn spawn_achievements_screen(commands: &mut Commands, records: &[AchievementRecord]) {
+/// Click handler for the modal's "Done" button — despawns the overlay
+/// the same way the `A` accelerator does.
+fn handle_achievements_close_button(
+    mut commands: Commands,
+    close_buttons: Query<&Interaction, (With<AchievementsCloseButton>, Changed<Interaction>)>,
+    screens: Query<Entity, With<AchievementsScreen>>,
+) {
+    if !close_buttons.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    for entity in &screens {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn spawn_achievements_screen(
+    commands: &mut Commands,
+    records: &[AchievementRecord],
+    font_res: Option<&FontResource>,
+) {
     let unlocked: Vec<_> = records.iter().filter(|r| r.unlocked).collect();
     let total = ALL_ACHIEVEMENTS.len();
+    let header = format!("Achievements  ({}/{})", unlocked.len(), total);
 
-    commands
-        .spawn((
-            AchievementsScreen,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(0.0),
-                top: Val::Percent(0.0),
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+    let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+    let font_name = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY_LG,
+        ..default()
+    };
+    let font_desc = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY,
+        ..default()
+    };
+    let font_meta = TextFont {
+        font: font_handle,
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
+
+    spawn_modal(commands, AchievementsScreen, Z_MODAL_PANEL, |card| {
+        spawn_modal_header(card, header, font_res);
+
+        // Achievement rows — unlocked first, then locked alphabetical.
+        let mut sorted: Vec<_> = records.iter().collect();
+        sorted.sort_by_key(|r| (!r.unlocked, r.id.clone()));
+
+        for record in &sorted {
+            let def = achievement_by_id(&record.id);
+            let (name, description) = def
+                .map(|d| (d.name, d.description))
+                .unwrap_or((&record.id, ""));
+
+            // Hide secret locked achievements so they remain a surprise.
+            let is_secret = def.map(|d| d.secret).unwrap_or(false);
+            if is_secret && !record.unlocked {
+                continue;
+            }
+
+            let (name_color, desc_color, prefix) = if record.unlocked {
+                (ACCENT_PRIMARY, TEXT_PRIMARY, "\u{2713} ")
+            } else {
+                (TEXT_DISABLED, TEXT_DISABLED, "\u{25CB} ")
+            };
+
+            card.spawn(Node {
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
+                row_gap: VAL_SPACE_1,
                 ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.82)),
-            ZIndex(210),
-        ))
-        .with_children(|root| {
-            root.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(28.0)),
-                    row_gap: Val::Px(8.0),
-                    min_width: Val::Px(380.0),
-                    max_height: Val::Percent(80.0),
-                    overflow: Overflow::clip_y(),
-                    border_radius: BorderRadius::all(Val::Px(8.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.09, 0.09, 0.12)),
-            ))
-            .with_children(|card| {
-                // Header
-                card.spawn((
-                    Text::new(format!(
-                        "Achievements  ({}/{})",
-                        unlocked.len(),
-                        total
-                    )),
-                    TextFont { font_size: 26.0, ..default() },
-                    TextColor(Color::WHITE),
+            })
+            .with_children(|row| {
+                row.spawn((
+                    Text::new(format!("{prefix}{name}")),
+                    font_name.clone(),
+                    TextColor(name_color),
                 ));
-                card.spawn((
-                    Text::new("Press A to close"),
-                    TextFont { font_size: 14.0, ..default() },
-                    TextColor(Color::srgb(0.55, 0.55, 0.60)),
-                ));
-
-                // Separator
-                card.spawn((
-                    Node {
-                        height: Val::Px(1.0),
-                        margin: UiRect::vertical(Val::Px(6.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.25, 0.25, 0.30)),
-                ));
-
-                // Achievement rows — unlocked first, then locked
-                let mut sorted: Vec<_> = records.iter().collect();
-                sorted.sort_by_key(|r| (!r.unlocked, r.id.clone()));
-
-                for record in &sorted {
-                    let def = achievement_by_id(&record.id);
-                    let (name, description) = def
-                        .map(|d| (d.name, d.description))
-                        .unwrap_or((&record.id, ""));
-
-                    // Hide secret locked achievements
-                    let is_secret = def.map(|d| d.secret).unwrap_or(false);
-                    if is_secret && !record.unlocked {
-                        continue;
-                    }
-
-                    let (name_color, desc_color, prefix) = if record.unlocked {
-                        (
-                            Color::srgb(1.0, 0.87, 0.0),
-                            Color::srgb(0.75, 0.75, 0.70),
-                            "✓ ",
-                        )
-                    } else {
-                        (
-                            Color::srgb(0.45, 0.45, 0.50),
-                            Color::srgb(0.35, 0.35, 0.40),
-                            "◯ ",
-                        )
-                    };
-
-                    card.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(1.0),
-                        margin: UiRect::bottom(Val::Px(4.0)),
-                        ..default()
-                    })
-                    .with_children(|row| {
-                        row.spawn((
-                            Text::new(format!("{prefix}{name}")),
-                            TextFont { font_size: 16.0, ..default() },
-                            TextColor(name_color),
-                        ));
-                        if !description.is_empty() {
-                            row.spawn((
-                                Text::new(format!("   {description}")),
-                                TextFont { font_size: 13.0, ..default() },
-                                TextColor(desc_color),
-                            ));
-                        }
-                        // Reward line
-                        if let Some(reward_str) = def.and_then(|d| d.reward).map(format_reward) {
-                            row.spawn((
-                                Text::new(format!("   Reward: {reward_str}")),
-                                TextFont { font_size: 12.0, ..default() },
-                                TextColor(Color::srgb(0.45, 0.75, 0.45)),
-                            ));
-                        }
-                        // Unlock date for unlocked achievements
-                        if let Some(date) = record.unlock_date {
-                            row.spawn((
-                                Text::new(format!("   Unlocked {}", date.format("%Y-%m-%d"))),
-                                TextFont { font_size: 11.0, ..default() },
-                                TextColor(Color::srgb(0.40, 0.40, 0.45)),
-                            ));
-                        }
-                    });
+                if !description.is_empty() {
+                    row.spawn((
+                        Text::new(format!("   {description}")),
+                        font_desc.clone(),
+                        TextColor(desc_color),
+                    ));
+                }
+                if let Some(reward_str) = def.and_then(|d| d.reward).map(format_reward) {
+                    row.spawn((
+                        Text::new(format!("   Reward: {reward_str}")),
+                        font_meta.clone(),
+                        TextColor(STATE_SUCCESS),
+                    ));
+                }
+                if let Some(date) = record.unlock_date {
+                    row.spawn((
+                        Text::new(format!("   Unlocked {}", date.format("%Y-%m-%d"))),
+                        font_meta.clone(),
+                        TextColor(TEXT_SECONDARY),
+                    ));
                 }
             });
+
+            // Subtle row separator — keeps the long list scannable.
+            card.spawn((
+                Node {
+                    height: Val::Px(1.0),
+                    ..default()
+                },
+                BackgroundColor(BORDER_SUBTLE),
+            ));
+        }
+
+        spawn_modal_actions(card, |actions| {
+            spawn_modal_button(
+                actions,
+                AchievementsCloseButton,
+                "Done",
+                Some("A"),
+                ButtonVariant::Primary,
+                font_res,
+            );
         });
+    });
 }
 
 fn format_reward(reward: Reward) -> String {
