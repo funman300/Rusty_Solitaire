@@ -76,16 +76,137 @@ The whole overhaul is on disk. Worth running through once end-to-end:
 ## Resume prompt for the next session
 
 ```
-The Solitaire Quest UX overhaul Phase 3 is complete (HEAD=54e024c).
-Read SESSION_HANDOFF.md and CLAUDE.md before doing anything new.
+You are a senior Rust + Bevy developer working toward a public release
+of Solitaire Quest. Working directory: /home/manage/Rusty_Solitare.
+Branch: master. Apply that lens to every decision: prefer shipping
+quality (polish, packaging, defaults, credits, crash safety) over
+greenfield features. If something is half-done, the question is
+"finish for v1 or cut for v1?" not "what else can we add?".
 
-819 tests pass / 0 fail / 8 ignored. Clippy clean.
+State: HEAD=0066ca6. Phase 3 of the UX overhaul is shipped. cargo
+build / clippy --workspace -- -D warnings / test --workspace all
+green — 819 tests pass / 0 fail / 8 ignored.
 
-Next likely directions:
-1. Smoke-test the build end-to-end and report regressions (see the
-   checklist in SESSION_HANDOFF.md).
-2. Decide what to do with the Home modal (kbd ref vs mode launcher
-   vs delete).
-3. Phase 4 — feature work, sound design, or accessibility, depending
-   on user priority.
+READ FIRST (in order, before doing anything):
+  1. SESSION_HANDOFF.md  — full state, smoke-test checklist, follow-ups
+  2. CLAUDE.md           — hard rules (UI-first, no panics, etc.)
+  3. ARCHITECTURE.md §1, §15, §17 — design principles, platform
+                                    targets, deployment guide
+  4. ~/.claude/projects/-home-manage-Rusty-Solitare/memory/MEMORY.md
+                         — saved feedback / project context
+
+GATING SIGNAL — ASK FIRST, DON'T ASSUME:
+Before proposing new work, ask: "Did the smoke-test (items 1-10 in
+SESSION_HANDOFF.md) pass, or did anything regress?" If a regression
+exists, fix it before opening any new thread.
+
+LIKELY NEXT DIRECTIONS — surface for the user to choose, don't pick
+unilaterally. All framed through "what does v1 release need?":
+
+  A. Home modal decision (open in SESSION_HANDOFF.md).
+     - keep as kbd-reference (duplicates Help — release-blocking
+       confusion?)
+     - repurpose as mode launcher (Classic / Daily / Zen / Challenge /
+       Time Attack cards, locked options below level 5)
+     - drop (action bar already covers every action)
+
+  B. Window + release polish — `solitaire_app/src/main.rs:34-48`
+     currently sets only title + resolution + min size. For public
+     release the window needs:
+       - app icon (taskbar / dock / alt-tab) — Bevy `Window::window_icon`
+         or platform `set_window_icon`; ship a .png/.ico asset.
+       - window class / app id (`Window::name`) so X11/Wayland and
+         Windows group taskbar entries correctly.
+       - persist size + position across launches (Settings already
+         saves to JSON; add `window_geometry` field).
+       - F11 (or a Settings toggle) wired to real fullscreen mode.
+       - centered default position on first launch (Bevy supports
+         `WindowPosition::Centered`).
+       - present_mode + vsync verification — make sure Linux/macOS
+         don't ship at uncapped 4000 fps.
+       - panic hook (`std::panic::set_hook`) that writes a crash
+         report next to the save files instead of silently exiting.
+       - macOS Info.plist / Windows .ico bundling — ARCHITECTURE.md
+         §17 currently only covers server deploy.
+
+  C. Sound-design audit. The scoped settle bounce (3a01318) means
+     audio_plugin.rs trigger sites may fire less often than before;
+     verify card_place / card_flip / card_invalid still feel right.
+
+  D. Sync flow end-to-end on a real second machine. Server
+     scaffolding exists but the register → push → pull → restore-on-
+     other-device round trip hasn't been exercised against the new
+     Settings sync section.
+
+  E. Achievement unlock completeness. ARCHITECTURE.md §11 lists 18.
+     The three hidden ones (speed_and_skill, comeback, zen_winner)
+     are most likely to be untested. For release, every advertised
+     achievement needs to actually fire.
+
+  F. Release-readiness backlog:
+     - README / store-page copy / screenshots
+     - LICENSE + third-party credits (xCards art, FiraMono, Bevy)
+     - SemVer + a v0.1.0 git tag
+     - itch.io / Steam packaging per platform (ARCHITECTURE.md §15)
+     - App signing — macOS notarization, Windows Authenticode,
+       Linux AppImage
+     - Telemetry / crash reporting — opt-in, off by default; or
+       confirm we ship without and rely on player reports
+
+  G. UI/UX professional polish — Phase 3 shipped the design system;
+     v1 wants the difference between "consistent" and "feels
+     intentional":
+       - Microcopy pass: every button label, empty state, error
+         message, and onboarding line reviewed for voice + clarity.
+         Pick one verb per concept ("Done" vs "Close" vs "OK") and
+         apply it everywhere.
+       - Empty / loading / error states: Leaderboard before any
+         scores, Stats before any games, Sync UI before login.
+         Today these are likely blank panels.
+       - Modal open/close animation: `MOTION_MODAL_SECS` token exists
+         in `ui_theme.rs:255` but isn't wired up — modals
+         appear/disappear instantly. Add scale-from-0.96 + scrim fade
+         per the token's doc comment.
+       - Tooltips on HUD readouts and settings labels. Bevy has no
+         built-in tooltip; build a small one. Hover a number to learn
+         what it counts.
+       - Accessibility: verify the AAA-contrast claim on
+         `ACCENT_PRIMARY` over `BG_BASE` (ui_theme.rs:65). Confirm
+         `AnimSpeed::Instant` disables every new animation (slide
+         curve, scoped settle, deal jitter, cascade rotation). Add
+         focus rings on `Button` entities for keyboard navigation.
+       - Typography choice: FiraMono is one weight, monospace for
+         everything. Consider shipping a second proportional face for
+         body + headings, keep mono for numerics (HUD score, timer).
+         Or commit to mono and lean into the "calm coder" feel — pick
+         deliberately and document the decision.
+       - Onboarding artwork: the 3 slides are text + buttons. For
+         release, stylised illustrations (or simple animated card
+         props on each slide) elevate the first-launch feel.
+       - Score-change feedback: floating "+N" numbers when score
+         jumps; pulse on the readout when value crosses a milestone.
+         `MOTION_SCORE_PULSE_SECS` is already a token.
+       - Splash / loading screen: today the window goes straight to
+         gameplay. A 1-2 second branded splash signals "real game"
+         vs "rust prototype".
+       - Hit-target audit: every interactive element ≥ 32 px on
+         desktop. Settings has 28 px icon buttons (`ICON_BUTTON_PX`
+         in settings_plugin.rs); revisit.
+       - Win-moment design: the cascade is good; consider a score-
+         breakdown reveal, streak callout, "share your time"
+         affordance for v1.
+
+WORKFLOW NOTES:
+  - Commits use:
+      git -c user.name=funman300 -c user.email=root@vscode.infinity commit -m "..."
+  - Sub-agents can Edit/Write but CANNOT `git commit`. Brief them to
+    stage + verify only; orchestrator commits on their behalf.
+    See memory/feedback_agent_commit_limit.md.
+  - Remote push needs interactive credentials on git.aleshym.co; the
+    user runs `git push origin master` themselves.
+  - Every commit must pass build / clippy / test. Pause-and-verify
+    is the user's preferred cadence — one feature per commit.
+
+OPEN AT THE START: ask (1) did smoke-test pass, (2) which of A–G to
+pursue first. Do not assume.
 ```
