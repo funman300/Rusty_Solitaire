@@ -30,9 +30,25 @@ use crate::ui_theme::{
 // Resources
 // ---------------------------------------------------------------------------
 
-/// Cached leaderboard data. `None` means no fetch has completed yet.
+/// State of the cached leaderboard fetch.
+///
+/// Distinguishes "fetch hasn't completed yet" from "fetch failed" from
+/// "fetch succeeded but the leaderboard is empty" so the UI can show
+/// targeted copy for each case rather than a single ambiguous "no
+/// entries" line that hid network errors from the player.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct LeaderboardResource(pub Option<Vec<LeaderboardEntry>>);
+pub enum LeaderboardResource {
+    /// No fetch has completed yet — show "Fetching..." in the panel.
+    #[default]
+    Idle,
+    /// Last fetch failed (network, auth, etc.) — show error copy.
+    /// The wrapped string is the underlying error for logging only;
+    /// the UI shows a fixed user-friendly message.
+    Error(String),
+    /// Fetch succeeded — wrapped Vec may be empty (legitimately empty
+    /// leaderboard) or populated.
+    Loaded(Vec<LeaderboardEntry>),
+}
 
 /// Set to `true` in the frame the user explicitly closes the panel so that a
 /// fetch completing in the same frame doesn't immediately reopen it.
@@ -134,8 +150,12 @@ fn toggle_leaderboard_screen(
         return;
     }
 
-    // Spawn the panel immediately with whatever data we have (may be None).
-    spawn_leaderboard_screen(&mut commands, data.0.as_deref(), font_res.as_deref());
+    // Spawn the panel immediately with whatever data we have so far.
+    let remote_available = provider
+        .as_ref()
+        .map(|p| p.0.backend_name() != "local")
+        .unwrap_or(false);
+    spawn_leaderboard_screen(&mut commands, &data, remote_available, font_res.as_deref());
 
     // Start a background fetch if not already in flight.
     if task_res.0.is_none()
@@ -167,6 +187,7 @@ fn update_leaderboard_panel(
     mut result_res: ResMut<LeaderboardFetchResult>,
     mut data: ResMut<LeaderboardResource>,
     screens: Query<Entity, With<LeaderboardScreen>>,
+    provider: Option<Res<SyncProviderResource>>,
     font_res: Option<Res<FontResource>>,
     closed_flag: Res<ClosedThisFrame>,
 ) {
@@ -174,12 +195,15 @@ fn update_leaderboard_panel(
 
     match result {
         Ok(entries) => {
-            data.0 = Some(entries);
+            *data = LeaderboardResource::Loaded(entries);
         }
         Err(e) => {
             warn!("leaderboard fetch failed: {e}");
-            if data.0.is_none() {
-                data.0 = Some(vec![]); // show empty rather than spinner forever
+            // Preserve previously-loaded data on a transient failure so a
+            // momentary network blip doesn't wipe a populated list. Only
+            // surface an Error state when we have nothing better to show.
+            if !matches!(*data, LeaderboardResource::Loaded(_)) {
+                *data = LeaderboardResource::Error(e);
             }
         }
     }
@@ -189,9 +213,13 @@ fn update_leaderboard_panel(
     if closed_flag.0 {
         return;
     }
+    let remote_available = provider
+        .as_ref()
+        .map(|p| p.0.backend_name() != "local")
+        .unwrap_or(false);
     for entity in &screens {
         commands.entity(entity).despawn();
-        spawn_leaderboard_screen(&mut commands, data.0.as_deref(), font_res.as_deref());
+        spawn_leaderboard_screen(&mut commands, &data, remote_available, font_res.as_deref());
     }
 }
 
@@ -316,7 +344,8 @@ pub struct LeaderboardCloseButton;
 
 fn spawn_leaderboard_screen(
     commands: &mut Commands,
-    entries: Option<&[LeaderboardEntry]>,
+    data: &LeaderboardResource,
+    remote_available: bool,
     font_res: Option<&FontResource>,
 ) {
     spawn_modal(commands, LeaderboardScreen, Z_MODAL_PANEL, |card| {
@@ -345,32 +374,44 @@ fn spawn_leaderboard_screen(
             ..default()
         };
 
-        card.spawn((
-            Text::new("Use Opt In / Opt Out to control your visibility on the server."),
-            font_caption.clone(),
-            TextColor(TEXT_SECONDARY),
-        ));
+        if remote_available {
+            card.spawn((
+                Text::new("Use Opt In / Opt Out to control your visibility on the server."),
+                font_caption.clone(),
+                TextColor(TEXT_SECONDARY),
+            ));
 
-        // Opt In / Opt Out row uses the same modal-button helpers as
-        // the rest of the UI for consistent hover / press feedback.
-        spawn_modal_actions(card, |row| {
-            spawn_modal_button(
-                row,
-                LeaderboardOptInButton,
-                "Opt In",
-                None,
-                ButtonVariant::Secondary,
-                font_res,
-            );
-            spawn_modal_button(
-                row,
-                LeaderboardOptOutButton,
-                "Opt Out",
-                None,
-                ButtonVariant::Tertiary,
-                font_res,
-            );
-        });
+            // Opt In / Opt Out row uses the same modal-button helpers as
+            // the rest of the UI for consistent hover / press feedback.
+            spawn_modal_actions(card, |row| {
+                spawn_modal_button(
+                    row,
+                    LeaderboardOptInButton,
+                    "Opt In",
+                    None,
+                    ButtonVariant::Secondary,
+                    font_res,
+                );
+                spawn_modal_button(
+                    row,
+                    LeaderboardOptOutButton,
+                    "Opt Out",
+                    None,
+                    ButtonVariant::Tertiary,
+                    font_res,
+                );
+            });
+        } else {
+            // No remote sync provider configured — opt-in/out would be a
+            // silent no-op, so show a single explanatory line instead.
+            card.spawn((
+                Text::new(
+                    "Leaderboards require cloud sync. Configure a server in Settings to participate.",
+                ),
+                font_caption.clone(),
+                TextColor(TEXT_SECONDARY),
+            ));
+        }
 
         // Subtle separator between the controls and the data area.
         card.spawn((
@@ -381,22 +422,29 @@ fn spawn_leaderboard_screen(
             BackgroundColor(BORDER_SUBTLE),
         ));
 
-        match entries {
-            None => {
+        match data {
+            LeaderboardResource::Idle => {
                 card.spawn((
                     Text::new("Fetching\u{2026}"),
                     font_status.clone(),
                     TextColor(STATE_INFO),
                 ));
             }
-            Some([]) => {
+            LeaderboardResource::Error(_) => {
+                card.spawn((
+                    Text::new("Couldn't reach the leaderboard. Try again later."),
+                    font_status.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
+            }
+            LeaderboardResource::Loaded(rows) if rows.is_empty() => {
                 card.spawn((
                     Text::new("No entries yet \u{2014} sync and opt in to appear here."),
                     font_row.clone(),
                     TextColor(TEXT_SECONDARY),
                 ));
             }
-            Some(rows) => {
+            LeaderboardResource::Loaded(rows) => {
                 // Column headers
                 card.spawn(Node {
                     flex_direction: FlexDirection::Row,
@@ -583,7 +631,10 @@ mod tests {
     #[test]
     fn resource_starts_empty() {
         let app = headless_app();
-        assert!(app.world().resource::<LeaderboardResource>().0.is_none());
+        assert!(matches!(
+            app.world().resource::<LeaderboardResource>(),
+            LeaderboardResource::Idle
+        ));
     }
 
     #[test]
