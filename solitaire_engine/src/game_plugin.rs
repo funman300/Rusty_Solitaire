@@ -214,7 +214,7 @@ fn handle_new_game(
     }
 }
 
-/// Marker on the primary "Yes, abandon" button inside the confirm modal.
+/// Marker on the primary "New game" button inside the confirm modal.
 #[derive(Component, Debug)]
 pub struct ConfirmYesButton;
 
@@ -265,7 +265,7 @@ fn spawn_confirm_dialog(
                 spawn_modal_button(
                     actions,
                     ConfirmYesButton,
-                    "Yes, abandon",
+                    "New game",
                     Some("Y"),
                     ButtonVariant::Primary,
                     font_res,

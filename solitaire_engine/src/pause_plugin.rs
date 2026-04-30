@@ -72,7 +72,7 @@ pub struct ForfeitConfirmScreen;
 #[derive(Component, Debug)]
 struct ForfeitCancelButton;
 
-/// Marker on the "Yes, forfeit" primary button inside the forfeit-confirm modal.
+/// Marker on the "Forfeit" primary button inside the forfeit-confirm modal.
 #[derive(Component, Debug)]
 struct ForfeitConfirmButton;
 
@@ -468,7 +468,7 @@ fn spawn_draw_mode_row(
     ));
 }
 
-/// Spawns `ForfeitConfirmScreen` — a Cancel / "Yes, forfeit" modal
+/// Spawns `ForfeitConfirmScreen` — a Cancel / "Forfeit" modal
 /// stacked above the pause modal at `Z_PAUSE_DIALOG`.
 fn spawn_forfeit_confirm_screen(commands: &mut Commands, font_res: Option<&FontResource>) {
     spawn_modal(
@@ -495,7 +495,7 @@ fn spawn_forfeit_confirm_screen(commands: &mut Commands, font_res: Option<&FontR
                 spawn_modal_button(
                     actions,
                     ForfeitConfirmButton,
-                    "Yes, forfeit",
+                    "Forfeit",
                     Some("Y"),
                     ButtonVariant::Primary,
                     font_res,

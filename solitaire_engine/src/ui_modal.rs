@@ -38,7 +38,7 @@
 //!             spawn_modal_button(
 //!                 actions,
 //!                 ConfirmButton,
-//!                 "Yes, abandon",
+//!                 "New game",
 //!                 Some("Y"),
 //!                 ButtonVariant::Primary,
 //!                 font_res,
