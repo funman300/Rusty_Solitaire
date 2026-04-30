@@ -7,18 +7,30 @@ use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use solitaire_core::game_state::GameMode;
 
+use crate::font_plugin::FontResource;
 use crate::resources::GameStateResource;
+use crate::ui_modal::{
+    spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
+};
+use crate::ui_theme::{
+    ACCENT_PRIMARY, BORDER_SUBTLE, RADIUS_SM, STATE_INFO, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
+    TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
+};
 
 /// Marker component on the home-menu overlay root node.
 #[derive(Component, Debug)]
 pub struct HomeScreen;
+
+/// Marker on the "Done" button inside the Home modal.
+#[derive(Component, Debug)]
+pub struct HomeCloseButton;
 
 /// Registers the M-key toggle and the overlay spawn/despawn logic.
 pub struct HomePlugin;
 
 impl Plugin for HomePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, toggle_home_screen);
+        app.add_systems(Update, (toggle_home_screen, handle_home_close_button));
     }
 }
 
@@ -26,6 +38,7 @@ fn toggle_home_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     game: Res<GameStateResource>,
+    font_res: Option<Res<FontResource>>,
     screens: Query<Entity, With<HomeScreen>>,
 ) {
     if !keys.just_pressed(KeyCode::KeyM) {
@@ -34,12 +47,32 @@ fn toggle_home_screen(
     if let Ok(entity) = screens.single() {
         commands.entity(entity).despawn();
     } else {
-        spawn_home_screen(&mut commands, &game);
+        spawn_home_screen(&mut commands, &game, font_res.as_deref());
     }
 }
 
-/// Spawns the full-window home-menu overlay derived from the current `game` state.
-fn spawn_home_screen(commands: &mut Commands, game: &GameStateResource) {
+fn handle_home_close_button(
+    mut commands: Commands,
+    close_buttons: Query<&Interaction, (With<HomeCloseButton>, Changed<Interaction>)>,
+    screens: Query<Entity, With<HomeScreen>>,
+) {
+    if !close_buttons.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    for entity in &screens {
+        commands.entity(entity).despawn();
+    }
+}
+
+/// Spawns the home-menu modal — a hotkey reference grouped into "Game
+/// Controls" and "Screens" sections plus the current game mode badge.
+/// A future pass can pivot Home into a true mode launcher (the
+/// Modes-popover already covers that path from the action bar).
+fn spawn_home_screen(
+    commands: &mut Commands,
+    game: &GameStateResource,
+    font_res: Option<&FontResource>,
+) {
     let mode_label = match game.0.mode {
         GameMode::Classic => "Classic",
         GameMode::Zen => "Zen",
@@ -47,121 +80,122 @@ fn spawn_home_screen(commands: &mut Commands, game: &GameStateResource) {
         GameMode::TimeAttack => "Time Attack",
     };
 
-    commands
-        .spawn((
-            HomeScreen,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(0.0),
-                top: Val::Percent(0.0),
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::FlexStart,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(6.0),
-                padding: UiRect::all(Val::Px(24.0)),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
-            ZIndex(200),
-        ))
-        .with_children(|root| {
-            // Title
-            root.spawn((
-                Text::new("Solitaire Quest"),
-                TextFont { font_size: 48.0, ..default() },
-                TextColor(Color::srgb(1.0, 0.85, 0.3)),
-            ));
+    let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+    let font_section = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY_LG,
+        ..default()
+    };
+    let font_row = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY,
+        ..default()
+    };
+    let font_kbd = TextFont {
+        font: font_handle,
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
 
-            // Mode subtitle
-            root.spawn((
-                Text::new(format!("Current mode: {mode_label}")),
-                TextFont { font_size: 28.0, ..default() },
-                TextColor(Color::srgb(0.8, 0.8, 0.8)),
-            ));
+    spawn_modal(commands, HomeScreen, Z_MODAL_PANEL, |card| {
+        spawn_modal_header(card, "Solitaire Quest", font_res);
 
-            // Spacer
-            root.spawn(Node {
-                height: Val::Px(8.0),
-                ..default()
-            });
+        // Mode badge — current game's mode, ACCENT_PRIMARY so it pops.
+        card.spawn((
+            Text::new(format!("Current mode: {mode_label}")),
+            font_section.clone(),
+            TextColor(ACCENT_PRIMARY),
+        ));
 
-            // "Game Controls" section header
-            root.spawn((
-                Text::new("Game Controls"),
-                TextFont { font_size: 22.0, ..default() },
-                TextColor(Color::srgb(0.9, 0.9, 0.9)),
-            ));
+        // Game controls section.
+        card.spawn((
+            Text::new("Game Controls"),
+            font_section.clone(),
+            TextColor(STATE_INFO),
+        ));
+        for (key, action) in [
+            ("N", "New game  (N again confirms)"),
+            ("U", "Undo last move"),
+            ("Space / D", "Draw from stock"),
+            ("G", "Forfeit current game"),
+            ("Tab", "Cycle hint highlight"),
+            ("Enter", "Auto-complete if available"),
+        ] {
+            spawn_shortcut_row(card, key, action, &font_row, &font_kbd);
+        }
 
-            spawn_shortcut_row(root, "N", "New game  (N again confirms)");
-            spawn_shortcut_row(root, "U", "Undo last move");
-            spawn_shortcut_row(root, "Space / D", "Draw from stock");
-            spawn_shortcut_row(root, "G", "Forfeit current game");
-            spawn_shortcut_row(root, "Tab", "Cycle hint highlight");
-            spawn_shortcut_row(root, "Enter", "Auto-complete if available");
+        // Screens section.
+        card.spawn((
+            Text::new("Screens"),
+            font_section.clone(),
+            TextColor(STATE_INFO),
+        ));
+        for (key, action) in [
+            ("M", "Main menu (this screen)"),
+            ("S", "Statistics"),
+            ("A", "Achievements"),
+            ("O", "Settings"),
+            ("P", "Profile"),
+            ("L", "Leaderboard"),
+            ("F1", "Help"),
+            ("F11", "Toggle fullscreen"),
+            ("Esc", "Pause / Resume"),
+        ] {
+            spawn_shortcut_row(card, key, action, &font_row, &font_kbd);
+        }
 
-            // Spacer
-            root.spawn(Node {
-                height: Val::Px(8.0),
-                ..default()
-            });
-
-            // "Screens" section header
-            root.spawn((
-                Text::new("Screens"),
-                TextFont { font_size: 22.0, ..default() },
-                TextColor(Color::srgb(0.9, 0.9, 0.9)),
-            ));
-
-            spawn_shortcut_row(root, "M", "Main menu (this screen)");
-            spawn_shortcut_row(root, "S", "Statistics");
-            spawn_shortcut_row(root, "A", "Achievements");
-            spawn_shortcut_row(root, "O", "Settings");
-            spawn_shortcut_row(root, "P", "Profile");
-            spawn_shortcut_row(root, "F1", "Help");
-            spawn_shortcut_row(root, "F11", "Toggle fullscreen");
-            spawn_shortcut_row(root, "Esc", "Pause / Resume");
-
-            // Spacer
-            root.spawn(Node {
-                height: Val::Px(16.0),
-                ..default()
-            });
-
-            // Dismiss hint
-            root.spawn((
-                Text::new("Press M to close"),
-                TextFont { font_size: 16.0, ..default() },
-                TextColor(Color::srgb(0.55, 0.55, 0.55)),
-            ));
+        spawn_modal_actions(card, |actions| {
+            spawn_modal_button(
+                actions,
+                HomeCloseButton,
+                "Done",
+                Some("M"),
+                ButtonVariant::Primary,
+                font_res,
+            );
         });
+    });
 }
 
-fn spawn_shortcut_row(parent: &mut ChildSpawnerCommands, key: &str, action: &str) {
+/// One row inside Home's controls reference: a kbd-chip + description.
+/// Same look as Help's rows so the two screens read consistently.
+fn spawn_shortcut_row(
+    parent: &mut ChildSpawnerCommands,
+    key: &str,
+    action: &str,
+    font_row: &TextFont,
+    font_kbd: &TextFont,
+) {
     parent
         .spawn(Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
-            min_width: Val::Px(380.0),
-            column_gap: Val::Px(16.0),
+            column_gap: VAL_SPACE_3,
             ..default()
         })
         .with_children(|row| {
             row.spawn((
-                Text::new(key.to_string()),
-                TextFont { font_size: 16.0, ..default() },
-                TextColor(Color::srgb(1.0, 0.85, 0.4)),
                 Node {
-                    min_width: Val::Px(120.0),
+                    padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
+                    min_width: Val::Px(80.0),
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
                     ..default()
                 },
-            ));
+                BorderColor::all(BORDER_SUBTLE),
+            ))
+            .with_children(|chip| {
+                chip.spawn((
+                    Text::new(key.to_string()),
+                    font_kbd.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+            });
             row.spawn((
                 Text::new(action.to_string()),
-                TextFont { font_size: 16.0, ..default() },
-                TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                font_row.clone(),
+                TextColor(TEXT_SECONDARY),
             ));
         });
 }
