@@ -30,8 +30,8 @@ use crate::ui_modal::{
 };
 use crate::ui_theme::{
     ACCENT_PRIMARY, BORDER_SUBTLE, RADIUS_SM, STATE_INFO, STATE_WARNING, TEXT_PRIMARY,
-    TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4,
-    Z_MODAL_PANEL,
+    TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_3,
+    VAL_SPACE_4, Z_MODAL_PANEL,
 };
 
 /// Bevy resource wrapping the current stats.
@@ -247,14 +247,19 @@ fn spawn_stats_screen(
     font_res: Option<&FontResource>,
 ) {
     // --- primary stat cells ---
-    let win_rate_str    = format_win_rate(stats);
-    let played_str      = format_stat_value(stats.games_played);
-    let won_str         = format_stat_value(stats.games_won);
-    let lost_str        = format_stat_value(stats.games_lost);
-    let fastest_str     = format_fastest_win(stats.fastest_win_seconds);
-    let avg_time_str    = format_avg_time(stats);
-    let best_score_str  = format_optional_u32(stats.best_single_score);
-    let best_streak_str = format_stat_value(stats.win_streak_best);
+    // First-launch zero-state: when no games have been played yet, render
+    // every top-level cell as an em-dash so the panel doesn't read as a
+    // mix of "0" counters and "—" sentinels (which feels buggy).
+    let is_first_launch = stats.games_played == 0;
+    let dash = "\u{2014}".to_string();
+    let win_rate_str    = if is_first_launch { dash.clone() } else { format_win_rate(stats) };
+    let played_str      = if is_first_launch { dash.clone() } else { format_stat_value(stats.games_played) };
+    let won_str         = if is_first_launch { dash.clone() } else { format_stat_value(stats.games_won) };
+    let lost_str        = if is_first_launch { dash.clone() } else { format_stat_value(stats.games_lost) };
+    let fastest_str     = if is_first_launch { dash.clone() } else { format_fastest_win(stats.fastest_win_seconds) };
+    let avg_time_str    = if is_first_launch { dash.clone() } else { format_avg_time(stats) };
+    let best_score_str  = if is_first_launch { dash.clone() } else { format_optional_u32(stats.best_single_score) };
+    let best_streak_str = if is_first_launch { dash.clone() } else { format_stat_value(stats.win_streak_best) };
 
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
     let font_section = TextFont {
@@ -270,6 +275,27 @@ fn spawn_stats_screen(
 
     spawn_modal(commands, StatsScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Statistics", font_res);
+
+        // First-launch caption — sits above the grid as gentle nudge so
+        // the wall of em-dashes reads as "nothing to track yet" rather
+        // than as broken state.
+        if is_first_launch {
+            card.spawn((
+                Text::new("Play a game to start tracking stats."),
+                TextFont {
+                    font_size: TYPE_CAPTION,
+                    ..default()
+                },
+                TextColor(TEXT_SECONDARY),
+                Node {
+                    margin: UiRect {
+                        bottom: VAL_SPACE_2,
+                        ..default()
+                    },
+                    ..default()
+                },
+            ));
+        }
 
         // --- primary stat cells grid ---
         card.spawn(Node {

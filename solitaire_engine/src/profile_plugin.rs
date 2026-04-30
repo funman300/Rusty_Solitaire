@@ -111,6 +111,27 @@ fn spawn_profile_screen(
     spawn_modal(commands, ProfileScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Profile", font_res);
 
+        // First-launch welcome — only when the player has zero XP and
+        // zero daily streak, so the profile doesn't read as a wall of
+        // zeros to a brand-new player.
+        if let Some(p) = progress
+            && p.0.total_xp == 0
+            && p.0.daily_challenge_streak == 0
+        {
+            card.spawn((
+                Text::new("Welcome! Play games to earn XP and unlock achievements."),
+                font_section.clone(),
+                TextColor(ACCENT_PRIMARY),
+                Node {
+                    margin: UiRect {
+                        bottom: VAL_SPACE_2,
+                        ..default()
+                    },
+                    ..default()
+                },
+            ));
+        }
+
         // ── Sync section ────────────────────────────────────────────
         card.spawn((
             Text::new("Sync"),
