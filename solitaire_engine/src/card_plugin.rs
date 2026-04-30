@@ -1510,26 +1510,29 @@ mod tests {
 
     #[test]
     fn tableau_fan_frac_is_in_unit_interval() {
-        assert!(
-            TABLEAU_FAN_FRAC > 0.0 && TABLEAU_FAN_FRAC < 1.0,
-            "TABLEAU_FAN_FRAC must be in (0, 1), got {TABLEAU_FAN_FRAC}"
-        );
+        const {
+            assert!(
+                TABLEAU_FAN_FRAC > 0.0 && TABLEAU_FAN_FRAC < 1.0,
+                "TABLEAU_FAN_FRAC must be in (0, 1)"
+            );
+        }
     }
 
     #[test]
     fn flip_half_secs_is_positive() {
-        assert!(
-            FLIP_HALF_SECS > 0.0,
-            "FLIP_HALF_SECS must be positive, got {FLIP_HALF_SECS}"
-        );
+        const {
+            assert!(FLIP_HALF_SECS > 0.0, "FLIP_HALF_SECS must be positive");
+        }
     }
 
     #[test]
     fn font_size_frac_is_positive_and_reasonable() {
-        assert!(
-            FONT_SIZE_FRAC > 0.0 && FONT_SIZE_FRAC <= 1.0,
-            "FONT_SIZE_FRAC should be in (0, 1], got {FONT_SIZE_FRAC}"
-        );
+        const {
+            assert!(
+                FONT_SIZE_FRAC > 0.0 && FONT_SIZE_FRAC <= 1.0,
+                "FONT_SIZE_FRAC should be in (0, 1]"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

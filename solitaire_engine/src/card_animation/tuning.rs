@@ -210,8 +210,10 @@ mod tests {
 
     #[test]
     fn scale_duration_applies_multiplier() {
-        let mut t = AnimationTuning::default();
-        t.duration_scale = 0.5;
+        let t = AnimationTuning {
+            duration_scale: 0.5,
+            ..AnimationTuning::default()
+        };
         assert!((t.scale_duration(1.0) - 0.5).abs() < 1e-6);
         assert!((t.scale_duration(0.25) - 0.125).abs() < 1e-6);
     }

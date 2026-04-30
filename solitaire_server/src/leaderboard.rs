@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn leaderboard_entries_sorted_by_score_descending() {
-        let mut entries = vec![
+        let mut entries = [
             entry("Charlie", Some(1_200)),
             entry("Alice",   Some(8_000)),
             entry("Bob",     Some(3_500)),
