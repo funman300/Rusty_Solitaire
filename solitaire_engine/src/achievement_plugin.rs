@@ -509,6 +509,173 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // draw_three_master integration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn draw_three_master_fires_on_tenth_draw_three_win() {
+        let mut app = headless_app();
+
+        // Pre-seed nine prior Draw-Three wins. The pending GameWonEvent will
+        // trigger update_stats_on_win first (StatsUpdate runs before
+        // evaluate_on_win), bumping draw_three_wins to 10 — the unlock
+        // threshold for the draw_three_master achievement.
+        app.world_mut().resource_mut::<StatsResource>().0.draw_three_wins = 9;
+
+        // The current game must be in DrawThree mode so update_on_win
+        // increments draw_three_wins (and not draw_one_wins).
+        app.world_mut()
+            .resource_mut::<GameStateResource>()
+            .0
+            .draw_mode = solitaire_core::game_state::DrawMode::DrawThree;
+
+        app.world_mut().write_message(GameWonEvent {
+            score: 500,
+            time_seconds: 240,
+        });
+        app.update();
+
+        // Sanity-check that the win was actually attributed to Draw-Three so
+        // the achievement reads the correct counter.
+        let stats = &app.world().resource::<StatsResource>().0;
+        assert_eq!(stats.draw_three_wins, 10);
+
+        let unlocked = app
+            .world()
+            .resource::<AchievementsResource>()
+            .0
+            .iter()
+            .find(|r| r.id == "draw_three_master")
+            .map(|r| r.unlocked)
+            .unwrap_or(false);
+        assert!(unlocked, "draw_three_master must unlock at the 10th Draw-Three win");
+
+        // Verify the AchievementUnlockedEvent fired for this id.
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<String> = cursor.read(events).map(|e| e.0.id.clone()).collect();
+        assert!(
+            fired.contains(&"draw_three_master".to_string()),
+            "AchievementUnlockedEvent for draw_three_master must fire; got {fired:?}"
+        );
+    }
+
+    #[test]
+    fn draw_three_master_does_not_fire_at_nine_wins() {
+        let mut app = headless_app();
+
+        // Pre-seed eight prior Draw-Three wins. The pending GameWonEvent
+        // brings draw_three_wins to 9 — one short of the threshold.
+        app.world_mut().resource_mut::<StatsResource>().0.draw_three_wins = 8;
+        app.world_mut()
+            .resource_mut::<GameStateResource>()
+            .0
+            .draw_mode = solitaire_core::game_state::DrawMode::DrawThree;
+
+        app.world_mut().write_message(GameWonEvent {
+            score: 500,
+            time_seconds: 240,
+        });
+        app.update();
+
+        let stats = &app.world().resource::<StatsResource>().0;
+        assert_eq!(stats.draw_three_wins, 9);
+
+        let unlocked = app
+            .world()
+            .resource::<AchievementsResource>()
+            .0
+            .iter()
+            .find(|r| r.id == "draw_three_master")
+            .map(|r| r.unlocked)
+            .unwrap_or(false);
+        assert!(!unlocked, "draw_three_master must remain locked at 9 Draw-Three wins");
+
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<String> = cursor.read(events).map(|e| e.0.id.clone()).collect();
+        assert!(
+            !fired.contains(&"draw_three_master".to_string()),
+            "draw_three_master must not fire below threshold; got {fired:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // zen_winner integration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn zen_winner_fires_on_zen_mode_win() {
+        let mut app = headless_app();
+
+        // Put the active game in Zen mode. evaluate_on_win reads
+        // GameStateResource.mode directly to populate last_win_is_zen.
+        app.world_mut()
+            .resource_mut::<GameStateResource>()
+            .0
+            .mode = solitaire_core::game_state::GameMode::Zen;
+
+        app.world_mut().write_message(GameWonEvent {
+            score: 0,
+            time_seconds: 600,
+        });
+        app.update();
+
+        let unlocked = app
+            .world()
+            .resource::<AchievementsResource>()
+            .0
+            .iter()
+            .find(|r| r.id == "zen_winner")
+            .map(|r| r.unlocked)
+            .unwrap_or(false);
+        assert!(unlocked, "zen_winner must unlock when the game mode is Zen");
+
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<String> = cursor.read(events).map(|e| e.0.id.clone()).collect();
+        assert!(
+            fired.contains(&"zen_winner".to_string()),
+            "AchievementUnlockedEvent for zen_winner must fire; got {fired:?}"
+        );
+    }
+
+    #[test]
+    fn zen_winner_does_not_fire_for_classic_win() {
+        let mut app = headless_app();
+
+        // Default GameMode is Classic; assert and rely on it.
+        assert_eq!(
+            app.world().resource::<GameStateResource>().0.mode,
+            solitaire_core::game_state::GameMode::Classic
+        );
+
+        app.world_mut().write_message(GameWonEvent {
+            score: 1000,
+            time_seconds: 300,
+        });
+        app.update();
+
+        let unlocked = app
+            .world()
+            .resource::<AchievementsResource>()
+            .0
+            .iter()
+            .find(|r| r.id == "zen_winner")
+            .map(|r| r.unlocked)
+            .unwrap_or(false);
+        assert!(!unlocked, "zen_winner must remain locked outside Zen mode");
+
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<String> = cursor.read(events).map(|e| e.0.id.clone()).collect();
+        assert!(
+            !fired.contains(&"zen_winner".to_string()),
+            "zen_winner must not fire on a Classic-mode win; got {fired:?}"
+        );
+    }
+
     fn press(app: &mut App, key: KeyCode) {
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         input.release(key);
