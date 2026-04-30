@@ -34,6 +34,7 @@ use crate::game_plugin::GameMutation;
 use crate::resources::GameStateResource;
 use crate::selection_plugin::SelectionState;
 use crate::time_attack_plugin::TimeAttackResource;
+use crate::ui_focus::{FocusGroup, Focusable};
 
 /// Marker on the score text node.
 #[derive(Component, Debug)]
@@ -452,24 +453,34 @@ fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Comma
             // Menu and Modes don't have a single hotkey accelerator
             // (each row inside their popover has its own); their button
             // labels carry the dropdown chevron in lieu of a key chip.
-            spawn_action_button(row, MenuButton, "Menu \u{25BE}", None, &font);
-            spawn_action_button(row, UndoButton, "Undo", Some("U"), &font);
-            spawn_action_button(row, PauseButton, "Pause", Some("Esc"), &font);
-            spawn_action_button(row, HelpButton, "Help", Some("F1"), &font);
-            spawn_action_button(row, ModesButton, "Modes \u{25BE}", None, &font);
-            spawn_action_button(row, NewGameButton, "New Game", Some("N"), &font);
+            //
+            // The trailing `order` argument is the per-button index in
+            // visual reading order (left → right). It feeds
+            // `Focusable { group: Hud, order }` so Tab cycles the action
+            // bar in the same order the eye scans it.
+            spawn_action_button(row, MenuButton, "Menu \u{25BE}", None, &font, 0);
+            spawn_action_button(row, UndoButton, "Undo", Some("U"), &font, 1);
+            spawn_action_button(row, PauseButton, "Pause", Some("Esc"), &font, 2);
+            spawn_action_button(row, HelpButton, "Help", Some("F1"), &font, 3);
+            spawn_action_button(row, ModesButton, "Modes \u{25BE}", None, &font, 4);
+            spawn_action_button(row, NewGameButton, "New Game", Some("N"), &font, 5);
         });
 }
 
 /// Spawns a single action button as a child of `row`. Each button shares
 /// the same node geometry, idle colour, and `ActionButton` marker so
 /// `paint_action_buttons` can recolour all of them with one query.
+///
+/// `order` is the button's index inside the action bar (0 for the
+/// leftmost). It propagates into the [`Focusable`] this function inserts
+/// so Phase 2's keyboard focus ring cycles the HUD in visual order.
 fn spawn_action_button<M: Component>(
     row: &mut ChildSpawnerCommands,
     marker: M,
     label: &str,
     hotkey: Option<&'static str>,
     font: &TextFont,
+    order: i32,
 ) {
     let hotkey_font = TextFont {
         font: font.font.clone(),
@@ -480,6 +491,15 @@ fn spawn_action_button<M: Component>(
         marker,
         ActionButton,
         Button,
+        // Joins the `Hud` focus group at the supplied order so Tab
+        // cycles HUD buttons left-to-right under Phase 2. The HUD focus
+        // ring still only engages when a HUD button is hovered (or in
+        // future phases, when the player explicitly switches groups);
+        // the marker just declares membership.
+        Focusable {
+            group: FocusGroup::Hud,
+            order,
+        },
         Node {
             padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_2),
             justify_content: JustifyContent::Center,
@@ -1803,5 +1823,138 @@ mod tests {
         // Values outside [0,1] are clamped before the curve runs.
         assert!((score_pulse_scale(-0.2) - 1.0).abs() < 1e-6);
         assert!((score_pulse_scale(2.0) - 1.0).abs() < 1e-6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: keyboard focus ring — HUD action bar
+    // -----------------------------------------------------------------------
+
+    /// Returns the `Focusable` carried by the unique entity matching
+    /// marker `M`. Helper for the HUD focus tests.
+    fn focusable_for<M: Component>(app: &mut App) -> Focusable {
+        app.world_mut()
+            .query_filtered::<&Focusable, With<M>>()
+            .iter(app.world())
+            .next()
+            .copied()
+            .unwrap_or_else(|| panic!("no Focusable on the {} button", std::any::type_name::<M>()))
+    }
+
+    #[test]
+    fn hud_buttons_get_focusable_marker() {
+        let mut app = headless_app();
+        // Every action-bar button is in `FocusGroup::Hud`.
+        for f in [
+            focusable_for::<MenuButton>(&mut app),
+            focusable_for::<UndoButton>(&mut app),
+            focusable_for::<PauseButton>(&mut app),
+            focusable_for::<HelpButton>(&mut app),
+            focusable_for::<ModesButton>(&mut app),
+            focusable_for::<NewGameButton>(&mut app),
+        ] {
+            assert_eq!(
+                f.group,
+                FocusGroup::Hud,
+                "every HUD action button must be in FocusGroup::Hud"
+            );
+        }
+    }
+
+    #[test]
+    fn hud_button_order_matches_spawn_order() {
+        let mut app = headless_app();
+        // Visual reading order (left → right): Menu, Undo, Pause, Help,
+        // Modes, New Game. Their `order` fields must be 0..=5 in that
+        // order so Tab cycles them as the player reads them.
+        assert_eq!(focusable_for::<MenuButton>(&mut app).order, 0);
+        assert_eq!(focusable_for::<UndoButton>(&mut app).order, 1);
+        assert_eq!(focusable_for::<PauseButton>(&mut app).order, 2);
+        assert_eq!(focusable_for::<HelpButton>(&mut app).order, 3);
+        assert_eq!(focusable_for::<ModesButton>(&mut app).order, 4);
+        assert_eq!(focusable_for::<NewGameButton>(&mut app).order, 5);
+    }
+
+    #[test]
+    fn hud_focus_only_engages_when_button_hovered() {
+        // Phase 2 declares membership in `FocusGroup::Hud`; the
+        // engagement rule lives in `handle_focus_keys`. Two halves to
+        // this test:
+        //   (a) no modal + no hover ⇒ Tab is a no-op (Phase 1 contract
+        //       still holds when nothing is hovered).
+        //   (b) no modal + a HUD button hovered ⇒ Tab advances
+        //       `FocusedButton` to a Hud-grouped entity.
+        use crate::ui_focus::{FocusedButton, UiFocusPlugin};
+        use crate::ui_modal::UiModalPlugin;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(UiModalPlugin)
+            .add_plugins(UiFocusPlugin)
+            .add_plugins(GamePlugin)
+            .add_plugins(TablePlugin)
+            .add_plugins(HudPlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.update();
+
+        // (a) Sanity: HUD buttons exist and are focusable, but no
+        // modal open and no hover ⇒ FocusedButton stays None.
+        assert!(
+            app.world().resource::<FocusedButton>().0.is_none(),
+            "no modal open, no auto-focus"
+        );
+
+        // Press Tab. With no modal and no hover, `handle_focus_keys`
+        // resolves no active group and returns early — Tab must not
+        // advance the HUD focus ring on its own.
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.release_all();
+            input.clear();
+            input.press(KeyCode::Tab);
+        }
+        app.update();
+
+        assert!(
+            app.world().resource::<FocusedButton>().0.is_none(),
+            "Tab with no modal and no Hud hover must not engage the HUD focus ring"
+        );
+
+        // (b) Hover the Menu button — the leftmost HUD action — and
+        // Tab. The Hud-group cycle should pick a Hud-tagged entity.
+        let menu_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<MenuButton>>()
+            .iter(app.world())
+            .next()
+            .expect("MenuButton entity should exist");
+        app.world_mut()
+            .entity_mut(menu_entity)
+            .insert(Interaction::Hovered);
+
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.release_all();
+            input.clear();
+            input.press(KeyCode::Tab);
+        }
+        app.update();
+
+        let focused = app
+            .world()
+            .resource::<FocusedButton>()
+            .0
+            .expect("Tab with a HUD button hovered must engage the HUD focus ring");
+        // The focused entity must itself be Hud-grouped (i.e. one of
+        // the action-bar buttons), not anything else in the world.
+        let focusable = app
+            .world()
+            .entity(focused)
+            .get::<Focusable>()
+            .expect("focused entity must carry Focusable");
+        assert_eq!(
+            focusable.group,
+            FocusGroup::Hud,
+            "Hud-engaged Tab must focus a Hud-grouped entity"
+        );
     }
 }

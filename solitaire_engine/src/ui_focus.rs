@@ -102,6 +102,7 @@ impl Plugin for UiFocusPlugin {
                     attach_focusable_to_modal_buttons,
                     auto_focus_on_modal_open,
                     sync_focus_on_mouse_click,
+                    clear_hud_focus_on_unhover,
                     handle_focus_keys,
                     update_focus_overlay,
                 )
@@ -260,26 +261,82 @@ fn sync_focus_on_mouse_click(
     }
 }
 
-/// Handles Tab / Shift+Tab / Enter / Space when a modal is open (the
-/// only active focus group in Phase 1). Consumed keys are cleared from
-/// `ButtonInput<KeyCode>` so [`crate::selection_plugin`] doesn't also
-/// treat them as card-selection input.
+/// Clears [`FocusedButton`] when the focused entity is a Hud-grouped
+/// button and the mouse has moved off the entire HUD bar (no Hud
+/// `Focusable` is currently `Interaction::Hovered`). Without this, the
+/// focus ring would persist around a HUD button after the cursor
+/// leaves — visually confusing because the player has nothing to
+/// activate at that point.
 ///
-/// When no modal is open this system is a no-op — card-selection Tab
-/// keeps working exactly as it did before Phase 1.
+/// Modal focus is unaffected: a focused modal button stays focused
+/// while the modal is open, regardless of mouse position.
+fn clear_hud_focus_on_unhover(
+    mut focused: ResMut<FocusedButton>,
+    focusables: Query<&Focusable>,
+    hud_interactions: Query<(&Interaction, &Focusable), Without<Disabled>>,
+) {
+    let Some(target) = focused.0 else {
+        return;
+    };
+    // Only act when the current focus is a Hud focusable. Modal focus
+    // is sticky.
+    let Ok(target_focusable) = focusables.get(target) else {
+        return;
+    };
+    if target_focusable.group != FocusGroup::Hud {
+        return;
+    }
+    let any_hud_hovered = hud_interactions.iter().any(|(interaction, focusable)| {
+        matches!(interaction, Interaction::Hovered) && focusable.group == FocusGroup::Hud
+    });
+    if !any_hud_hovered {
+        focused.0 = None;
+    }
+}
+
+/// Handles Tab / Shift+Tab / Enter / Space when a focus group is
+/// active. Two activation paths exist:
+///
+/// 1. **Modal** — if any [`ModalScrim`] entity exists, the topmost
+///    scrim's group becomes active. Tab cycles only buttons inside that
+///    scrim's hierarchy (matches Phase 1).
+/// 2. **Hud** — else, if at least one `Focusable { group: Hud }`
+///    entity is currently `Interaction::Hovered`, the HUD bar engages.
+///    Tab cycles through every Hud-grouped focusable, sorted by
+///    `(order, spawn_index)`.
+///
+/// When neither path is active this system is a no-op — card-selection
+/// Tab in [`crate::selection_plugin`] keeps working exactly as before.
+///
+/// Consumed keys are cleared from `ButtonInput<KeyCode>` so the
+/// selection plugin doesn't double-handle them.
+#[allow(clippy::type_complexity)]
 fn handle_focus_keys(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     scrims: Query<Entity, With<ModalScrim>>,
     children_q: Query<&Children>,
     focusables: Query<(&Focusable, Has<Disabled>)>,
+    hud_interactions: Query<(Entity, &Interaction, &Focusable), Without<Disabled>>,
     mut focused: ResMut<FocusedButton>,
     mut writes: Commands,
 ) {
-    if scrims.iter().next().is_none() {
-        // No modal open ⇒ Phase 1 stays out of the way. Phase 2 will
-        // extend this with a Hud-group active path.
+    // Resolve the active focus group:
+    //   1. Any modal open  ⇒ Modal(topmost scrim)
+    //   2. Any Hud-grouped focusable hovered ⇒ Hud
+    //   3. Otherwise ⇒ no-op
+    let active_group: FocusGroup = if let Some(active_scrim) = scrims.iter().max_by_key(|e| e.index()) {
+        // Pick the topmost modal as the active group. With multiple
+        // modals stacked (Pause + Forfeit confirm) the most-recently-
+        // spawned scrim has the highest entity index — same heuristic
+        // Phase 1 used.
+        FocusGroup::Modal(active_scrim)
+    } else if hud_interactions.iter().any(|(_, interaction, focusable)| {
+        matches!(interaction, Interaction::Hovered) && focusable.group == FocusGroup::Hud
+    }) {
+        FocusGroup::Hud
+    } else {
         return;
-    }
+    };
 
     let tab_pressed = keys.just_pressed(KeyCode::Tab);
     let activate_pressed =
@@ -289,42 +346,56 @@ fn handle_focus_keys(
         return;
     }
 
-    // Pick the topmost modal as the active group. With multiple modals
-    // stacked (Pause + Forfeit confirm) the most-recently-spawned scrim
-    // has the highest entity index. Bevy entity indices grow on each
-    // spawn, so this is a stable proxy for "topmost modal" in Phase 1.
-    let active_scrim = scrims
-        .iter()
-        .max_by_key(|e| e.index())
-        .expect("scrims iter was non-empty above");
-    let active_group = FocusGroup::Modal(active_scrim);
-
-    // Walk the scrim's hierarchy in `Children` order so the cycle
-    // matches the visual document order (left → right inside
-    // `spawn_modal_actions`). Using `Children` traversal — not entity
-    // index — sidesteps the fact that ECS entity indices don't track
-    // spawn order under deferred command application.
-    let mut group: Vec<Entity> = Vec::new();
-    let mut stack: Vec<Entity> = vec![active_scrim];
-    while let Some(entity) = stack.pop() {
-        if let Ok(children) = children_q.get(entity) {
-            // Push in reverse so the first child is popped first —
-            // gives us a depth-first walk in Children order.
-            for child in children.iter().collect::<Vec<_>>().into_iter().rev() {
-                stack.push(child);
+    // Build the cycle list for the active group.
+    let mut group: Vec<Entity> = match active_group {
+        FocusGroup::Modal(scrim) => {
+            // Walk the scrim's hierarchy in `Children` order so the
+            // cycle matches the visual document order (left → right
+            // inside `spawn_modal_actions`). Using `Children`
+            // traversal — not entity index — sidesteps the fact that
+            // ECS entity indices don't track spawn order under
+            // deferred command application.
+            let mut found: Vec<Entity> = Vec::new();
+            let mut stack: Vec<Entity> = vec![scrim];
+            while let Some(entity) = stack.pop() {
+                if let Ok(children) = children_q.get(entity) {
+                    // Push in reverse so the first child is popped
+                    // first — gives us a depth-first walk in Children
+                    // order.
+                    for child in children.iter().collect::<Vec<_>>().into_iter().rev() {
+                        stack.push(child);
+                    }
+                }
+                if let Ok((focusable, disabled)) = focusables.get(entity)
+                    && !disabled
+                    && focusable.group == active_group
+                {
+                    found.push(entity);
+                }
             }
+            found
         }
-        if let Ok((focusable, disabled)) = focusables.get(entity)
-            && !disabled
-            && focusable.group == active_group
-        {
-            group.push(entity);
+        FocusGroup::Hud => {
+            // The HUD action bar isn't a single subtree we can walk —
+            // each button is spawned independently — so collect every
+            // Hud-grouped, non-disabled focusable directly.
+            // `hud_interactions` already filters out `Disabled` and
+            // exposes the entity id we need.
+            let mut found: Vec<Entity> = hud_interactions
+                .iter()
+                .filter_map(|(entity, _interaction, focusable)| {
+                    (focusable.group == FocusGroup::Hud).then_some(entity)
+                })
+                .collect();
+            // Tiebreak by entity index so a deterministic spawn-order
+            // sort falls out of the secondary key.
+            found.sort_by_key(|e| e.index());
+            found
         }
-    }
-    // Stable sort by `Focusable::order` (Phase 1 keeps every value at
-    // 0 so this is effectively a no-op, but it lets future phases give
-    // explicit priorities — e.g. a "primary first" override — without
-    // changing the tab walk).
+    };
+    // Stable sort by `Focusable::order` so explicit priorities (e.g.
+    // HUD spawn-order: 0..5) drive the cycle. The pre-sort by entity
+    // index above is the tiebreaker for entries sharing an `order`.
     group.sort_by_key(|e| {
         focusables
             .get(*e)
@@ -761,6 +832,165 @@ mod tests {
         assert!(
             !keys.just_pressed(KeyCode::Tab),
             "handle_focus_keys must clear Tab so selection_plugin can't double-handle it"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2 — HUD-on-hover focus path
+    // -----------------------------------------------------------------------
+
+    /// Spawns three synthetic Hud-tagged focusable buttons (orders
+    /// 0, 1, 2) without involving the real HUD bar — keeps the test
+    /// independent of `HudPlugin`'s layout. Every button gets a
+    /// `Button` widget (so `Interaction` is present) and `Node` so the
+    /// query in `handle_focus_keys` matches.
+    fn spawn_three_hud_buttons(app: &mut App) -> (Entity, Entity, Entity) {
+        let world = app.world_mut();
+        let a = world
+            .spawn((
+                Button,
+                Node::default(),
+                Interaction::default(),
+                Focusable {
+                    group: FocusGroup::Hud,
+                    order: 0,
+                },
+                TestButtonA,
+            ))
+            .id();
+        let b = world
+            .spawn((
+                Button,
+                Node::default(),
+                Interaction::default(),
+                Focusable {
+                    group: FocusGroup::Hud,
+                    order: 1,
+                },
+                TestButtonB,
+            ))
+            .id();
+        let c = world
+            .spawn((
+                Button,
+                Node::default(),
+                Interaction::default(),
+                Focusable {
+                    group: FocusGroup::Hud,
+                    order: 2,
+                },
+                TestButtonC,
+            ))
+            .id();
+        app.update();
+        (a, b, c)
+    }
+
+    #[test]
+    fn hud_tab_engages_only_when_a_hud_button_is_hovered() {
+        let mut app = headless_app();
+        let (a, _b, _c) = spawn_three_hud_buttons(&mut app);
+
+        // No hover, no modal ⇒ Tab is a no-op. (Phase 1 contract still
+        // holds when nothing is hovered.)
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert!(
+            app.world().resource::<FocusedButton>().0.is_none(),
+            "Tab without hover must not engage the HUD focus ring"
+        );
+
+        // Hover button A → Tab must engage and focus a Hud entity.
+        // With no current focus, the cycle starts at index 0 (order
+        // 0), which is button A.
+        app.world_mut().entity_mut(a).insert(Interaction::Hovered);
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<FocusedButton>().0,
+            Some(a),
+            "first Tab on Hud-engaged group should focus the order=0 button"
+        );
+    }
+
+    #[test]
+    fn hud_tab_advances_within_hud_group() {
+        let mut app = headless_app();
+        let (a, b, c) = spawn_three_hud_buttons(&mut app);
+
+        // Engage by hovering A, then Tab to land on A.
+        app.world_mut().entity_mut(a).insert(Interaction::Hovered);
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(a));
+
+        // Subsequent Tabs cycle by `Focusable::order`.
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(b));
+
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(c));
+
+        // Wrap-around back to A.
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(a));
+    }
+
+    #[test]
+    fn hud_enter_activates_focused_hud_button() {
+        let mut app = headless_app();
+        let (a, _b, _c) = spawn_three_hud_buttons(&mut app);
+
+        app.world_mut().entity_mut(a).insert(Interaction::Hovered);
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(a));
+
+        // Enter while A is focused inserts `Interaction::Pressed`.
+        // Note: A also still has `Interaction::Hovered` from earlier;
+        // the activation system overwrites it with `Pressed`.
+        press_key(&mut app, KeyCode::Enter);
+        app.update();
+
+        let post = app
+            .world()
+            .entity(a)
+            .get::<Interaction>()
+            .copied()
+            .expect("focused HUD button should carry an Interaction after activation");
+        assert_eq!(
+            post,
+            Interaction::Pressed,
+            "Enter on focused HUD button A should leave its Interaction at Pressed"
+        );
+    }
+
+    #[test]
+    fn hud_focus_clears_when_mouse_leaves_bar() {
+        let mut app = headless_app();
+        let (a, b, c) = spawn_three_hud_buttons(&mut app);
+
+        // Engage by hovering A, then Tab to focus A.
+        app.world_mut().entity_mut(a).insert(Interaction::Hovered);
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(a));
+
+        // Mouse leaves the bar entirely — every Hud button drops back
+        // to `Interaction::None`. After the next update,
+        // `clear_hud_focus_on_unhover` must clear `FocusedButton`.
+        for entity in [a, b, c] {
+            app.world_mut().entity_mut(entity).insert(Interaction::None);
+        }
+        app.update();
+
+        assert!(
+            app.world().resource::<FocusedButton>().0.is_none(),
+            "FocusedButton must clear once no Hud button is hovered"
         );
     }
 }

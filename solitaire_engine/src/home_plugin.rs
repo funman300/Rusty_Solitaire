@@ -23,6 +23,7 @@ use crate::events::{
 };
 use crate::font_plugin::FontResource;
 use crate::progress_plugin::ProgressResource;
+use crate::ui_focus::{Disabled, FocusGroup, Focusable};
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
 };
@@ -138,6 +139,7 @@ impl Plugin for HomePlugin {
                 Update,
                 (
                     toggle_home_screen,
+                    attach_focusable_to_home_mode_cards,
                     handle_home_card_click,
                     handle_home_cancel_button,
                 ),
@@ -279,6 +281,65 @@ fn spawn_home_screen(commands: &mut Commands, level: u32, font_res: Option<&Font
             );
         });
     });
+}
+
+/// Tab-walk order for each mode card, matching the visual top-to-bottom
+/// stack inside the Home modal. Lower numbers receive focus first under
+/// `Focusable`'s sort.
+fn home_mode_focus_order(mode: HomeMode) -> i32 {
+    match mode {
+        HomeMode::Classic => 0,
+        HomeMode::Daily => 1,
+        HomeMode::Zen => 2,
+        HomeMode::Challenge => 3,
+        HomeMode::TimeAttack => 4,
+    }
+}
+
+/// Auto-attaches [`Focusable`] (and [`Disabled`] when locked) to every
+/// newly-spawned [`HomeModeCard`]. Walks ancestors to find the
+/// [`crate::ui_modal::ModalScrim`] so each card's focus group is bound
+/// to its parent modal — mirrors the convention that
+/// `attach_focusable_to_modal_buttons` uses for `ModalButton`s.
+///
+/// Doing this in a system (instead of inline at spawn time) lets
+/// `spawn_home_screen` keep using the existing `spawn_modal`'s
+/// build-closure shape; the scrim entity isn't visible inside that
+/// closure, only after the call returns. The system runs every frame
+/// and is a no-op once every card has been tagged.
+fn attach_focusable_to_home_mode_cards(
+    mut commands: Commands,
+    new_cards: Query<(Entity, &HomeModeCard), Without<Focusable>>,
+    parents: Query<&ChildOf>,
+    scrims: Query<(), With<crate::ui_modal::ModalScrim>>,
+    progress: Option<Res<ProgressResource>>,
+) {
+    let level = progress.as_ref().map_or(0, |p| p.0.level);
+    for (card_entity, card) in &new_cards {
+        // Walk ancestors until we find the ModalScrim. Bounded loop so a
+        // malformed hierarchy can't hang the system — same defensive
+        // shape as `attach_focusable_to_modal_buttons`.
+        let mut current = card_entity;
+        let mut scrim_entity: Option<Entity> = None;
+        for _ in 0..32 {
+            if scrims.get(current).is_ok() {
+                scrim_entity = Some(current);
+                break;
+            }
+            match parents.get(current) {
+                Ok(parent) => current = parent.parent(),
+                Err(_) => break,
+            }
+        }
+        let Some(scrim) = scrim_entity else { continue };
+        commands.entity(card_entity).insert(Focusable {
+            group: FocusGroup::Modal(scrim),
+            order: home_mode_focus_order(card.0),
+        });
+        if !card.0.is_unlocked(level) {
+            commands.entity(card_entity).insert(Disabled);
+        }
+    }
 }
 
 /// Spawns one mode card — a `Button` whose children are a title row, a
@@ -705,6 +766,111 @@ mod tests {
         assert!(
             nc.read(new_game).next().is_none(),
             "Cancel must not fire NewGameRequestEvent"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: keyboard focus ring — Home mode cards
+    // -----------------------------------------------------------------------
+
+    /// Headless app variant that also installs the focus and modal
+    /// plugins so `attach_focusable_to_modal_buttons` and Phase 2's
+    /// `attach_focusable_to_home_mode_cards` can run.
+    fn headless_app_with_focus() -> App {
+        use crate::ui_focus::UiFocusPlugin;
+        use crate::ui_modal::UiModalPlugin;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(UiModalPlugin)
+            .add_plugins(UiFocusPlugin)
+            .add_plugins(GamePlugin)
+            .add_plugins(TablePlugin)
+            .add_plugins(ProgressPlugin::headless())
+            .add_plugins(HomePlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.update();
+        app
+    }
+
+    /// Open the Home modal at the given player level. Tags the cards
+    /// with `Focusable` (and, when locked, `Disabled`) by running an
+    /// extra tick after the M press so the focus-attach system fires.
+    fn open_home_at_level(app: &mut App, level: u32) -> Entity {
+        app.world_mut().resource_mut::<ProgressResource>().0.level = level;
+        let entity = open_home(app);
+        // One more tick so `attach_focusable_to_home_mode_cards` runs
+        // on the freshly-spawned cards.
+        app.update();
+        entity
+    }
+
+    #[test]
+    fn home_mode_cards_get_focusable_marker() {
+        let mut app = headless_app_with_focus();
+        let scrim = open_home_at_level(&mut app, CHALLENGE_UNLOCK_LEVEL);
+
+        // Every card carries `Focusable` in `FocusGroup::Modal(scrim)`.
+        let cards: Vec<(HomeMode, Focusable)> = app
+            .world_mut()
+            .query::<(&HomeModeCard, &Focusable)>()
+            .iter(app.world())
+            .map(|(c, f)| (c.0, *f))
+            .collect();
+
+        assert_eq!(cards.len(), 5, "all five cards must carry a Focusable");
+        for (mode, focusable) in &cards {
+            assert_eq!(
+                focusable.group,
+                FocusGroup::Modal(scrim),
+                "{mode:?} card must be in the Home scrim's focus group"
+            );
+        }
+    }
+
+    #[test]
+    fn home_locked_cards_get_disabled_marker() {
+        let mut app = headless_app_with_focus();
+        // Level 0: Zen, Challenge, Time Attack are locked; Classic and
+        // Daily are not.
+        let _ = open_home_at_level(&mut app, 0);
+
+        let states: Vec<(HomeMode, bool)> = app
+            .world_mut()
+            .query::<(&HomeModeCard, bevy::ecs::query::Has<Disabled>)>()
+            .iter(app.world())
+            .map(|(c, d)| (c.0, d))
+            .collect();
+
+        for (mode, disabled) in states {
+            match mode {
+                HomeMode::Classic | HomeMode::Daily => assert!(
+                    !disabled,
+                    "{mode:?} must not be Disabled at level 0 (it's never locked)"
+                ),
+                HomeMode::Zen | HomeMode::Challenge | HomeMode::TimeAttack => assert!(
+                    disabled,
+                    "{mode:?} must carry the Disabled marker at level 0 so Tab skips it"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn home_unlocked_cards_no_disabled_marker() {
+        let mut app = headless_app_with_focus();
+        let _ = open_home_at_level(&mut app, CHALLENGE_UNLOCK_LEVEL);
+
+        let any_disabled = app
+            .world_mut()
+            .query_filtered::<&HomeModeCard, With<Disabled>>()
+            .iter(app.world())
+            .next()
+            .is_some();
+
+        assert!(
+            !any_disabled,
+            "no card may be Disabled when the player is at the unlock level"
         );
     }
 }
