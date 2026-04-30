@@ -17,6 +17,7 @@ use solitaire_data::AnimSpeed;
 
 use crate::achievement_plugin::display_name_for;
 use crate::auto_complete_plugin::AutoCompleteState;
+use crate::card_animation::{sample_curve, CardAnimation, MotionCurve};
 use crate::card_plugin::CardEntity;
 use crate::challenge_plugin::ChallengeAdvancedEvent;
 use crate::daily_challenge_plugin::{DailyChallengeCompletedEvent, DailyGoalAnnouncementEvent};
@@ -28,10 +29,17 @@ use crate::pause_plugin::PausedResource;
 use crate::progress_plugin::LevelUpEvent;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
 use crate::time_attack_plugin::TimeAttackEndedEvent;
+use crate::ui_theme::{
+    scaled_duration, MOTION_CASCADE_SLIDE_SECS, MOTION_CASCADE_STAGGER_SECS, MOTION_SLIDE_SECS,
+};
 use crate::weekly_goals_plugin::WeeklyGoalCompletedEvent;
 
 /// Duration of a card slide (move) animation in seconds at Normal speed.
-pub const SLIDE_SECS: f32 = 0.15;
+///
+/// Re-exported from `ui_theme::MOTION_SLIDE_SECS` so the entire engine pulls
+/// gameplay slide timing from one design-token. Kept as a `pub const` for
+/// backwards compatibility with existing callers that read this directly.
+pub const SLIDE_SECS: f32 = MOTION_SLIDE_SECS;
 
 /// The effective slide duration, updated whenever `Settings::animation_speed` changes.
 #[derive(Resource, Debug, Clone, Copy)]
@@ -46,11 +54,10 @@ impl Default for EffectiveSlideDuration {
 }
 
 fn anim_speed_to_secs(speed: &AnimSpeed) -> f32 {
-    match speed {
-        AnimSpeed::Normal => SLIDE_SECS,
-        AnimSpeed::Fast => 0.07,
-        AnimSpeed::Instant => 0.0,
-    }
+    // Route through `ui_theme::scaled_duration` so the slide timing follows
+    // the same `MOTION_*_SECS` token / `AnimSpeed` mapping as every other
+    // motion in the engine (toasts, deal stagger, shake, settle, cascade).
+    scaled_duration(MOTION_SLIDE_SECS, *speed)
 }
 
 const WIN_TOAST_SECS: f32 = 4.0;
@@ -63,38 +70,25 @@ const CHALLENGE_TOAST_SECS: f32 = 3.0;
 const VOLUME_TOAST_SECS: f32 = 1.4;
 
 /// Per-card stagger interval for the win cascade at Normal speed (seconds).
-const CASCADE_STAGGER_NORMAL: f32 = 0.05;
-/// Duration of each card's cascade slide at Normal speed (seconds).
-const CASCADE_DURATION_NORMAL: f32 = 0.5;
-
-/// Returns the per-card stagger delay for the win cascade at the given `AnimSpeed`.
 ///
-/// | `AnimSpeed` | Returned value |
-/// |-------------|----------------|
-/// | `Normal`    | 0.05 s         |
-/// | `Fast`      | 0.025 s        |
-/// | `Instant`   | 0.0 s          |
+/// Sourced from `ui_theme::MOTION_CASCADE_STAGGER_SECS` so all motion timing
+/// lives in one design-token module.
+const CASCADE_STAGGER_NORMAL: f32 = MOTION_CASCADE_STAGGER_SECS;
+/// Duration of each card's cascade slide at Normal speed (seconds).
+///
+/// Sourced from `ui_theme::MOTION_CASCADE_SLIDE_SECS`.
+const CASCADE_DURATION_NORMAL: f32 = MOTION_CASCADE_SLIDE_SECS;
+
+/// Returns the per-card stagger delay for the win cascade at the given
+/// `AnimSpeed`, scaled via `ui_theme::scaled_duration`.
 pub fn cascade_step_secs(speed: AnimSpeed) -> f32 {
-    match speed {
-        AnimSpeed::Normal => CASCADE_STAGGER_NORMAL,
-        AnimSpeed::Fast => CASCADE_STAGGER_NORMAL / 2.0,
-        AnimSpeed::Instant => 0.0,
-    }
+    scaled_duration(MOTION_CASCADE_STAGGER_SECS, speed)
 }
 
-/// Returns the slide duration for each card in the win cascade at the given `AnimSpeed`.
-///
-/// | `AnimSpeed` | Returned value |
-/// |-------------|----------------|
-/// | `Normal`    | 0.5 s          |
-/// | `Fast`      | 0.25 s         |
-/// | `Instant`   | 0.0 s          |
+/// Returns the slide duration for each card in the win cascade at the given
+/// `AnimSpeed`, scaled via `ui_theme::scaled_duration`.
 pub fn cascade_duration_secs(speed: AnimSpeed) -> f32 {
-    match speed {
-        AnimSpeed::Normal => CASCADE_DURATION_NORMAL,
-        AnimSpeed::Fast => CASCADE_DURATION_NORMAL / 2.0,
-        AnimSpeed::Instant => 0.0,
-    }
+    scaled_duration(MOTION_CASCADE_SLIDE_SECS, speed)
 }
 
 /// Linear-lerp slide animation.
@@ -237,11 +231,33 @@ fn advance_card_anims(
         }
         anim.elapsed += dt;
         let t = (anim.elapsed / anim.duration).min(1.0);
-        transform.translation = anim.start.lerp(anim.target, t);
+        // Curved interpolation using `MotionCurve::SmoothSnap` (cubic ease-out
+        // with a small terminal overshoot). Hardcoded at the call site so the
+        // shared `CardAnim` struct stays a simple linear-tween container — the
+        // upgrade is one extra `sample_curve` call per advancing animation.
+        let s = sample_curve(MotionCurve::SmoothSnap, t);
+        transform.translation = anim.start.lerp(anim.target, s);
         if t >= 1.0 {
+            transform.translation = anim.target;
             commands.entity(entity).remove::<CardAnim>();
         }
     }
+}
+
+/// Maximum per-card Z-rotation drift applied during the win cascade, in
+/// radians. 15° gives a lively but legible scatter — anything larger starts
+/// to look chaotic.
+const WIN_CASCADE_MAX_ROTATION_RAD: f32 = std::f32::consts::PI / 12.0;
+
+/// Returns a deterministic per-card Z-rotation in `±WIN_CASCADE_MAX_ROTATION_RAD`
+/// for the win cascade. Indexing by the card's position in the iterator keeps
+/// the result reproducible for a given deal without needing a random crate.
+fn cascade_rotation(index: usize) -> f32 {
+    // Pseudo-random hash from a Fibonacci multiplier; same approach used by
+    // `card_animation::timing::micro_vary`. Returns 0..=1.
+    let hash = (index as u32).wrapping_mul(2_654_435_761);
+    let noise = (hash >> 16) as f32 / 65_536.0;
+    (noise - 0.5) * 2.0 * WIN_CASCADE_MAX_ROTATION_RAD
 }
 
 fn handle_win_cascade(
@@ -274,17 +290,44 @@ fn handle_win_cascade(
     let win_msg = format!("You Win!  Score: {}  Time: {m}:{s:02}", ev.score);
     spawn_toast(&mut commands, win_msg, WIN_TOAST_SECS);
 
-    let step = settings.as_ref().map_or(CASCADE_STAGGER_NORMAL, |s| cascade_step_secs(s.0.animation_speed.clone()));
-    let duration = settings.as_ref().map_or(CASCADE_DURATION_NORMAL, |s| cascade_duration_secs(s.0.animation_speed.clone()));
+    let step = settings
+        .as_ref()
+        .map_or(CASCADE_STAGGER_NORMAL, |s| cascade_step_secs(s.0.animation_speed));
+    let duration = settings
+        .as_ref()
+        .map_or(CASCADE_DURATION_NORMAL, |s| cascade_duration_secs(s.0.animation_speed));
 
     for (i, (entity, transform)) in cards.iter().enumerate() {
-        commands.entity(entity).insert(CardAnim {
-            start: transform.translation,
-            target: targets[i % 8],
+        // Use the curve-aware `CardAnimation` here (not `CardAnim`) so we can
+        // pick `MotionCurve::Expressive` for the cascade — the spring-style
+        // overshoot is what gives the win moment its theatrical feel. The
+        // `CardAnim`/`CardAnimation` coexistence rule (one per entity) is
+        // satisfied because cards have neither at the moment the cascade
+        // starts.
+        let start = transform.translation;
+        let target = targets[i % 8];
+        commands.entity(entity).insert(CardAnimation {
+            start: start.truncate(),
+            end: target.truncate(),
             elapsed: 0.0,
             duration,
+            curve: crate::card_animation::MotionCurve::Expressive,
             delay: i as f32 * step,
+            start_z: start.z,
+            end_z: target.z,
+            z_lift: 0.0,
+            scale_start: 1.0,
+            scale_end: 1.0,
         });
+
+        // Per-card Z-rotation drift (±15°), deterministic per cascade
+        // ordering — gives the scatter a more lively feel without needing
+        // rotation interpolation in the tween system. Since cards fly off
+        // screen, the static rotation reads as motion.
+        let rot = cascade_rotation(i);
+        let mut new_transform = *transform;
+        new_transform.rotation = Quat::from_rotation_z(rot);
+        commands.entity(entity).insert(new_transform);
     }
 }
 
@@ -584,13 +627,16 @@ mod tests {
     }
 
     #[test]
-    fn card_anim_at_half_elapsed_reaches_midpoint() {
+    fn card_anim_at_half_elapsed_passes_geometric_midpoint() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins).add_plugins(AnimationPlugin);
 
         let start = Vec3::ZERO;
         let target = Vec3::new(100.0, 0.0, 0.0);
-        // elapsed = 0.5, duration = 1.0 → t = 0.5 even when dt=0
+        // elapsed = 0.5, duration = 1.0 → t = 0.5 even when dt=0.
+        // With `MotionCurve::SmoothSnap` (cubic ease-out) the position at
+        // t=0.5 is well past the geometric midpoint — assert we're past 50
+        // but still short of the target so the animation is mid-flight.
         let entity = app
             .world_mut()
             .spawn((
@@ -602,7 +648,11 @@ mod tests {
         app.update();
 
         let pos = app.world().entity(entity).get::<Transform>().unwrap().translation;
-        assert!((pos.x - 50.0).abs() < 1e-3, "expected midpoint x=50, got {}", pos.x);
+        assert!(
+            pos.x > 50.0 && pos.x < 100.0,
+            "with SmoothSnap, t=0.5 should be past geometric midpoint but short of target; got {}",
+            pos.x
+        );
         assert!(
             app.world().entity(entity).get::<CardAnim>().is_some(),
             "animation not yet complete"
@@ -788,7 +838,7 @@ mod tests {
 
         let before = app
             .world_mut()
-            .query::<&CardAnim>()
+            .query::<&CardAnimation>()
             .iter(app.world())
             .count();
         assert_eq!(before, 0, "no animations before win");
@@ -799,10 +849,60 @@ mod tests {
 
         let after = app
             .world_mut()
-            .query::<&CardAnim>()
+            .query::<&CardAnimation>()
             .iter(app.world())
             .count();
-        assert_eq!(after, 52, "all 52 cards should have cascade animations");
+        assert_eq!(
+            after, 52,
+            "all 52 cards should have curve-based cascade animations"
+        );
+    }
+
+    #[test]
+    fn win_cascade_uses_expressive_curve() {
+        let mut app = app_with_anim();
+        app.world_mut()
+            .write_message(GameWonEvent { score: 0, time_seconds: 0 });
+        app.update();
+
+        let mut q = app.world_mut().query::<&CardAnimation>();
+        for anim in q.iter(app.world()) {
+            assert_eq!(
+                anim.curve,
+                MotionCurve::Expressive,
+                "win cascade must use the Expressive curve"
+            );
+        }
+    }
+
+    #[test]
+    fn win_cascade_applies_per_card_rotation() {
+        let mut app = app_with_anim();
+        app.world_mut()
+            .write_message(GameWonEvent { score: 0, time_seconds: 0 });
+        app.update();
+
+        // At least one card's rotation must differ from identity — the
+        // deterministic hash will produce non-zero rotations for nearly all
+        // 52 indices.
+        let mut q = app.world_mut().query::<(&CardEntity, &Transform)>();
+        let any_rotated = q
+            .iter(app.world())
+            .any(|(_, t)| t.rotation.z.abs() > 1e-4 || t.rotation.w < 0.999);
+        assert!(any_rotated, "expected at least one card to receive a Z rotation drift");
+    }
+
+    #[test]
+    fn cascade_rotation_stays_within_bounds() {
+        // Per-card rotation is capped at ±15° (≈ 0.2618 rad). Sampling a
+        // wider index range than a real deal exercises the hash distribution.
+        for i in 0..256 {
+            let r = cascade_rotation(i);
+            assert!(
+                r.abs() <= WIN_CASCADE_MAX_ROTATION_RAD + 1e-6,
+                "cascade_rotation({i}) = {r} exceeds the ±15° cap"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -810,8 +910,9 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn cascade_step_normal_is_expected_value() {
-        assert!((cascade_step_secs(AnimSpeed::Normal) - 0.05).abs() < 1e-6);
+    fn cascade_step_normal_matches_design_token() {
+        // Sourced from `ui_theme::MOTION_CASCADE_STAGGER_SECS`.
+        assert!((cascade_step_secs(AnimSpeed::Normal) - MOTION_CASCADE_STAGGER_SECS).abs() < 1e-6);
     }
 
     #[test]
@@ -830,8 +931,11 @@ mod tests {
     }
 
     #[test]
-    fn cascade_duration_normal_is_expected_value() {
-        assert!((cascade_duration_secs(AnimSpeed::Normal) - 0.5).abs() < 1e-6);
+    fn cascade_duration_normal_matches_design_token() {
+        // Sourced from `ui_theme::MOTION_CASCADE_SLIDE_SECS`.
+        assert!(
+            (cascade_duration_secs(AnimSpeed::Normal) - MOTION_CASCADE_SLIDE_SECS).abs() < 1e-6
+        );
     }
 
     #[test]

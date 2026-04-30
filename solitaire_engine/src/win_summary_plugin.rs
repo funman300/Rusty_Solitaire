@@ -20,7 +20,9 @@ use crate::events::{
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::GameStateResource;
+use crate::settings_plugin::SettingsResource;
 use crate::stats_plugin::{StatsResource, StatsUpdate};
+use crate::ui_theme::{scaled_duration, MOTION_WIN_SHAKE_AMPLITUDE, MOTION_WIN_SHAKE_SECS};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -30,10 +32,12 @@ use crate::stats_plugin::{StatsResource, StatsUpdate};
 /// Chosen so the cascade animation has a moment to start first.
 const WIN_SUMMARY_DELAY_SECS: f32 = 0.5;
 
-/// Duration of the screen-shake in seconds.
-const SHAKE_DURATION_SECS: f32 = 0.6;
+/// Default duration of the screen-shake in seconds, before `AnimSpeed` scaling.
+/// Sourced from `ui_theme::MOTION_WIN_SHAKE_SECS`.
+const SHAKE_DURATION_SECS: f32 = MOTION_WIN_SHAKE_SECS;
 /// Maximum camera displacement in world-space pixels at the start of the shake.
-const SHAKE_INTENSITY: f32 = 8.0;
+/// Sourced from `ui_theme::MOTION_WIN_SHAKE_AMPLITUDE`.
+const SHAKE_INTENSITY: f32 = MOTION_WIN_SHAKE_AMPLITUDE;
 
 // ---------------------------------------------------------------------------
 // Resources
@@ -103,6 +107,11 @@ fn build_xp_detail(time_seconds: u64, used_undo: bool) -> String {
 pub struct ScreenShakeResource {
     /// Seconds of shake remaining.
     pub remaining: f32,
+    /// Total duration the shake was armed for, used to compute the
+    /// `remaining / total` decay factor. Tracked separately from `remaining`
+    /// because the duration is now scaled by `AnimSpeed`, so a fixed
+    /// divisor would be wrong on Fast.
+    pub total: f32,
     /// Peak displacement in world-space pixels (decays to zero over `remaining`).
     pub intensity: f32,
 }
@@ -308,14 +317,25 @@ fn spawn_win_summary_after_delay(
     mut shake: ResMut<ScreenShakeResource>,
     mut pending: ResMut<WinSummaryPending>,
     session: Res<SessionAchievements>,
+    settings: Option<Res<SettingsResource>>,
     time: Res<Time>,
     overlays: Query<Entity, With<WinSummaryOverlay>>,
     mut delay: Local<Option<f32>>,
 ) {
     // Process new win events.
     for _ in won.read() {
-        // Arm the screen shake immediately.
-        shake.remaining = SHAKE_DURATION_SECS;
+        // Arm the screen shake immediately. Duration scales with the
+        // player's `AnimSpeed` preference via `ui_theme::scaled_duration`;
+        // intensity is left at its design-token value because amplitude
+        // does not benefit from "fast" / "instant" scaling — at Instant
+        // speed the duration is zero anyway, suppressing the shake.
+        let speed = settings.as_ref().map_or(
+            solitaire_data::AnimSpeed::Normal,
+            |s| s.0.animation_speed,
+        );
+        let scaled = scaled_duration(SHAKE_DURATION_SECS, speed);
+        shake.remaining = scaled;
+        shake.total = scaled;
         shake.intensity = SHAKE_INTENSITY;
         // Start the delay timer (overwrite if a second win arrives).
         *delay = Some(WIN_SUMMARY_DELAY_SECS);
@@ -391,8 +411,11 @@ fn apply_screen_shake(
     }
 
     shake.remaining = (shake.remaining - dt).max(0.0);
-    // Decay factor: 1.0 at start, 0.0 at end.
-    let decay = shake.remaining / SHAKE_DURATION_SECS;
+    // Decay factor: 1.0 at start, 0.0 at end. Falls back to the design-token
+    // duration if `total` is zero (older armings or test setups that bypass
+    // `spawn_win_summary_after_delay`) so we never divide by zero.
+    let total = if shake.total > 0.0 { shake.total } else { SHAKE_DURATION_SECS };
+    let decay = shake.remaining / total;
     let elapsed = time.elapsed_secs();
     let offset_x = (elapsed * 47.0).sin() * shake.intensity * decay;
     let offset_y = (elapsed * 31.0).cos() * shake.intensity * decay;

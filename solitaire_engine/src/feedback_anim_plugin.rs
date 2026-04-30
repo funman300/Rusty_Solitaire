@@ -11,10 +11,13 @@
 //!
 //! # Task #55 — Settle/bounce on valid placement
 //!
-//! After `StateChangedEvent` fires, `start_settle_anim` inserts `SettleAnim`
-//! on the top card of every non-empty pile. `tick_settle_anim` applies a brief
-//! Y-scale compression (`scale.y` 1.0 → 0.92 → 1.0 over 0.15 s) and removes
-//! the component when elapsed ≥ 0.15 s.
+//! `start_settle_anim` listens for `MoveRequestEvent` and `DrawRequestEvent` so
+//! the bounce is **scoped to the cards that just moved**, not every top card on
+//! the board. For a move it bounces the top `count` cards of the destination
+//! pile; for a draw it bounces the top card of the waste. Undos are skipped so
+//! reverting a move doesn't replay the placement feedback. `tick_settle_anim`
+//! applies a brief Y-scale compression (`scale.y` 1.0 → 0.92 → 1.0 over 0.15 s)
+//! and removes the component when elapsed ≥ 0.15 s.
 //!
 //! # Task #69 — Animated card deal on new game start
 //!
@@ -22,17 +25,21 @@
 //! `NewGameConfirmEvent` fires, `start_deal_anim` reads `LayoutResource` and
 //! inserts a `CardAnim` on every card entity, sliding each card from the stock
 //! pile's position to its current (final) position with a per-card stagger
-//! derived from the current `AnimSpeed` setting:
+//! derived from the current `AnimSpeed` setting plus a deterministic ±10 %
+//! jitter per card so the deal feels organic instead of mechanical:
 //!
-//! | `AnimSpeed`   | Stagger           |
+//! | `AnimSpeed`   | Base stagger      |
 //! |---------------|-------------------|
 //! | `Normal`      | 0.04 s (default)  |
 //! | `Fast`        | 0.02 s (half)     |
 //! | `Instant`     | 0.00 s (no delay) |
 //!
-//! `deal_stagger_delay` is a pure helper exposed for unit testing.
+//! `deal_stagger_delay` and `deal_stagger_jitter` are pure helpers exposed for
+//! unit testing.
 
+use std::collections::hash_map::DefaultHasher;
 use std::f32::consts::PI;
+use std::hash::{Hash, Hasher};
 
 use bevy::prelude::*;
 use solitaire_core::pile::PileType;
@@ -40,7 +47,9 @@ use solitaire_data::AnimSpeed;
 
 use crate::animation_plugin::CardAnim;
 use crate::card_plugin::CardEntity;
-use crate::events::{MoveRejectedEvent, NewGameRequestEvent, StateChangedEvent};
+use crate::events::{
+    DrawRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
 use crate::pause_plugin::PausedResource;
@@ -155,6 +164,23 @@ pub fn deal_stagger_delay(index: usize, stagger_secs: f32) -> f32 {
     index as f32 * stagger_secs
 }
 
+/// Returns a deterministic ±10 % jitter factor for `card_id`.
+///
+/// Hashes `card_id` with `DefaultHasher` and maps the low bits into a value in
+/// `0.0..=1.0`, then re-centres into `-0.1..=0.1`. The same card id always
+/// produces the same factor so deals are reproducible (important for
+/// seed-based testing and replay), while a 52-card deal still feels organic
+/// because each card's offset varies.
+///
+/// Multiply a base stagger interval by `1.0 + deal_stagger_jitter(card_id)` to
+/// apply the jitter.
+pub fn deal_stagger_jitter(card_id: u32) -> f32 {
+    let mut hasher = DefaultHasher::new();
+    card_id.hash(&mut hasher);
+    let jitter_norm = (hasher.finish() % 1000) as f32 / 1000.0; // 0.0..=1.0
+    (jitter_norm - 0.5) * 0.2 // ±0.1 == ±10 %
+}
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -164,16 +190,23 @@ pub struct FeedbackAnimPlugin;
 
 impl Plugin for FeedbackAnimPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                start_shake_anim.after(GameMutation),
-                tick_shake_anim,
-                start_settle_anim.after(GameMutation),
-                tick_settle_anim,
-                start_deal_anim.after(GameMutation),
-            ),
-        );
+        // Register the events this plugin consumes so it can run in isolation
+        // under `MinimalPlugins` (e.g. unit tests) without depending on other
+        // plugins to register them. Double-registration is idempotent in Bevy.
+        app.add_message::<MoveRequestEvent>()
+            .add_message::<DrawRequestEvent>()
+            .add_message::<MoveRejectedEvent>()
+            .add_message::<NewGameRequestEvent>()
+            .add_systems(
+                Update,
+                (
+                    start_shake_anim.after(GameMutation),
+                    tick_shake_anim,
+                    start_settle_anim.after(GameMutation),
+                    tick_settle_anim,
+                    start_deal_anim.after(GameMutation),
+                ),
+            );
     }
 }
 
@@ -240,28 +273,52 @@ fn tick_shake_anim(
 // Task #55 — Settle systems
 // ---------------------------------------------------------------------------
 
-/// Inserts `SettleAnim` on the top card of every non-empty pile when
-/// `StateChangedEvent` fires.
+/// Inserts `SettleAnim` only on the cards that just moved — the top `count`
+/// cards of the move destination, or the top of the waste pile for a draw.
+///
+/// Triggered by `MoveRequestEvent` and `DrawRequestEvent`. Undo and other
+/// state-mutations are deliberately skipped: replaying the placement bounce on
+/// an undo would feel like the rejected-move shake fired by mistake. Note this
+/// runs before the move resolves in `GameMutation`, so we read the destination
+/// pile **after** the request has been accepted by reading the up-to-date game
+/// state for both readers — the schedule labels the system `.after(GameMutation)`
+/// to ensure that ordering.
 fn start_settle_anim(
-    mut events: MessageReader<StateChangedEvent>,
+    mut moves: MessageReader<MoveRequestEvent>,
+    mut draws: MessageReader<DrawRequestEvent>,
     game: Res<GameStateResource>,
     card_entities: Query<(Entity, &CardEntity)>,
     mut commands: Commands,
 ) {
-    if events.read().next().is_none() {
+    // Build the list of card ids that should bounce this frame from every
+    // queued request; multiple events can fire in the same frame (e.g. a move
+    // followed by a draw via keyboard accelerators).
+    let mut bounce_ids: Vec<u32> = Vec::new();
+
+    for ev in moves.read() {
+        if let Some(pile) = game.0.piles.get(&ev.to) {
+            // The moved cards land on top — take the last `count` ids.
+            let n = ev.count.min(pile.cards.len());
+            if n > 0 {
+                let start = pile.cards.len() - n;
+                bounce_ids.extend(pile.cards[start..].iter().map(|c| c.id));
+            }
+        }
+    }
+
+    if draws.read().next().is_some()
+        && let Some(pile) = game.0.piles.get(&PileType::Waste)
+        && let Some(top) = pile.cards.last()
+    {
+        bounce_ids.push(top.id);
+    }
+
+    if bounce_ids.is_empty() {
         return;
     }
 
-    // Collect the id of the top card for each non-empty pile.
-    let top_ids: Vec<u32> = game
-        .0
-        .piles
-        .values()
-        .filter_map(|p| p.cards.last().map(|c| c.id))
-        .collect();
-
     for (entity, card_marker) in card_entities.iter() {
-        if top_ids.contains(&card_marker.card_id) {
+        if bounce_ids.contains(&card_marker.card_id) {
             commands.entity(entity).insert(SettleAnim::default());
         }
     }
@@ -308,7 +365,7 @@ fn start_deal_anim(
     layout: Option<Res<LayoutResource>>,
     game: Res<GameStateResource>,
     settings: Option<Res<SettingsResource>>,
-    card_entities: Query<(Entity, &Transform), With<CardEntity>>,
+    card_entities: Query<(Entity, &CardEntity, &Transform)>,
     mut commands: Commands,
 ) {
     if events.read().next().is_none() {
@@ -327,8 +384,12 @@ fn start_deal_anim(
         .map(deal_stagger_secs_for_speed)
         .unwrap_or(DEAL_STAGGER_SECS);
 
-    for (index, (entity, transform)) in card_entities.iter().enumerate() {
+    for (index, (entity, card_marker, transform)) in card_entities.iter().enumerate() {
         let final_pos = transform.translation;
+        // ±10 % jitter, deterministic per card id, so the deal feels organic
+        // without losing reproducibility (a given seed still produces the
+        // same per-card stagger pattern across runs).
+        let per_card_stagger = stagger_secs * (1.0 + deal_stagger_jitter(card_marker.card_id));
         commands.entity(entity).insert((
             Transform::from_translation(stock_start.with_z(final_pos.z)),
             CardAnim {
@@ -336,7 +397,7 @@ fn start_deal_anim(
                 target: final_pos,
                 elapsed: 0.0,
                 duration: DEAL_SLIDE_SECS,
-                delay: deal_stagger_delay(index, stagger_secs),
+                delay: deal_stagger_delay(index, per_card_stagger),
             },
         ));
     }
@@ -448,5 +509,45 @@ mod tests {
                 "Instant speed must produce zero delay for index {i}"
             );
         }
+    }
+
+    // Step 9 — deal stagger jitter helper
+
+    #[test]
+    fn deal_stagger_jitter_is_within_ten_percent() {
+        // Every card id in 0..256 must produce a jitter factor in ±10 %.
+        for card_id in 0u32..256 {
+            let j = deal_stagger_jitter(card_id);
+            assert!(
+                (-0.1..=0.1).contains(&j),
+                "deal_stagger_jitter({card_id}) = {j} is outside ±10 %"
+            );
+        }
+    }
+
+    #[test]
+    fn deal_stagger_jitter_is_deterministic() {
+        // Same card id must always produce the same jitter factor.
+        for card_id in [0u32, 7, 51, 999_999] {
+            assert!(
+                (deal_stagger_jitter(card_id) - deal_stagger_jitter(card_id)).abs() < 1e-9,
+                "deal_stagger_jitter({card_id}) is not deterministic"
+            );
+        }
+    }
+
+    #[test]
+    fn deal_stagger_jitter_varies_across_card_ids() {
+        // 52 cards should produce more than a couple distinct jitter factors;
+        // a constant function would return one value for all ids.
+        use std::collections::HashSet;
+        let unique: HashSet<u64> = (0u32..52)
+            .map(|id| (deal_stagger_jitter(id) * 1e6) as i64 as u64)
+            .collect();
+        assert!(
+            unique.len() > 10,
+            "expected > 10 distinct jitter factors for 52 cards, got {}",
+            unique.len()
+        );
     }
 }
