@@ -1,43 +1,158 @@
-//! Toggleable main menu overlay showing the current game mode and a full
-//! keyboard shortcut reference.
+//! Mode-launcher overlay shown when the player presses **M** or clicks the
+//! Modes affordance.
 //!
-//! Press **M** to open or close the overlay.
+//! Replaces the prior "keyboard shortcut reference" Home modal with a
+//! vertical stack of five mode cards — Classic, Daily Challenge, Zen,
+//! Challenge, Time Attack. Clicking a card fires the same launch event
+//! the corresponding hotkey does, then closes the overlay. The shortcut
+//! reference now lives only in Help (`F1`), which is the canonical place
+//! for that information.
+//!
+//! Level-gated modes (Zen, Challenge, Time Attack) are disabled below
+//! `CHALLENGE_UNLOCK_LEVEL`; clicking a locked card fires an
+//! [`InfoToastEvent`] explaining the gate but does not launch the mode
+//! or close the overlay.
 
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
-use solitaire_core::game_state::GameMode;
 
+use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
+use crate::events::{
+    InfoToastEvent, NewGameRequestEvent, StartChallengeRequestEvent,
+    StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent, StartZenRequestEvent,
+};
 use crate::font_plugin::FontResource;
-use crate::resources::GameStateResource;
+use crate::progress_plugin::ProgressResource;
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
 };
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BORDER_SUBTLE, RADIUS_SM, STATE_INFO, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
-    TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_STRONG, BORDER_SUBTLE, RADIUS_MD, STATE_INFO,
+    TEXT_DISABLED, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION,
+    VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
 };
 
-/// Marker component on the home-menu overlay root node.
+// ---------------------------------------------------------------------------
+// Public marker components
+// ---------------------------------------------------------------------------
+
+/// Marker component on the Home overlay root entity (the modal scrim).
 #[derive(Component, Debug)]
 pub struct HomeScreen;
 
-/// Marker on the "Done" button inside the Home modal.
+/// Marker on the bottom-row "Cancel" button that dismisses the Home modal
+/// without launching a mode.
 #[derive(Component, Debug)]
-pub struct HomeCloseButton;
+pub struct HomeCancelButton;
 
-/// Registers the M-key toggle and the overlay spawn/despawn logic.
+// ---------------------------------------------------------------------------
+// Private mode-card data shape
+// ---------------------------------------------------------------------------
+
+/// Which game mode a [`HomeModeCard`] represents.
+///
+/// Kept private — external consumers should write the corresponding
+/// `Start*RequestEvent` (or [`NewGameRequestEvent`] for Classic) directly.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+enum HomeMode {
+    Classic,
+    Daily,
+    Zen,
+    Challenge,
+    TimeAttack,
+}
+
+impl HomeMode {
+    /// Display title shown on the card.
+    fn title(self) -> &'static str {
+        match self {
+            HomeMode::Classic => "Classic",
+            HomeMode::Daily => "Daily Challenge",
+            HomeMode::Zen => "Zen Mode",
+            HomeMode::Challenge => "Challenge",
+            HomeMode::TimeAttack => "Time Attack",
+        }
+    }
+
+    /// One-line description shown below the title.
+    fn description(self) -> &'static str {
+        match self {
+            HomeMode::Classic => "The standard Klondike deal — score, time, and a fresh shuffle.",
+            HomeMode::Daily => "Today's seed, same for everyone. Build a streak.",
+            HomeMode::Zen => "No timer, no score. Just the cards.",
+            HomeMode::Challenge => "Hand-picked hard deals. No undo. Win to advance.",
+            HomeMode::TimeAttack => "How many can you finish in ten minutes?",
+        }
+    }
+
+    /// The keyboard accelerator that dispatches the same launch event,
+    /// shown in a small chip on the card.
+    fn hotkey(self) -> &'static str {
+        match self {
+            HomeMode::Classic => "N",
+            HomeMode::Daily => "C",
+            HomeMode::Zen => "Z",
+            HomeMode::Challenge => "X",
+            HomeMode::TimeAttack => "T",
+        }
+    }
+
+    /// `true` when the mode is gated behind `CHALLENGE_UNLOCK_LEVEL`.
+    fn requires_unlock(self) -> bool {
+        matches!(self, HomeMode::Zen | HomeMode::Challenge | HomeMode::TimeAttack)
+    }
+
+    /// `true` if the player at `level` is allowed to launch the mode.
+    fn is_unlocked(self, level: u32) -> bool {
+        !self.requires_unlock() || level >= CHALLENGE_UNLOCK_LEVEL
+    }
+}
+
+/// Marker component placed on each mode-card `Button` so the click
+/// handler can identify which mode was pressed.
+#[derive(Component, Debug)]
+struct HomeModeCard(HomeMode);
+
+// ---------------------------------------------------------------------------
+// Plugin
+// ---------------------------------------------------------------------------
+
+/// Registers the M-key toggle, the mode-card click handler, and the
+/// Cancel-button handler.
 pub struct HomePlugin;
 
 impl Plugin for HomePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (toggle_home_screen, handle_home_close_button));
+        // Be defensive about message registration so HomePlugin works
+        // standalone in tests (the actual handlers live in
+        // input_plugin / challenge_plugin / time_attack_plugin /
+        // daily_challenge_plugin, but those plugins might not be
+        // installed in a tightly-scoped headless app).
+        app.add_message::<NewGameRequestEvent>()
+            .add_message::<StartZenRequestEvent>()
+            .add_message::<StartChallengeRequestEvent>()
+            .add_message::<StartTimeAttackRequestEvent>()
+            .add_message::<StartDailyChallengeRequestEvent>()
+            .add_message::<InfoToastEvent>()
+            .add_systems(
+                Update,
+                (
+                    toggle_home_screen,
+                    handle_home_card_click,
+                    handle_home_cancel_button,
+                ),
+            );
     }
 }
+
+// ---------------------------------------------------------------------------
+// M-key toggle
+// ---------------------------------------------------------------------------
 
 fn toggle_home_screen(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    game: Res<GameStateResource>,
+    progress: Option<Res<ProgressResource>>,
     font_res: Option<Res<FontResource>>,
     screens: Query<Entity, With<HomeScreen>>,
 ) {
@@ -47,16 +162,86 @@ fn toggle_home_screen(
     if let Ok(entity) = screens.single() {
         commands.entity(entity).despawn();
     } else {
-        spawn_home_screen(&mut commands, &game, font_res.as_deref());
+        let level = progress.as_ref().map_or(0, |p| p.0.level);
+        spawn_home_screen(&mut commands, level, font_res.as_deref());
     }
 }
 
-fn handle_home_close_button(
+// ---------------------------------------------------------------------------
+// Card click handler
+// ---------------------------------------------------------------------------
+
+/// Dispatches a click on a mode card.
+///
+/// - **Unlocked** modes fire the matching `Start*RequestEvent` (or
+///   [`NewGameRequestEvent`] for Classic) and despawn the modal.
+/// - **Locked** modes (level below [`CHALLENGE_UNLOCK_LEVEL`]) fire only
+///   an [`InfoToastEvent`] and leave the modal open so the player can
+///   pick another mode.
+#[allow(clippy::too_many_arguments)]
+fn handle_home_card_click(
     mut commands: Commands,
-    close_buttons: Query<&Interaction, (With<HomeCloseButton>, Changed<Interaction>)>,
+    cards: Query<(&Interaction, &HomeModeCard), Changed<Interaction>>,
+    progress: Option<Res<ProgressResource>>,
+    screens: Query<Entity, With<HomeScreen>>,
+    mut new_game: MessageWriter<NewGameRequestEvent>,
+    mut zen: MessageWriter<StartZenRequestEvent>,
+    mut challenge: MessageWriter<StartChallengeRequestEvent>,
+    mut time_attack: MessageWriter<StartTimeAttackRequestEvent>,
+    mut daily: MessageWriter<StartDailyChallengeRequestEvent>,
+    mut info_toast: MessageWriter<InfoToastEvent>,
+) {
+    let level = progress.as_ref().map_or(0, |p| p.0.level);
+
+    for (interaction, card) in &cards {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        if !card.0.is_unlocked(level) {
+            info_toast.write(InfoToastEvent(format!(
+                "{} unlocks at level {CHALLENGE_UNLOCK_LEVEL}",
+                card.0.title()
+            )));
+            // Leave the modal open so the player can pick another mode.
+            continue;
+        }
+
+        match card.0 {
+            HomeMode::Classic => {
+                new_game.write(NewGameRequestEvent::default());
+            }
+            HomeMode::Daily => {
+                daily.write(StartDailyChallengeRequestEvent);
+            }
+            HomeMode::Zen => {
+                zen.write(StartZenRequestEvent);
+            }
+            HomeMode::Challenge => {
+                challenge.write(StartChallengeRequestEvent);
+            }
+            HomeMode::TimeAttack => {
+                time_attack.write(StartTimeAttackRequestEvent);
+            }
+        }
+
+        // Close the modal after dispatching the launch event.
+        for entity in &screens {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cancel button handler
+// ---------------------------------------------------------------------------
+
+fn handle_home_cancel_button(
+    mut commands: Commands,
+    cancel_buttons: Query<&Interaction, (With<HomeCancelButton>, Changed<Interaction>)>,
     screens: Query<Entity, With<HomeScreen>>,
 ) {
-    if !close_buttons.iter().any(|i| *i == Interaction::Pressed) {
+    if !cancel_buttons.iter().any(|i| *i == Interaction::Pressed) {
         return;
     }
     for entity in &screens {
@@ -64,139 +249,171 @@ fn handle_home_close_button(
     }
 }
 
-/// Spawns the home-menu modal — a hotkey reference grouped into "Game
-/// Controls" and "Screens" sections plus the current game mode badge.
-/// A future pass can pivot Home into a true mode launcher (the
-/// Modes-popover already covers that path from the action bar).
-fn spawn_home_screen(
-    commands: &mut Commands,
-    game: &GameStateResource,
-    font_res: Option<&FontResource>,
-) {
-    let mode_label = match game.0.mode {
-        GameMode::Classic => "Classic",
-        GameMode::Zen => "Zen",
-        GameMode::Challenge => "Challenge",
-        GameMode::TimeAttack => "Time Attack",
-    };
+// ---------------------------------------------------------------------------
+// Spawn helpers
+// ---------------------------------------------------------------------------
 
-    let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
-    let font_section = TextFont {
-        font: font_handle.clone(),
-        font_size: TYPE_BODY_LG,
-        ..default()
-    };
-    let font_row = TextFont {
-        font: font_handle.clone(),
-        font_size: TYPE_BODY,
-        ..default()
-    };
-    let font_kbd = TextFont {
-        font: font_handle,
-        font_size: TYPE_CAPTION,
-        ..default()
-    };
-
+/// Spawns the Home modal with five mode cards plus a Cancel button.
+fn spawn_home_screen(commands: &mut Commands, level: u32, font_res: Option<&FontResource>) {
     spawn_modal(commands, HomeScreen, Z_MODAL_PANEL, |card| {
-        spawn_modal_header(card, "Solitaire Quest", font_res);
+        spawn_modal_header(card, "Choose a Mode", font_res);
 
-        // Mode badge — current game's mode, ACCENT_PRIMARY so it pops.
-        card.spawn((
-            Text::new(format!("Current mode: {mode_label}")),
-            font_section.clone(),
-            TextColor(ACCENT_PRIMARY),
-        ));
-
-        // Game controls section.
-        card.spawn((
-            Text::new("Game Controls"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        for (key, action) in [
-            ("N", "New game  (N again confirms)"),
-            ("U", "Undo last move"),
-            ("Space / D", "Draw from stock"),
-            ("G", "Forfeit current game"),
-            ("Tab", "Cycle hint highlight"),
-            ("Enter", "Auto-complete if available"),
+        for mode in [
+            HomeMode::Classic,
+            HomeMode::Daily,
+            HomeMode::Zen,
+            HomeMode::Challenge,
+            HomeMode::TimeAttack,
         ] {
-            spawn_shortcut_row(card, key, action, &font_row, &font_kbd);
-        }
-
-        // Screens section.
-        card.spawn((
-            Text::new("Screens"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        for (key, action) in [
-            ("M", "Main menu (this screen)"),
-            ("S", "Statistics"),
-            ("A", "Achievements"),
-            ("O", "Settings"),
-            ("P", "Profile"),
-            ("L", "Leaderboard"),
-            ("F1", "Help"),
-            ("F11", "Toggle fullscreen"),
-            ("Esc", "Pause / Resume"),
-        ] {
-            spawn_shortcut_row(card, key, action, &font_row, &font_kbd);
+            spawn_mode_card(card, mode, level, font_res);
         }
 
         spawn_modal_actions(card, |actions| {
             spawn_modal_button(
                 actions,
-                HomeCloseButton,
-                "Done",
+                HomeCancelButton,
+                "Cancel",
                 Some("M"),
-                ButtonVariant::Primary,
+                ButtonVariant::Tertiary,
                 font_res,
             );
         });
     });
 }
 
-/// One row inside Home's controls reference: a kbd-chip + description.
-/// Same look as Help's rows so the two screens read consistently.
-fn spawn_shortcut_row(
+/// Spawns one mode card — a `Button` whose children are a title row, a
+/// description line, and (when locked) a "Reach level N" hint.
+///
+/// The visual deliberately diverges from `spawn_modal_button` because a
+/// mode card is a wide, two-line tile rather than a compact action; the
+/// `ButtonVariant` palette would not apply cleanly here. Hover/press
+/// feedback is supplied by `paint_modal_buttons` via the `ModalButton`
+/// component, which we attach with `ButtonVariant::Secondary` so the card
+/// reads as a standard interactive surface.
+fn spawn_mode_card(
     parent: &mut ChildSpawnerCommands,
-    key: &str,
-    action: &str,
-    font_row: &TextFont,
-    font_kbd: &TextFont,
+    mode: HomeMode,
+    level: u32,
+    font_res: Option<&FontResource>,
 ) {
+    let unlocked = mode.is_unlocked(level);
+    let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+    let font_title = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY_LG,
+        ..default()
+    };
+    let font_desc = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY,
+        ..default()
+    };
+    let font_chip = TextFont {
+        font: font_handle,
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
+
+    // Locked cards mute their text to communicate the disabled state at
+    // a glance; the explicit "Unlocks at level N" caption underneath
+    // backs that up with copy.
+    let title_color = if unlocked { TEXT_PRIMARY } else { TEXT_DISABLED };
+    let desc_color = if unlocked { TEXT_SECONDARY } else { TEXT_DISABLED };
+    let border_color = if unlocked { BORDER_SUBTLE } else { BORDER_STRONG };
+
     parent
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: VAL_SPACE_3,
-            ..default()
-        })
-        .with_children(|row| {
-            row.spawn((
-                Node {
-                    padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
-                    min_width: Val::Px(80.0),
-                    justify_content: JustifyContent::Center,
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
-                    ..default()
-                },
-                BorderColor::all(BORDER_SUBTLE),
-            ))
-            .with_children(|chip| {
-                chip.spawn((
-                    Text::new(key.to_string()),
-                    font_kbd.clone(),
-                    TextColor(TEXT_PRIMARY),
+        .spawn((
+            HomeModeCard(mode),
+            // Keep this a real Button entity so clicks resolve through
+            // bevy::ui — the click handler queries on `&Interaction`
+            // which Button drives.
+            Button,
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_1,
+                padding: UiRect::all(VAL_SPACE_3),
+                width: Val::Percent(100.0),
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),
+                ..default()
+            },
+            BackgroundColor(BG_ELEVATED_HI),
+            BorderColor::all(border_color),
+        ))
+        .with_children(|c| {
+            // Title row — title text on the left, hotkey chip on the right.
+            c.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                column_gap: VAL_SPACE_3,
+                ..default()
+            })
+            .with_children(|row| {
+                row.spawn((
+                    Text::new(mode.title().to_string()),
+                    font_title.clone(),
+                    TextColor(title_color),
                 ));
+
+                if unlocked {
+                    // Hotkey chip — same look as the kbd-chip rows used
+                    // elsewhere so accelerators read consistently.
+                    row.spawn((
+                        Node {
+                            padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
+                            min_width: Val::Px(32.0),
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),
+                            ..default()
+                        },
+                        BorderColor::all(BORDER_SUBTLE),
+                    ))
+                    .with_children(|chip| {
+                        chip.spawn((
+                            Text::new(mode.hotkey().to_string()),
+                            font_chip.clone(),
+                            TextColor(TEXT_SECONDARY),
+                        ));
+                    });
+                } else {
+                    // Lock icon stand-in — text glyph keeps the layout
+                    // dependency-free (no asset loader required) and
+                    // reads at every supported font size.
+                    row.spawn((
+                        Text::new("LOCKED".to_string()),
+                        font_chip.clone(),
+                        TextColor(STATE_INFO),
+                    ));
+                }
             });
-            row.spawn((
-                Text::new(action.to_string()),
-                font_row.clone(),
-                TextColor(TEXT_SECONDARY),
+
+            // Description line.
+            c.spawn((
+                Text::new(mode.description().to_string()),
+                font_desc.clone(),
+                TextColor(desc_color),
             ));
+
+            // Locked footnote — explicit copy so the gate is unambiguous.
+            if !unlocked {
+                c.spawn((
+                    Text::new(format!(
+                        "Unlocks at level {CHALLENGE_UNLOCK_LEVEL}"
+                    )),
+                    TextFont {
+                        font: font_desc.font.clone(),
+                        font_size: TYPE_CAPTION,
+                        ..default()
+                    },
+                    TextColor(ACCENT_PRIMARY),
+                    Node {
+                        margin: UiRect::top(VAL_SPACE_1),
+                        ..default()
+                    },
+                ));
+            }
         });
 }
 
@@ -204,17 +421,73 @@ fn spawn_shortcut_row(
 mod tests {
     use super::*;
     use crate::game_plugin::GamePlugin;
+    use crate::progress_plugin::ProgressPlugin;
     use crate::table_plugin::TablePlugin;
+    use bevy::ecs::message::Messages;
 
+    /// Builds a headless `App` with just the plugins Home actually
+    /// reaches into. We deliberately skip input_plugin /
+    /// challenge_plugin / time_attack_plugin / daily_challenge_plugin —
+    /// Home only needs to dispatch their request events; the events
+    /// themselves are registered defensively by `HomePlugin::build`.
     fn headless_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_plugins(GamePlugin)
             .add_plugins(TablePlugin)
+            .add_plugins(ProgressPlugin::headless())
             .add_plugins(HomePlugin);
         app.init_resource::<ButtonInput<KeyCode>>();
         app.update();
         app
+    }
+
+    /// Press M, run a tick, and return the resulting screen entity.
+    /// Panics if the modal does not appear (failure mode that any later
+    /// assertion would mask anyway). The keyboard input is cleared after
+    /// the press so the next `app.update()` doesn't re-toggle the modal
+    /// closed — `MinimalPlugins` doesn't run the bevy_input update system
+    /// that would normally clear `just_pressed` between frames.
+    fn open_home(app: &mut App) -> Entity {
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.press(KeyCode::KeyM);
+        }
+        app.update();
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.release(KeyCode::KeyM);
+            input.clear();
+        }
+        app.world_mut()
+            .query::<(Entity, &HomeScreen)>()
+            .single(app.world())
+            .map(|(e, _)| e)
+            .expect("HomeScreen must spawn after M press")
+    }
+
+    /// Pump a button-press synthetic interaction onto the entity. Bevy
+    /// 0.18 surfaces interactions through the `Interaction` component
+    /// driven by the UI input pipeline, but MinimalPlugins does not run
+    /// that pipeline — so we insert `Interaction::Pressed` directly,
+    /// which triggers `Changed<Interaction>` on the next update tick.
+    /// Pattern is borrowed verbatim from `pause_plugin`'s tests.
+    fn press_button(app: &mut App, entity: Entity) {
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Interaction::Pressed);
+        app.update();
+    }
+
+    /// Find the unique `HomeModeCard` entity for a specific mode. Used
+    /// by the click-handler tests to target the right card.
+    fn find_card(app: &mut App, mode: HomeMode) -> Entity {
+        app.world_mut()
+            .query::<(Entity, &HomeModeCard)>()
+            .iter(app.world())
+            .find(|(_, c)| c.0 == mode)
+            .map(|(e, _)| e)
+            .unwrap_or_else(|| panic!("no HomeModeCard for {mode:?}"))
     }
 
     #[test]
@@ -265,6 +538,173 @@ mod tests {
                 .iter(app.world())
                 .count(),
             0
+        );
+    }
+
+    #[test]
+    fn modal_contains_a_card_for_each_mode() {
+        let mut app = headless_app();
+        let _ = open_home(&mut app);
+
+        let modes: Vec<HomeMode> = app
+            .world_mut()
+            .query::<&HomeModeCard>()
+            .iter(app.world())
+            .map(|c| c.0)
+            .collect();
+
+        for expected in [
+            HomeMode::Classic,
+            HomeMode::Daily,
+            HomeMode::Zen,
+            HomeMode::Challenge,
+            HomeMode::TimeAttack,
+        ] {
+            assert!(
+                modes.contains(&expected),
+                "missing card for {expected:?}; found {modes:?}"
+            );
+        }
+        assert_eq!(modes.len(), 5, "exactly five cards expected");
+    }
+
+    #[test]
+    fn classic_click_fires_new_game_event_and_closes_modal() {
+        let mut app = headless_app();
+        let _ = open_home(&mut app);
+
+        // Drain any pre-existing NewGameRequestEvent so the assertion
+        // only sees the click-driven write.
+        app.world_mut()
+            .resource_mut::<Messages<NewGameRequestEvent>>()
+            .clear();
+
+        let card = find_card(&mut app, HomeMode::Classic);
+        press_button(&mut app, card);
+
+        let events = app.world().resource::<Messages<NewGameRequestEvent>>();
+        let mut cursor = events.get_cursor();
+        let fired: Vec<_> = cursor.read(events).copied().collect();
+        assert_eq!(fired.len(), 1, "one NewGameRequestEvent must fire");
+
+        assert_eq!(
+            app.world_mut()
+                .query::<&HomeScreen>()
+                .iter(app.world())
+                .count(),
+            0,
+            "Home modal must close after launching Classic"
+        );
+    }
+
+    #[test]
+    fn locked_zen_click_is_a_noop_below_unlock_level() {
+        let mut app = headless_app();
+        // Default level is 0 — Zen is locked.
+        let _ = open_home(&mut app);
+
+        // Reset event queues so the assertion is clean.
+        app.world_mut()
+            .resource_mut::<Messages<NewGameRequestEvent>>()
+            .clear();
+        app.world_mut()
+            .resource_mut::<Messages<StartZenRequestEvent>>()
+            .clear();
+
+        let card = find_card(&mut app, HomeMode::Zen);
+        press_button(&mut app, card);
+
+        // No launch events should have fired.
+        let new_game = app.world().resource::<Messages<NewGameRequestEvent>>();
+        let mut nc = new_game.get_cursor();
+        assert!(
+            nc.read(new_game).next().is_none(),
+            "locked Zen click must not fire NewGameRequestEvent"
+        );
+        let zen = app.world().resource::<Messages<StartZenRequestEvent>>();
+        let mut zc = zen.get_cursor();
+        assert!(
+            zc.read(zen).next().is_none(),
+            "locked Zen click must not fire StartZenRequestEvent"
+        );
+
+        // Modal must still be open so the player can pick another mode.
+        assert_eq!(
+            app.world_mut()
+                .query::<&HomeScreen>()
+                .iter(app.world())
+                .count(),
+            1,
+            "Home modal must remain open after a locked-mode click"
+        );
+    }
+
+    #[test]
+    fn unlocked_zen_click_fires_start_zen_event_and_closes_modal() {
+        let mut app = headless_app();
+        // Bump the player to the unlock level.
+        app.world_mut()
+            .resource_mut::<ProgressResource>()
+            .0
+            .level = CHALLENGE_UNLOCK_LEVEL;
+        let _ = open_home(&mut app);
+
+        app.world_mut()
+            .resource_mut::<Messages<StartZenRequestEvent>>()
+            .clear();
+
+        let card = find_card(&mut app, HomeMode::Zen);
+        press_button(&mut app, card);
+
+        let zen = app.world().resource::<Messages<StartZenRequestEvent>>();
+        let mut zc = zen.get_cursor();
+        assert_eq!(
+            zc.read(zen).count(),
+            1,
+            "unlocked Zen click must fire exactly one StartZenRequestEvent"
+        );
+
+        assert_eq!(
+            app.world_mut()
+                .query::<&HomeScreen>()
+                .iter(app.world())
+                .count(),
+            0,
+            "Home modal must close after launching Zen"
+        );
+    }
+
+    #[test]
+    fn cancel_button_closes_modal_without_launching_anything() {
+        let mut app = headless_app();
+        let _ = open_home(&mut app);
+
+        app.world_mut()
+            .resource_mut::<Messages<NewGameRequestEvent>>()
+            .clear();
+
+        let cancel = app
+            .world_mut()
+            .query::<(Entity, &HomeCancelButton)>()
+            .single(app.world())
+            .map(|(e, _)| e)
+            .expect("HomeCancelButton must exist when modal is open");
+        press_button(&mut app, cancel);
+
+        assert_eq!(
+            app.world_mut()
+                .query::<&HomeScreen>()
+                .iter(app.world())
+                .count(),
+            0,
+            "Cancel must despawn the modal"
+        );
+
+        let new_game = app.world().resource::<Messages<NewGameRequestEvent>>();
+        let mut nc = new_game.get_cursor();
+        assert!(
+            nc.read(new_game).next().is_none(),
+            "Cancel must not fire NewGameRequestEvent"
         );
     }
 }
