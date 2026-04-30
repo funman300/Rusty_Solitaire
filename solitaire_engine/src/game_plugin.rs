@@ -18,7 +18,13 @@ use crate::events::{
     CardFlippedEvent, DrawRequestEvent, GameWonEvent, InfoToastEvent, MoveRequestEvent,
     NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
 };
+use crate::font_plugin::FontResource;
 use crate::resources::{DragState, GameStateResource, SyncStatusResource};
+use crate::ui_modal::{
+    spawn_modal, spawn_modal_actions, spawn_modal_body_text, spawn_modal_button,
+    spawn_modal_header, ButtonVariant,
+};
+use crate::ui_theme;
 
 // ---------------------------------------------------------------------------
 // Task #57 — Confirm-new-game dialog
@@ -94,6 +100,7 @@ impl Plugin for GamePlugin {
             )
             .add_systems(Update, check_no_moves.after(GameMutation))
             .add_systems(Update, handle_confirm_input.after(GameMutation))
+            .add_systems(Update, handle_confirm_button_input.after(GameMutation))
             .add_systems(Update, handle_game_over_input.after(GameMutation))
             .init_resource::<AutoSaveTimer>()
             .add_systems(Update, tick_elapsed_time)
@@ -157,6 +164,7 @@ fn handle_new_game(
     mut changed: MessageWriter<StateChangedEvent>,
     settings: Option<Res<crate::settings_plugin::SettingsResource>>,
     path: Option<Res<GameStatePath>>,
+    font_res: Option<Res<FontResource>>,
     confirm_screens: Query<Entity, With<ConfirmNewGameScreen>>,
     game_over_screens: Query<Entity, With<GameOverScreen>>,
 ) {
@@ -174,7 +182,7 @@ fn handle_new_game(
             for entity in &game_over_screens {
                 commands.entity(entity).despawn();
             }
-            spawn_confirm_dialog(&mut commands, *ev);
+            spawn_confirm_dialog(&mut commands, *ev, font_res.as_deref());
             continue;
         }
 
@@ -205,75 +213,70 @@ fn handle_new_game(
     }
 }
 
-/// Spawns the confirm-new-game modal overlay.
+/// Marker on the primary "Yes, abandon" button inside the confirm modal.
+#[derive(Component, Debug)]
+pub struct ConfirmYesButton;
+
+/// Marker on the secondary "Cancel" button inside the confirm modal.
+#[derive(Component, Debug)]
+pub struct ConfirmNoButton;
+
+/// Spawns the confirm-new-game modal using the standard `ui_modal`
+/// primitive — uniform scrim, centred card, real buttons with hover /
+/// press states.
 ///
-/// Shown when the player requests a new game while moves have been made and
-/// the game is not yet won. The overlay stores the original request so the
-/// `handle_confirm_input` system can replay it on confirmation.
-fn spawn_confirm_dialog(commands: &mut Commands, original_request: NewGameRequestEvent) {
-    commands
-        .spawn((
-            ConfirmNewGameScreen,
-            // Store the request so we can replay it on confirmation.
-            OriginalNewGameRequest(original_request),
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(0.0),
-                top: Val::Percent(0.0),
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(20.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.70)),
-            ZIndex(250),
-        ))
-        .with_children(|root| {
-            // Dialog card
-            root.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    padding: UiRect::all(Val::Px(40.0)),
-                    row_gap: Val::Px(20.0),
-                    min_width: Val::Px(360.0),
-                    align_items: AlignItems::Center,
-                    border_radius: BorderRadius::all(Val::Px(12.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.10, 0.12, 0.15)),
-            ))
-            .with_children(|card| {
-                // Heading
-                card.spawn((
-                    Text::new("Abandon current game?"),
-                    TextFont { font_size: 30.0, ..default() },
-                    TextColor(Color::WHITE),
-                ));
-                // Button row
-                card.spawn((Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(24.0),
-                    ..default()
-                },))
-                .with_children(|row| {
-                    // Yes button
-                    row.spawn((
-                        Text::new("Yes (Y)"),
-                        TextFont { font_size: 22.0, ..default() },
-                        TextColor(Color::srgb(0.3, 1.0, 0.4)),
-                    ));
-                    // No button
-                    row.spawn((
-                        Text::new("No (N)"),
-                        TextFont { font_size: 22.0, ..default() },
-                        TextColor(Color::srgb(1.0, 0.4, 0.4)),
-                    ));
-                });
+/// Shown when the player requests a new game while moves have been made
+/// and the game is not yet won. The original `NewGameRequestEvent` is
+/// stored on the scrim entity so `handle_confirm_input` /
+/// `handle_confirm_button` can replay it with the same seed / mode on
+/// confirmation.
+///
+/// Replaces a bespoke layout that used plain `Text` labels for "Yes (Y)"
+/// and "No (N)" — those were not real Button entities, so the player
+/// had no hover / press feedback and the modal felt like a debug panel
+/// (the user's smoke-test "#2 complaint").
+fn spawn_confirm_dialog(
+    commands: &mut Commands,
+    original_request: NewGameRequestEvent,
+    font_res: Option<&FontResource>,
+) {
+    let scrim = spawn_modal(
+        commands,
+        ConfirmNewGameScreen,
+        ui_theme::Z_MODAL_PANEL,
+        |card| {
+            spawn_modal_header(card, "Abandon current game?", font_res);
+            spawn_modal_body_text(
+                card,
+                "Your progress will be lost.",
+                ui_theme::TEXT_SECONDARY,
+                font_res,
+            );
+            spawn_modal_actions(card, |actions| {
+                spawn_modal_button(
+                    actions,
+                    ConfirmNoButton,
+                    "Cancel",
+                    Some("Esc"),
+                    ButtonVariant::Secondary,
+                    font_res,
+                );
+                spawn_modal_button(
+                    actions,
+                    ConfirmYesButton,
+                    "Yes, abandon",
+                    Some("Y"),
+                    ButtonVariant::Primary,
+                    font_res,
+                );
             });
-        });
+        },
+    );
+    // Attach the original request to the scrim so handle_confirm_input
+    // and handle_confirm_button can read it on confirmation.
+    commands
+        .entity(scrim)
+        .insert(OriginalNewGameRequest(original_request));
 }
 
 /// Carries the original `NewGameRequestEvent` on the confirm overlay so
@@ -308,6 +311,41 @@ fn handle_confirm_input(
         // modal would respawn the frame after the despawn flushes (because
         // confirm_screens is empty by then) and the new game would never
         // actually start.
+        new_game.write(NewGameRequestEvent {
+            seed: original.0.seed,
+            mode: original.0.mode,
+            confirmed: true,
+        });
+    } else if cancelled {
+        commands.entity(entity).despawn();
+    }
+}
+
+/// Mouse / touch counterpart to `handle_confirm_input`. Reads
+/// `Changed<Interaction>` on the modal's `ConfirmYesButton` /
+/// `ConfirmNoButton` so the modal closes and (on confirm) starts a new
+/// game whether the player uses the keyboard accelerator or clicks.
+///
+/// This is the system that closes the user's #2 smoke-test complaint:
+/// previously the dialog had only `Text::new("Yes (Y)")` labels — not
+/// real button entities — so clicks did nothing and the only path
+/// through the modal was the keyboard.
+#[allow(clippy::too_many_arguments)]
+fn handle_confirm_button_input(
+    mut commands: Commands,
+    yes_buttons: Query<&Interaction, (With<ConfirmYesButton>, Changed<Interaction>)>,
+    no_buttons: Query<&Interaction, (With<ConfirmNoButton>, Changed<Interaction>)>,
+    screens: Query<(Entity, &OriginalNewGameRequest), With<ConfirmNewGameScreen>>,
+    mut new_game: MessageWriter<NewGameRequestEvent>,
+) {
+    let Ok((entity, original)) = screens.single() else {
+        return;
+    };
+    let confirmed = yes_buttons.iter().any(|i| *i == Interaction::Pressed);
+    let cancelled = no_buttons.iter().any(|i| *i == Interaction::Pressed);
+
+    if confirmed {
+        commands.entity(entity).despawn();
         new_game.write(NewGameRequestEvent {
             seed: original.0.seed,
             mode: original.0.mode,
