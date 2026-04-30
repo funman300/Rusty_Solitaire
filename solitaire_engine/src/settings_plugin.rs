@@ -26,6 +26,7 @@ use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
     ModalButton, ModalScrim,
 };
+use crate::ui_tooltip::Tooltip;
 use crate::ui_theme::{
     BG_BASE, BG_ELEVATED_HI, BORDER_SUBTLE, RADIUS_SM, SPACE_2, STATE_SUCCESS, TEXT_PRIMARY,
     TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
@@ -804,6 +805,8 @@ fn spawn_settings_panel(
                 SfxVolumeText,
                 SettingsButton::SfxDown,
                 SettingsButton::SfxUp,
+                "Lower sound effects volume.",
+                "Raise sound effects volume.",
                 font_res,
             );
             volume_row(
@@ -813,6 +816,8 @@ fn spawn_settings_panel(
                 MusicVolumeText,
                 SettingsButton::MusicDown,
                 SettingsButton::MusicUp,
+                "Lower music and ambience volume.",
+                "Raise music and ambience volume.",
                 font_res,
             );
 
@@ -824,6 +829,7 @@ fn spawn_settings_panel(
                 DrawModeText,
                 draw_mode_label(&settings.draw_mode),
                 SettingsButton::ToggleDrawMode,
+                "Switch between Draw 1 and Draw 3. Takes effect next deal.",
                 font_res,
             );
             toggle_row(
@@ -832,6 +838,7 @@ fn spawn_settings_panel(
                 AnimSpeedText,
                 anim_speed_label(&settings.animation_speed),
                 SettingsButton::CycleAnimSpeed,
+                "Cycle animation speed: Normal, Fast, Instant.",
                 font_res,
             );
 
@@ -843,6 +850,7 @@ fn spawn_settings_panel(
                 ThemeText,
                 theme_label(&settings.theme),
                 SettingsButton::ToggleTheme,
+                "Cycle felt color: Green, Blue, Dark.",
                 font_res,
             );
             toggle_row(
@@ -851,6 +859,7 @@ fn spawn_settings_panel(
                 ColorBlindText,
                 color_blind_label(settings.color_blind_mode),
                 SettingsButton::ToggleColorBlind,
+                "Show shape glyphs alongside suit colors. Suit-blind friendly.",
                 font_res,
             );
             picker_row(
@@ -859,6 +868,7 @@ fn spawn_settings_panel(
                 unlocked_card_backs,
                 settings.selected_card_back,
                 SettingsButton::SelectCardBack,
+                "Choose your deck art. New backs unlock at higher levels.",
                 font_res,
             );
             picker_row(
@@ -867,6 +877,7 @@ fn spawn_settings_panel(
                 unlocked_backgrounds,
                 settings.selected_background,
                 SettingsButton::SelectBackground,
+                "Choose your felt art. New felts unlock at higher levels.",
                 font_res,
             );
 
@@ -901,6 +912,10 @@ fn section_label(parent: &mut ChildSpawnerCommands, title: &str, font_res: Optio
 }
 
 /// `Label  0.80  [−]  [+]` — used for SFX and Music volume rows.
+///
+/// `tooltip_down` / `tooltip_up` are attached to the `−` / `+` buttons
+/// respectively so each glyph carries a one-line reminder of which channel
+/// it adjusts.
 #[allow(clippy::too_many_arguments)]
 fn volume_row<Marker: Component>(
     parent: &mut ChildSpawnerCommands,
@@ -909,6 +924,8 @@ fn volume_row<Marker: Component>(
     marker: Marker,
     btn_down: SettingsButton,
     btn_up: SettingsButton,
+    tooltip_down: &'static str,
+    tooltip_up: &'static str,
     font_res: Option<&FontResource>,
 ) {
     let label_font = label_text_font(font_res);
@@ -932,19 +949,24 @@ fn volume_row<Marker: Component>(
                 value_font,
                 TextColor(TEXT_PRIMARY),
             ));
-            icon_button(row, "−", btn_down, font_res);
-            icon_button(row, "+", btn_up, font_res);
+            icon_button(row, "−", btn_down, tooltip_down, font_res);
+            icon_button(row, "+", btn_up, tooltip_up, font_res);
         });
 }
 
 /// `Label  Value  [⇄]` — used for cycle/toggle rows (draw mode, theme,
 /// anim speed, colour-blind).
+///
+/// `tooltip` is attached to the `⇄` button so the cycle glyph carries a
+/// one-line reminder of what it iterates through.
+#[allow(clippy::too_many_arguments)]
 fn toggle_row<Marker: Component>(
     parent: &mut ChildSpawnerCommands,
     label: &str,
     marker: Marker,
     value: String,
     action: SettingsButton,
+    tooltip: &'static str,
     font_res: Option<&FontResource>,
 ) {
     let label_font = label_text_font(font_res);
@@ -963,19 +985,24 @@ fn toggle_row<Marker: Component>(
                 TextColor(TEXT_SECONDARY),
             ));
             row.spawn((marker, Text::new(value), value_font, TextColor(TEXT_PRIMARY)));
-            icon_button(row, "⇄", action, font_res);
+            icon_button(row, "⇄", action, tooltip, font_res);
         });
 }
 
 /// Wrapping row of indexed swatch buttons — used for card-back and
 /// background pickers. The currently-selected swatch is tinted with
 /// `STATE_SUCCESS` so the user can see it without reading a label.
+///
+/// `tooltip` is attached to every swatch in the row so hovering any chip
+/// reveals what the picker controls and how new entries unlock.
+#[allow(clippy::too_many_arguments)]
 fn picker_row(
     parent: &mut ChildSpawnerCommands,
     label: &str,
     unlocked: &[usize],
     selected: usize,
     make_button: impl Fn(usize) -> SettingsButton,
+    tooltip: &'static str,
     font_res: Option<&FontResource>,
 ) {
     let label_font = label_text_font(font_res);
@@ -1012,6 +1039,7 @@ fn picker_row(
                 row.spawn((
                     make_button(idx),
                     Button,
+                    Tooltip::new(tooltip),
                     Node {
                         width: Val::Px(SWATCH_PX),
                         height: Val::Px(SWATCH_PX),
@@ -1067,6 +1095,9 @@ fn sync_row(parent: &mut ChildSpawnerCommands, status_text: &str, font_res: Opti
             row.spawn((
                 SettingsButton::SyncNow,
                 Button,
+                Tooltip::new(
+                    "Push and pull stats now. Runs automatically on launch and exit.",
+                ),
                 Node {
                     padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_2),
                     justify_content: JustifyContent::Center,
@@ -1103,10 +1134,16 @@ fn value_text_font(font_res: Option<&FontResource>) -> TextFont {
     }
 }
 
+/// Spawns a small square icon button (volume +/−, toggle, cycle).
+///
+/// `tooltip` is the hover-reveal caption attached via [`Tooltip`]. Every
+/// Settings icon button ships with one because the glyph alone (`+`, `−`,
+/// `⇄`) does not name what it adjusts; the tooltip carries that meaning.
 fn icon_button(
     parent: &mut ChildSpawnerCommands,
     label: &str,
     action: SettingsButton,
+    tooltip: &'static str,
     font_res: Option<&FontResource>,
 ) {
     let glyph_font = TextFont {
@@ -1118,6 +1155,7 @@ fn icon_button(
         .spawn((
             action,
             Button,
+            Tooltip::new(tooltip),
             Node {
                 width: Val::Px(ICON_BUTTON_PX),
                 height: Val::Px(ICON_BUTTON_PX),
@@ -1390,6 +1428,65 @@ mod tests {
         assert!(
             tagged_count >= 6,
             "expected the panel to spawn many bespoke buttons (volume up/down ×2, toggles ×4, sync, swatches…); got {tagged_count}"
+        );
+    }
+
+    /// Every bespoke `SettingsButton` (volume +/−, toggles, swatches,
+    /// Sync Now) must spawn with a `Tooltip` so the glyph-only icons and
+    /// indexed swatches carry hover-reveal context. Mirrors
+    /// `settings_buttons_get_focusable_marker` (Phase 3 focus test) so
+    /// the invariant — every interactive Settings element except the
+    /// `Done` modal button has a tooltip — is asserted consistently.
+    #[test]
+    fn settings_buttons_carry_tooltip() {
+        let mut app = headless_app_with_focus();
+
+        // Open the panel and let spawn + child-flush run.
+        app.world_mut().resource_mut::<SettingsScreen>().0 = true;
+        app.update();
+        app.update();
+        app.update();
+
+        // No bespoke `SettingsButton` (i.e. excluding `Done`, which is
+        // also a `ModalButton`) may be missing a `Tooltip`.
+        let untipped: Vec<&SettingsButton> = app
+            .world_mut()
+            .query_filtered::<&SettingsButton, (With<Button>, Without<Tooltip>, Without<ModalButton>)>()
+            .iter(app.world())
+            .collect();
+        assert!(
+            untipped.is_empty(),
+            "every bespoke Settings button must carry Tooltip; missing: {:?}",
+            untipped
+        );
+
+        // And there must be at least 6 tipped buttons so the assertion
+        // above isn't vacuously true: SFX +/−, Music +/−, Draw Mode,
+        // Anim Speed, Theme, Color-blind, Sync Now, plus at least one
+        // card-back and one background swatch — well over the floor.
+        let tipped_count = app
+            .world_mut()
+            .query_filtered::<&SettingsButton, With<Tooltip>>()
+            .iter(app.world())
+            .count();
+        assert!(
+            tipped_count >= 6,
+            "expected the panel to spawn many tooltipped buttons; got {tipped_count}"
+        );
+
+        // Spot-check: the Sync Now button's tooltip text is the
+        // canonical microcopy. We find it via the `SettingsButton`
+        // discriminant — there is exactly one Sync Now entity per panel.
+        let sync_tip = app
+            .world_mut()
+            .query::<(&SettingsButton, &Tooltip)>()
+            .iter(app.world())
+            .find_map(|(btn, tip)| matches!(btn, SettingsButton::SyncNow).then(|| tip.0.clone()))
+            .expect("Sync Now button should spawn with a Tooltip");
+        assert_eq!(
+            sync_tip.as_ref(),
+            "Push and pull stats now. Runs automatically on launch and exit.",
+            "Sync Now tooltip must use the canonical microcopy"
         );
     }
 
