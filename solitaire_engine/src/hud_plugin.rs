@@ -15,6 +15,12 @@ use crate::auto_complete_plugin::AutoCompleteState;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::daily_challenge_plugin::DailyChallengeResource;
 use crate::progress_plugin::ProgressResource;
+use crate::ui_theme::{
+    ACCENT_PRIMARY, ACCENT_SECONDARY, BG_ELEVATED, BG_ELEVATED_HI, BG_ELEVATED_PRESSED,
+    BORDER_SUBTLE, RADIUS_MD, STATE_DANGER, STATE_INFO, STATE_SUCCESS, STATE_WARNING,
+    TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, TYPE_HEADLINE,
+    VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3,
+};
 use crate::events::{
     HelpRequestEvent, InfoToastEvent, NewGameRequestEvent, PauseRequestEvent,
     StartChallengeRequestEvent, StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent,
@@ -167,12 +173,15 @@ pub enum MenuOption {
 }
 
 /// HUD Z-layer — above cards (which start at z=0) but below overlay screens.
-const Z_HUD: i32 = 50;
+/// Mirrors `ui_theme::Z_HUD` and is duplicated here only so the hud module
+/// can use it as a `const` without a non-const expression in `ZIndex(...)`.
+const Z_HUD: i32 = crate::ui_theme::Z_HUD;
 
-/// Idle / hover / pressed colours shared by every action button.
-const ACTION_BTN_IDLE: Color = Color::srgb(0.20, 0.55, 0.85);
-const ACTION_BTN_HOVER: Color = Color::srgb(0.28, 0.65, 0.95);
-const ACTION_BTN_PRESSED: Color = Color::srgb(0.15, 0.45, 0.75);
+/// Idle / hover / pressed colours shared by every action button. Aliased
+/// to the theme tokens so the HUD picks up palette changes for free.
+const ACTION_BTN_IDLE: Color = BG_ELEVATED;
+const ACTION_BTN_HOVER: Color = BG_ELEVATED_HI;
+const ACTION_BTN_PRESSED: Color = BG_ELEVATED_PRESSED;
 
 /// Renders the in-game HUD: score counter, move counter, elapsed timer, draw-mode indicator, and the auto-complete badge that lights up when the game is solvable without further input.
 pub struct HudPlugin;
@@ -219,78 +228,144 @@ impl Plugin for HudPlugin {
     }
 }
 
+/// Spawns the in-game HUD as a 4-tier vertical column anchored to the
+/// top-left of the play area.
+///
+/// Tiers (top to bottom):
+///   1. **Primary** — Score (display weight) · Moves · Timer.
+///      Always visible during gameplay.
+///   2. **Mode context** — Mode badge · Daily-challenge constraint ·
+///      Draw-cycle indicator. Each cell is empty when not relevant; the
+///      row collapses visually when all cells are empty.
+///   3. **Penalty / bonus** — Undos · Recycles · Auto-complete badge.
+///      Both penalty counters share `STATE_WARNING` (the audit found
+///      they were inconsistent: Undos amber, Recycles white).
+///   4. **Selection** — keyboard-driven pile selector chip.
+///
+/// The audit identified the original single-row layout (10 readouts in
+/// one horizontal flex row, 5+ colour families competing) as the
+/// player's #1 complaint. This restructure groups by purpose, lets
+/// transient items disappear cleanly, and uses the typography scale to
+/// make Score the visual protagonist.
 fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
-    let white = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.80));
-    let font = TextFont {
-        font: font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
-        font_size: 18.0,
+    let font_handle = font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default();
+    let font_score = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_HEADLINE,
         ..default()
     };
+    let font_lg = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_BODY_LG,
+        ..default()
+    };
+    let font_body = TextFont {
+        font: font_handle,
+        font_size: TYPE_BODY,
+        ..default()
+    };
+
+    let row_node = || Node {
+        flex_direction: FlexDirection::Row,
+        column_gap: VAL_SPACE_3,
+        align_items: AlignItems::Baseline,
+        ..default()
+    };
+
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(12.0),
-                top: Val::Px(8.0),
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(20.0),
-                align_items: AlignItems::Center,
+                left: VAL_SPACE_3,
+                top: VAL_SPACE_2,
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_1,
                 ..default()
             },
             ZIndex(Z_HUD),
         ))
-        .with_children(|b| {
-            b.spawn((HudScore, Text::new("Score: 0"), font.clone(), white));
-            b.spawn((HudMoves, Text::new("Moves: 0"), font.clone(), white));
-            b.spawn((HudTime, Text::new("0:00"), font.clone(), white));
-            b.spawn((
-                HudMode,
-                Text::new(""),
-                TextFont { font_size: 17.0, ..default() },
-                TextColor(Color::srgb(1.0, 0.85, 0.25)),
-            ));
-            // Daily-challenge constraint (hidden until a challenge is active).
-            b.spawn((
-                HudChallenge,
-                Text::new(""),
-                TextFont { font_size: 17.0, ..default() },
-                TextColor(Color::srgb(0.4, 0.9, 1.0)),
-            ));
-            // Undo counter (white by default; turns amber when undos are used).
-            b.spawn((
-                HudUndos,
-                Text::new(""),
-                font.clone(),
-                white,
-            ));
-            // Auto-complete badge (green "AUTO" when sequence is running).
-            b.spawn((
-                HudAutoComplete,
-                Text::new(""),
-                TextFont { font_size: 17.0, ..default() },
-                TextColor(Color::srgb(0.2, 0.9, 0.3)),
-            ));
-            // Recycle counter — hidden until the first recycle in either draw mode.
-            b.spawn((
-                HudRecycles,
-                Text::new(""),
-                font.clone(),
-                white,
-            ));
-            // Draw-cycle indicator — only visible in Draw-Three mode.
-            b.spawn((
-                HudDrawCycle,
-                Text::new(""),
-                font,
-                TextColor(Color::srgb(0.7, 0.85, 1.0)),
-            ));
-            // Keyboard-selection indicator — shows which pile is Tab-selected.
-            b.spawn((
-                HudSelection,
-                Text::new(""),
-                TextFont { font_size: 17.0, ..default() },
-                TextColor(Color::srgb(1.0, 1.0, 0.5)),
-            ));
+        .with_children(|hud| {
+            // Tier 1 — primary readouts. Score is the protagonist (HEADLINE);
+            // Moves and Timer are supporting context (BODY_LG, secondary tone).
+            hud.spawn(row_node()).with_children(|t1| {
+                t1.spawn((
+                    HudScore,
+                    Text::new("Score: 0"),
+                    font_score.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+                t1.spawn((
+                    HudMoves,
+                    Text::new("Moves: 0"),
+                    font_lg.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
+                t1.spawn((
+                    HudTime,
+                    Text::new("0:00"),
+                    font_lg.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
+            });
+
+            // Tier 2 — mode context. Each cell is empty until update_hud
+            // populates it (and clears it when no longer relevant), so the
+            // row collapses when nothing in this tier applies.
+            hud.spawn(row_node()).with_children(|t2| {
+                t2.spawn((
+                    HudMode,
+                    Text::new(""),
+                    font_body.clone(),
+                    TextColor(ACCENT_PRIMARY),
+                ));
+                t2.spawn((
+                    HudChallenge,
+                    Text::new(""),
+                    font_body.clone(),
+                    TextColor(STATE_INFO),
+                ));
+                t2.spawn((
+                    HudDrawCycle,
+                    Text::new(""),
+                    font_body.clone(),
+                    TextColor(STATE_INFO),
+                ));
+            });
+
+            // Tier 3 — penalty / bonus. Undos and Recycles share the
+            // warning hue so they read as the same category ("you took a
+            // penalty"); the auto-complete badge stays success-green.
+            hud.spawn(row_node()).with_children(|t3| {
+                t3.spawn((
+                    HudUndos,
+                    Text::new(""),
+                    font_body.clone(),
+                    TextColor(STATE_WARNING),
+                ));
+                t3.spawn((
+                    HudRecycles,
+                    Text::new(""),
+                    font_body.clone(),
+                    TextColor(STATE_WARNING),
+                ));
+                t3.spawn((
+                    HudAutoComplete,
+                    Text::new(""),
+                    font_body.clone(),
+                    TextColor(STATE_SUCCESS),
+                ));
+            });
+
+            // Tier 4 — selection chip. Stays in HUD for now; a future
+            // pass can reposition it next to the selected pile.
+            hud.spawn(row_node()).with_children(|t4| {
+                t4.spawn((
+                    HudSelection,
+                    Text::new(""),
+                    font_body,
+                    TextColor(ACCENT_SECONDARY),
+                ));
+            });
         });
 }
 
@@ -322,12 +397,15 @@ fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Comma
             ZIndex(Z_HUD),
         ))
         .with_children(|row| {
-            spawn_action_button(row, MenuButton, "Menu \u{25BE}", &font);
-            spawn_action_button(row, UndoButton, "Undo", &font);
-            spawn_action_button(row, PauseButton, "Pause", &font);
-            spawn_action_button(row, HelpButton, "Help", &font);
-            spawn_action_button(row, ModesButton, "Modes \u{25BE}", &font);
-            spawn_action_button(row, NewGameButton, "New Game", &font);
+            // Menu and Modes don't have a single hotkey accelerator
+            // (each row inside their popover has its own); their button
+            // labels carry the dropdown chevron in lieu of a key chip.
+            spawn_action_button(row, MenuButton, "Menu \u{25BE}", None, &font);
+            spawn_action_button(row, UndoButton, "Undo", Some("U"), &font);
+            spawn_action_button(row, PauseButton, "Pause", Some("Esc"), &font);
+            spawn_action_button(row, HelpButton, "Help", Some("F1"), &font);
+            spawn_action_button(row, ModesButton, "Modes \u{25BE}", None, &font);
+            spawn_action_button(row, NewGameButton, "New Game", Some("N"), &font);
         });
 }
 
@@ -338,23 +416,37 @@ fn spawn_action_button<M: Component>(
     row: &mut ChildSpawnerCommands,
     marker: M,
     label: &str,
+    hotkey: Option<&'static str>,
     font: &TextFont,
 ) {
+    let hotkey_font = TextFont {
+        font: font.font.clone(),
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
     row.spawn((
         marker,
         ActionButton,
         Button,
         Node {
-            padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+            padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_2),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            border_radius: BorderRadius::all(Val::Px(6.0)),
+            border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),
+            column_gap: VAL_SPACE_2,
             ..default()
         },
         BackgroundColor(ACTION_BTN_IDLE),
+        BorderColor::all(BORDER_SUBTLE),
     ))
     .with_children(|b| {
-        b.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+        b.spawn((Text::new(label), font.clone(), TextColor(TEXT_PRIMARY)));
+        if let Some(key) = hotkey {
+            // Hotkey hint rendered as a dim caption next to the label —
+            // keeps the keyboard accelerator discoverable without
+            // hijacking the button's primary affordance.
+            b.spawn((Text::new(key), hotkey_font, TextColor(TEXT_SECONDARY)));
+        }
     });
 }
 
@@ -476,7 +568,7 @@ fn spawn_modes_popover(
                 border_radius: BorderRadius::all(Val::Px(6.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.10, 0.12, 0.15, 0.96)),
+            BackgroundColor(BG_ELEVATED),
             ZIndex(Z_HUD + 5),
         ))
         .with_children(|panel| {
@@ -497,7 +589,7 @@ fn spawn_modes_popover(
                         BackgroundColor(ACTION_BTN_IDLE),
                     ))
                     .with_children(|b| {
-                        b.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+                        b.spawn((Text::new(label), font.clone(), TextColor(TEXT_PRIMARY)));
                     });
             }
         });
@@ -605,7 +697,7 @@ fn spawn_menu_popover(commands: &mut Commands, font_res: Option<&FontResource>) 
                 border_radius: BorderRadius::all(Val::Px(6.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.10, 0.12, 0.15, 0.96)),
+            BackgroundColor(BG_ELEVATED),
             ZIndex(Z_HUD + 5),
         ))
         .with_children(|panel| {
@@ -626,7 +718,7 @@ fn spawn_menu_popover(commands: &mut Commands, font_res: Option<&FontResource>) 
                         BackgroundColor(ACTION_BTN_IDLE),
                     ))
                     .with_children(|b| {
-                        b.spawn((Text::new(label), font.clone(), TextColor(Color::WHITE)));
+                        b.spawn((Text::new(label), font.clone(), TextColor(TEXT_PRIMARY)));
                     });
             }
         });
@@ -679,6 +771,7 @@ fn handle_menu_option_click(
 /// states by mutating `BackgroundColor` whenever the interaction state
 /// changes. One query covers all action buttons via the shared
 /// `ActionButton` marker.
+#[allow(clippy::type_complexity)]
 fn paint_action_buttons(
     mut buttons: Query<
         (&Interaction, &mut BackgroundColor),
@@ -894,11 +987,12 @@ fn update_hud(
             let count = g.undo_count;
             if count == 0 {
                 **t = String::new();
-                *color = TextColor(Color::srgba(1.0, 1.0, 1.0, 0.80));
+                *color = TextColor(TEXT_PRIMARY);
             } else {
                 **t = format!("Undos: {count}");
-                // Amber warning: using undo blocks the no-undo achievement.
-                *color = TextColor(Color::srgb(1.0, 0.7, 0.2));
+                // STATE_WARNING signals "you took a penalty" — same hue
+                // as the Recycles counter so they read as one category.
+                *color = TextColor(STATE_WARNING);
             }
         }
 
@@ -1025,20 +1119,22 @@ fn challenge_hud_text(dc: &DailyChallengeResource) -> String {
     }
 }
 
-/// Returns the colour for the challenge time-limit HUD label based on seconds remaining.
+/// Returns the colour for the challenge time-limit HUD label based on
+/// seconds remaining. Uses theme tokens so the urgency ramp picks up
+/// palette changes for free.
 ///
-/// | Remaining   | Colour |
-/// |-------------|--------|
-/// | ≥ 60 s      | Cyan (default) |
-/// | 30 – 59 s   | Orange (warning) |
-/// | < 30 s      | Red (urgent) |
+/// | Remaining   | Token            |
+/// |-------------|------------------|
+/// | ≥ 60 s      | `STATE_INFO`     |
+/// | 30 – 59 s   | `STATE_WARNING`  |
+/// | < 30 s      | `STATE_DANGER`   |
 pub fn challenge_time_color(remaining: u64) -> Color {
     if remaining < 30 {
-        Color::srgb(1.0, 0.2, 0.2)
+        STATE_DANGER
     } else if remaining < 60 {
-        Color::srgb(1.0, 0.6, 0.0)
+        STATE_WARNING
     } else {
-        Color::srgb(0.4, 0.9, 1.0)
+        STATE_INFO
     }
 }
 
@@ -1189,39 +1285,39 @@ mod tests {
     }
 
     #[test]
-    fn challenge_time_color_above_60_is_cyan() {
+    fn challenge_time_color_above_60_is_info() {
         let c = challenge_time_color(61);
-        assert_eq!(c, Color::srgb(0.4, 0.9, 1.0));
+        assert_eq!(c, STATE_INFO);
     }
 
     #[test]
-    fn challenge_time_color_exactly_60_is_cyan() {
+    fn challenge_time_color_exactly_60_is_info() {
         let c = challenge_time_color(60);
-        assert_eq!(c, Color::srgb(0.4, 0.9, 1.0));
+        assert_eq!(c, STATE_INFO);
     }
 
     #[test]
-    fn challenge_time_color_59_is_orange() {
+    fn challenge_time_color_59_is_warning() {
         let c = challenge_time_color(59);
-        assert_eq!(c, Color::srgb(1.0, 0.6, 0.0));
+        assert_eq!(c, STATE_WARNING);
     }
 
     #[test]
-    fn challenge_time_color_30_is_orange() {
+    fn challenge_time_color_30_is_warning() {
         let c = challenge_time_color(30);
-        assert_eq!(c, Color::srgb(1.0, 0.6, 0.0));
+        assert_eq!(c, STATE_WARNING);
     }
 
     #[test]
-    fn challenge_time_color_29_is_red() {
+    fn challenge_time_color_29_is_danger() {
         let c = challenge_time_color(29);
-        assert_eq!(c, Color::srgb(1.0, 0.2, 0.2));
+        assert_eq!(c, STATE_DANGER);
     }
 
     #[test]
-    fn challenge_time_color_zero_is_red() {
+    fn challenge_time_color_zero_is_danger() {
         let c = challenge_time_color(0);
-        assert_eq!(c, Color::srgb(1.0, 0.2, 0.2));
+        assert_eq!(c, STATE_DANGER);
     }
 
     // -----------------------------------------------------------------------
