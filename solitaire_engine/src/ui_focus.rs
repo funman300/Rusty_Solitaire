@@ -29,11 +29,17 @@
 //!
 //! ## Phase scope
 //!
-//! Phase 1 is modal buttons only. The HUD action bar (Phase 2), Home
-//! mode cards (Phase 2), and Settings bespoke buttons + arrow-key
-//! handling (Phase 3) remain out of scope. When no modal is open and no
-//! HUD button is hovered, every system here no-ops so
-//! [`crate::selection_plugin`]'s Tab/Enter card-selection still works.
+//! Phase 1 is modal buttons only. Phase 2 extended the same component
+//! to the HUD action bar (on hover) and Home mode cards. Phase 3 closes
+//! out the engine: Settings bespoke buttons opt-in via the same
+//! ancestry-walk pattern, picker rows inside Settings get [`FocusRow`]
+//! so Left/Right cycle within the row, and the focused button is
+//! auto-scrolled into the visible Settings viewport (see the
+//! `scroll_focus_into_view` system in `settings_plugin`).
+//!
+//! When no modal is open and no HUD button is hovered, every system
+//! here no-ops so [`crate::selection_plugin`]'s Tab/Enter
+//! card-selection still works.
 
 use bevy::ecs::query::Has;
 use bevy::input::ButtonInput;
@@ -80,6 +86,21 @@ pub enum FocusGroup {
 /// also break the spawn-order ordering).
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Disabled;
+
+/// Marker on a parent container whose direct [`Focusable`] children
+/// form a horizontal row navigable by Left / Right arrow keys.
+///
+/// Tab / Shift+Tab still escape the row to the next focusable outside
+/// it (the row's children participate in their group's normal cycle
+/// just like any other focusable). Arrow keys are scoped to the row:
+/// pressing Left/Right wraps within the row's children only, skipping
+/// any child marked [`Disabled`].
+///
+/// Used by Settings picker rows (card-back swatches, background
+/// swatches) to give players a familiar "select-from-options" feel
+/// without leaving the keyboard.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct FocusRow;
 
 /// Globally-focused button entity, or `None` if nothing is focused.
 /// Read-only in steady state; written by the focus systems on Tab,
@@ -310,16 +331,65 @@ fn clear_hud_focus_on_unhover(
 ///
 /// Consumed keys are cleared from `ButtonInput<KeyCode>` so the
 /// selection plugin doesn't double-handle them.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn handle_focus_keys(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     scrims: Query<Entity, With<ModalScrim>>,
     children_q: Query<&Children>,
+    parents_q: Query<&ChildOf>,
+    rows: Query<(), With<FocusRow>>,
     focusables: Query<(&Focusable, Has<Disabled>)>,
     hud_interactions: Query<(Entity, &Interaction, &Focusable), Without<Disabled>>,
     mut focused: ResMut<FocusedButton>,
     mut writes: Commands,
 ) {
+    // Arrow-key navigation inside a `FocusRow` is a separate, scoped
+    // path that must run before the Tab / activation logic so a focused
+    // swatch responds to Left / Right without falling through to the
+    // group cycle. Only acts when the currently-focused entity's direct
+    // parent carries `FocusRow`; otherwise the keys are a no-op
+    // (explicit semantics — we don't want Left/Right doubling as Tab).
+    let arrow_left = keys.just_pressed(KeyCode::ArrowLeft);
+    let arrow_right = keys.just_pressed(KeyCode::ArrowRight);
+    if (arrow_left || arrow_right)
+        && let Some(target) = focused.0
+        && let Ok(parent) = parents_q.get(target)
+        && rows.get(parent.parent()).is_ok()
+        && let Ok(siblings) = children_q.get(parent.parent())
+    {
+        // Build the row's enabled-focusable cycle in Children order so
+        // it matches the visual left → right layout.
+        let row_cycle: Vec<Entity> = siblings
+            .iter()
+            .filter(|e| {
+                focusables
+                    .get(*e)
+                    .map(|(_, disabled)| !disabled)
+                    .unwrap_or(false)
+            })
+            .collect();
+        if !row_cycle.is_empty()
+            && let Some(idx) = row_cycle.iter().position(|e| *e == target)
+        {
+            let n = row_cycle.len();
+            let next = if arrow_right {
+                (idx + 1) % n
+            } else {
+                (idx + n - 1) % n
+            };
+            focused.0 = Some(row_cycle[next]);
+        }
+        // Always consume the arrow key when we engage — even if the
+        // cycle was empty — so downstream systems don't double-handle.
+        if arrow_left {
+            keys.clear_just_pressed(KeyCode::ArrowLeft);
+        }
+        if arrow_right {
+            keys.clear_just_pressed(KeyCode::ArrowRight);
+        }
+        return;
+    }
+
     // Resolve the active focus group:
     //   1. Any modal open  ⇒ Modal(topmost scrim)
     //   2. Any Hud-grouped focusable hovered ⇒ Hud
@@ -991,6 +1061,228 @@ mod tests {
         assert!(
             app.world().resource::<FocusedButton>().0.is_none(),
             "FocusedButton must clear once no Hud button is hovered"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — FocusRow arrow-key navigation
+    // -----------------------------------------------------------------------
+
+    /// Spawns a synthetic modal scrim with a single [`FocusRow`] parent
+    /// containing three focusable swatches (A, B, C) bound to the scrim.
+    /// Returns `(scrim, row, a, b, c)`. No real `ModalScrim` ancestry —
+    /// just a `ModalScrim` marker on the scrim entity so the active-group
+    /// resolver in `handle_focus_keys` picks it up.
+    fn spawn_modal_with_focus_row(app: &mut App) -> (Entity, Entity, Entity, Entity, Entity) {
+        let world = app.world_mut();
+        let scrim = world.spawn((ModalScrim, Node::default())).id();
+        let row = world.spawn((FocusRow, Node::default())).id();
+        world.entity_mut(scrim).add_child(row);
+
+        let make_swatch = |w: &mut World, marker: fn(&mut bevy::ecs::world::EntityWorldMut)| {
+            let mut e = w.spawn((
+                Button,
+                Node::default(),
+                Interaction::default(),
+                Focusable {
+                    group: FocusGroup::Modal(scrim),
+                    order: 0,
+                },
+            ));
+            marker(&mut e);
+            e.id()
+        };
+        let a = make_swatch(world, |e| {
+            e.insert(TestButtonA);
+        });
+        let b = make_swatch(world, |e| {
+            e.insert(TestButtonB);
+        });
+        let c = make_swatch(world, |e| {
+            e.insert(TestButtonC);
+        });
+        for child in [a, b, c] {
+            world.entity_mut(row).add_child(child);
+        }
+        // One tick so the focus systems observe the new hierarchy.
+        app.update();
+        (scrim, row, a, b, c)
+    }
+
+    #[test]
+    fn arrow_right_advances_focus_within_focus_row() {
+        let mut app = headless_app();
+        let (_scrim, _row, a, b, _c) = spawn_modal_with_focus_row(&mut app);
+
+        // Focus child A explicitly so we know the starting state.
+        app.world_mut().resource_mut::<FocusedButton>().0 = Some(a);
+
+        press_key(&mut app, KeyCode::ArrowRight);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<FocusedButton>().0,
+            Some(b),
+            "ArrowRight should advance focus from A → B inside the row"
+        );
+    }
+
+    #[test]
+    fn arrow_left_at_first_wraps_to_last() {
+        let mut app = headless_app();
+        let (_scrim, _row, a, _b, c) = spawn_modal_with_focus_row(&mut app);
+
+        app.world_mut().resource_mut::<FocusedButton>().0 = Some(a);
+
+        press_key(&mut app, KeyCode::ArrowLeft);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<FocusedButton>().0,
+            Some(c),
+            "ArrowLeft from the first child must wrap to the last"
+        );
+    }
+
+    #[test]
+    fn arrow_keys_outside_focus_row_are_noop() {
+        let mut app = headless_app();
+        // Modal with two buttons, but no FocusRow — the standard 2-button
+        // modal fixture is exactly this shape.
+        let (_scrim, a, _b) = spawn_two_button_modal(&mut app);
+        // Auto-focus picked Primary (A). Arrow keys must not change it.
+        assert_eq!(app.world().resource::<FocusedButton>().0, Some(a));
+
+        press_key(&mut app, KeyCode::ArrowRight);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<FocusedButton>().0,
+            Some(a),
+            "ArrowRight outside a FocusRow must leave focus unchanged"
+        );
+    }
+
+    #[test]
+    fn tab_escapes_focus_row_to_next_section() {
+        // Build a synthetic modal with two FocusRows of two children
+        // each — first row with order=0 children, second row with
+        // order=10 — then focus the last child of row 1 and press Tab.
+        // The cycle must advance into row 2 rather than wrap back inside
+        // row 1.
+        let mut app = headless_app();
+
+        let (scrim, _row1_a, row1_b, _row2_a, _row2_b) = {
+            let world = app.world_mut();
+            let scrim = world.spawn((ModalScrim, Node::default())).id();
+            let row1 = world.spawn((FocusRow, Node::default())).id();
+            let row2 = world.spawn((FocusRow, Node::default())).id();
+            world.entity_mut(scrim).add_child(row1);
+            world.entity_mut(scrim).add_child(row2);
+
+            let r1a = world
+                .spawn((
+                    Button,
+                    Node::default(),
+                    Interaction::default(),
+                    Focusable {
+                        group: FocusGroup::Modal(scrim),
+                        order: 0,
+                    },
+                ))
+                .id();
+            let r1b = world
+                .spawn((
+                    Button,
+                    Node::default(),
+                    Interaction::default(),
+                    Focusable {
+                        group: FocusGroup::Modal(scrim),
+                        order: 0,
+                    },
+                ))
+                .id();
+            let r2a = world
+                .spawn((
+                    Button,
+                    Node::default(),
+                    Interaction::default(),
+                    Focusable {
+                        group: FocusGroup::Modal(scrim),
+                        order: 10,
+                    },
+                ))
+                .id();
+            let r2b = world
+                .spawn((
+                    Button,
+                    Node::default(),
+                    Interaction::default(),
+                    Focusable {
+                        group: FocusGroup::Modal(scrim),
+                        order: 10,
+                    },
+                ))
+                .id();
+            world.entity_mut(row1).add_child(r1a);
+            world.entity_mut(row1).add_child(r1b);
+            world.entity_mut(row2).add_child(r2a);
+            world.entity_mut(row2).add_child(r2b);
+            (scrim, r1a, r1b, r2a, r2b)
+        };
+        app.update();
+
+        // Focus the last child of row 1.
+        app.world_mut().resource_mut::<FocusedButton>().0 = Some(row1_b);
+
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+
+        // After Tab the cycle must move out of row 1 — either to a child
+        // of row 2 (preferred behaviour) or, in a wrap, to the first
+        // child of row 1. The test enforces the stronger contract:
+        // Tab must escape the row so the next focusable is in row 2.
+        let focused = app
+            .world()
+            .resource::<FocusedButton>()
+            .0
+            .expect("Tab should leave focus on some entity");
+        // `focused` must NOT be `row1_b` itself (Tab clearly should advance)
+        assert_ne!(focused, row1_b, "Tab must advance off the current focus");
+        // And it must be a descendant of row 2's parent (i.e. a Focusable
+        // with order >= 10) — our row 1 children all have order 0.
+        let order = app
+            .world()
+            .entity(focused)
+            .get::<Focusable>()
+            .expect("focused entity must carry Focusable")
+            .order;
+        assert_eq!(
+            order, 10,
+            "Tab from the end of row 1 should land in row 2 (order=10), not wrap inside row 1 (order=0); landed on order={order}"
+        );
+        // Sanity: scrim entity isn't the focus.
+        assert_ne!(focused, scrim);
+    }
+
+    #[test]
+    fn disabled_swatch_skipped_by_arrow_keys() {
+        let mut app = headless_app();
+        let (_scrim, _row, a, b, c) = spawn_modal_with_focus_row(&mut app);
+
+        // Disable the middle swatch.
+        app.world_mut().entity_mut(b).insert(Disabled);
+        // Focus the first swatch and press Right — should jump over B
+        // straight to C.
+        app.world_mut().resource_mut::<FocusedButton>().0 = Some(a);
+
+        press_key(&mut app, KeyCode::ArrowRight);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<FocusedButton>().0,
+            Some(c),
+            "ArrowRight should skip the Disabled middle swatch and land on C"
         );
     }
 }

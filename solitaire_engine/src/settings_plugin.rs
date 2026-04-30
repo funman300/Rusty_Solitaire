@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use bevy::ui::{ComputedNode, UiGlobalTransform};
 use solitaire_core::game_state::DrawMode;
 use solitaire_data::{load_settings_from, save_settings_to, settings_file_path, settings::Theme, AnimSpeed, Settings};
 
@@ -20,12 +21,14 @@ use crate::events::{ManualSyncRequestEvent, ToggleSettingsRequestEvent};
 use crate::font_plugin::FontResource;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::{SettingsScrollPos, SyncStatus, SyncStatusResource};
+use crate::ui_focus::{FocusGroup, FocusRow, Focusable, FocusedButton};
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
+    ModalButton, ModalScrim,
 };
 use crate::ui_theme::{
-    BG_BASE, BG_ELEVATED_HI, BORDER_SUBTLE, RADIUS_SM, STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY,
-    TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
+    BG_BASE, BG_ELEVATED_HI, BORDER_SUBTLE, RADIUS_SM, SPACE_2, STATE_SUCCESS, TEXT_PRIMARY,
+    TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
 };
 
 /// Side length of a swatch button in the card-back / background pickers.
@@ -123,6 +126,39 @@ enum SettingsButton {
     SelectBackground(usize),
 }
 
+impl SettingsButton {
+    /// Tab-walk priority — lower numbers visited first. Visual reading
+    /// order is top-to-bottom by section, left-to-right inside each row.
+    /// Two buttons in the same picker row receive the same `order`;
+    /// `handle_focus_keys` then breaks ties by entity index, which
+    /// matches `Children` spawn order inside each row.
+    fn focus_order(&self) -> i32 {
+        match self {
+            // Audio section
+            SettingsButton::SfxDown => 10,
+            SettingsButton::SfxUp => 11,
+            SettingsButton::MusicDown => 20,
+            SettingsButton::MusicUp => 21,
+            // Gameplay section
+            SettingsButton::ToggleDrawMode => 30,
+            SettingsButton::CycleAnimSpeed => 40,
+            // Cosmetic section
+            SettingsButton::ToggleTheme => 50,
+            SettingsButton::ToggleColorBlind => 60,
+            // Picker rows — every swatch in a row shares the row's
+            // priority so entity-index tiebreaking yields left → right.
+            SettingsButton::SelectCardBack(_) => 70,
+            SettingsButton::SelectBackground(_) => 80,
+            // Sync section
+            SettingsButton::SyncNow => 90,
+            // Done is tagged by `attach_focusable_to_modal_buttons` and
+            // never reaches `attach_focusable_to_settings_buttons`; the
+            // value here is only a fallback for completeness.
+            SettingsButton::Done => 100,
+        }
+    }
+}
+
 /// Plugin that owns the settings lifecycle.
 pub struct SettingsPlugin {
     /// Path to `settings.json`. `None` in headless/test mode.
@@ -178,6 +214,8 @@ impl Plugin for SettingsPlugin {
                     update_background_text,
                     update_anim_speed_text,
                     update_color_blind_text,
+                    attach_focusable_to_settings_buttons,
+                    scroll_focus_into_view,
                 ),
             );
         }
@@ -554,6 +592,148 @@ fn color_blind_label(enabled: bool) -> String {
     if enabled { "ON".into() } else { "OFF".into() }
 }
 
+/// Auto-attaches [`Focusable`] to every bespoke Settings button — icon
+/// buttons (volume +/−, toggle, cycle), swatch buttons (card-back,
+/// background pickers), and the "Sync Now" button. The "Done" button is
+/// already tagged by `attach_focusable_to_modal_buttons` (it carries
+/// [`ModalButton`]) and is filtered out here.
+///
+/// Walks ancestors via [`ChildOf`] to find the [`ModalScrim`] that owns
+/// the panel so the new [`Focusable`]'s group is bound to that scrim —
+/// same defensive shape as the Phase 1 / 2 attach systems.
+#[allow(clippy::type_complexity)]
+fn attach_focusable_to_settings_buttons(
+    mut commands: Commands,
+    new_buttons: Query<
+        (Entity, &SettingsButton),
+        (With<Button>, Without<Focusable>, Without<ModalButton>),
+    >,
+    parents: Query<&ChildOf>,
+    scrims: Query<(), With<ModalScrim>>,
+) {
+    for (button, settings_button) in &new_buttons {
+        let mut current = button;
+        let mut scrim_entity: Option<Entity> = None;
+        for _ in 0..32 {
+            if scrims.get(current).is_ok() {
+                scrim_entity = Some(current);
+                break;
+            }
+            match parents.get(current) {
+                Ok(parent) => current = parent.parent(),
+                Err(_) => break,
+            }
+        }
+        if let Some(scrim) = scrim_entity {
+            commands.entity(button).insert(Focusable {
+                group: FocusGroup::Modal(scrim),
+                order: settings_button.focus_order(),
+            });
+        }
+    }
+}
+
+/// Vertical padding (logical px) added around the focused button when
+/// scrolling it into view. Keeps the focus ring's halo visible above /
+/// below the viewport edge.
+const FOCUS_SCROLL_PADDING: f32 = SPACE_2;
+
+/// When the focused entity sits outside the visible Settings scroll
+/// viewport, adjust the viewport's [`ScrollPosition`] so the button is
+/// fully visible. No-op when:
+///
+/// - `FocusedButton` is `None`
+/// - the focused entity has no [`UiGlobalTransform`] / [`ComputedNode`]
+///   (e.g. a freshly-spawned modal hasn't laid out yet)
+/// - the focused entity is not a descendant of the
+///   [`SettingsPanelScrollable`] container
+///
+/// The viewport's visible Y range is `[scroll_y, scroll_y +
+/// viewport_height]` in physical pixels (matching `ComputedNode.size`).
+/// The focused button's vertical extent is computed from its
+/// `UiGlobalTransform.translation.y` (centre, physical) ± half its
+/// `ComputedNode.size.y`. Because the scroll container's local
+/// coordinates run [0, content_height] and the visible window is
+/// [scroll_y, scroll_y + viewport], we convert the button's window-
+/// space Y to container-local Y by subtracting the container's window-
+/// space top and adding the current scroll offset.
+#[allow(clippy::type_complexity)]
+fn scroll_focus_into_view(
+    focused: Res<FocusedButton>,
+    parents: Query<&ChildOf>,
+    nodes: Query<(&UiGlobalTransform, &ComputedNode)>,
+    mut containers: Query<
+        (&mut ScrollPosition, &UiGlobalTransform, &ComputedNode),
+        With<SettingsPanelScrollable>,
+    >,
+) {
+    let Some(target) = focused.0 else { return };
+    // Gather button geometry.
+    let Ok((target_transform, target_node)) = nodes.get(target) else {
+        return;
+    };
+
+    // Walk ancestors looking for the scroll container. Bounded to keep
+    // a malformed hierarchy from hanging the system.
+    let mut current = target;
+    let mut container_entity: Option<Entity> = None;
+    for _ in 0..32 {
+        if containers.get(current).is_ok() {
+            container_entity = Some(current);
+            break;
+        }
+        match parents.get(current) {
+            Ok(parent) => current = parent.parent(),
+            Err(_) => break,
+        }
+    }
+    let Some(container) = container_entity else { return };
+
+    let Ok((mut scroll, container_transform, container_node)) =
+        containers.get_mut(container)
+    else {
+        return;
+    };
+
+    // Geometry is reported in physical pixels by `ComputedNode.size` and
+    // `UiGlobalTransform.translation`. `ScrollPosition` is in logical px,
+    // so convert via `inverse_scale_factor` before we write.
+    let inv = target_node.inverse_scale_factor;
+    let target_height = target_node.size().y;
+    let target_centre_y = target_transform.translation.y;
+    let target_top = target_centre_y - target_height * 0.5;
+    let target_bottom = target_centre_y + target_height * 0.5;
+
+    let container_height = container_node.size().y;
+    let container_top = container_transform.translation.y - container_height * 0.5;
+
+    // Convert button window-space Y to container-local Y. The container
+    // is currently scrolled by `scroll.0.y` *logical* pixels — multiply
+    // by physical-per-logical to compare with physical pixel extents.
+    let scroll_phys = scroll.0.y / inv.max(f32::EPSILON);
+    let viewport_top = container_top + scroll_phys;
+    let viewport_bottom = viewport_top + container_height;
+
+    // Layout may not have run yet (zero size on first frame) — no
+    // sensible scroll target until the container has dimensions.
+    if container_height <= 0.0 {
+        return;
+    }
+
+    let pad_phys = FOCUS_SCROLL_PADDING / inv.max(f32::EPSILON);
+    if target_top < viewport_top {
+        // Button extends above the viewport — scroll up.
+        let new_top = target_top - pad_phys;
+        let delta = new_top - viewport_top;
+        scroll.0.y = ((scroll_phys + delta) * inv).max(0.0);
+    } else if target_bottom > viewport_bottom {
+        // Button extends below the viewport — scroll down.
+        let new_bottom = target_bottom + pad_phys;
+        let delta = new_bottom - viewport_bottom;
+        scroll.0.y = ((scroll_phys + delta) * inv).max(0.0);
+    }
+}
+
 /// Scrolls the settings panel inner card in response to mouse-wheel events.
 ///
 /// `offset_y` increases downward (0 = top of content). Scrolling down (ev.y < 0)
@@ -805,13 +985,19 @@ fn picker_row(
         ..default()
     };
     parent
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: VAL_SPACE_2,
-            flex_wrap: FlexWrap::Wrap,
-            ..default()
-        })
+        .spawn((
+            // The row container is a `FocusRow` so Left / Right arrow
+            // keys cycle within its swatch children. Tab still escapes
+            // the row to the next focusable in the modal.
+            FocusRow,
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            },
+        ))
         .with_children(|row| {
             row.spawn((
                 Text::new(label.to_string()),
@@ -1139,6 +1325,94 @@ mod tests {
             .unwrap()
             .0.y;
         assert!((offset - 200.0).abs() < 1e-3, "scrolling down should increase offset_y; got {offset}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — keyboard focus ring, Settings buttons + FocusRow
+    // -----------------------------------------------------------------------
+
+    /// Headless app that runs the *real* (UI-enabled) `SettingsPlugin`
+    /// alongside `UiModalPlugin` and `UiFocusPlugin`, so the spawn /
+    /// auto-tag systems fire end-to-end without writing to disk.
+    fn headless_app_with_focus() -> App {
+        use crate::ui_focus::UiFocusPlugin;
+        use crate::ui_modal::UiModalPlugin;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(UiModalPlugin)
+            .add_plugins(UiFocusPlugin)
+            .add_plugins(SettingsPlugin {
+                // No persistence — keep the test isolated.
+                storage_path: None,
+                ui_enabled: true,
+            });
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.update();
+        app
+    }
+
+    #[test]
+    fn settings_buttons_get_focusable_marker() {
+        let mut app = headless_app_with_focus();
+
+        // Open the panel.
+        app.world_mut().resource_mut::<SettingsScreen>().0 = true;
+        app.update();
+        // Two more ticks: the first runs `sync_settings_panel_visibility`
+        // and queues the spawn commands; the second flushes them and
+        // runs `attach_focusable_to_settings_buttons`.
+        app.update();
+        app.update();
+
+        // Every bespoke `SettingsButton` (not `Done`, which is also a
+        // `ModalButton`) must carry a `Focusable`.
+        let untagged: Vec<&SettingsButton> = app
+            .world_mut()
+            .query_filtered::<&SettingsButton, (With<Button>, Without<Focusable>, Without<ModalButton>)>()
+            .iter(app.world())
+            .collect();
+
+        assert!(
+            untagged.is_empty(),
+            "every bespoke Settings button must carry Focusable; missing: {:?}",
+            untagged
+        );
+
+        // And there must be at least one tagged `SettingsButton` so the
+        // assertion above isn't vacuously true (the panel really did
+        // spawn).
+        let tagged_count = app
+            .world_mut()
+            .query_filtered::<&SettingsButton, With<Focusable>>()
+            .iter(app.world())
+            .count();
+        assert!(
+            tagged_count >= 6,
+            "expected the panel to spawn many bespoke buttons (volume up/down ×2, toggles ×4, sync, swatches…); got {tagged_count}"
+        );
+    }
+
+    #[test]
+    fn settings_picker_rows_get_focus_row_marker() {
+        let mut app = headless_app_with_focus();
+
+        app.world_mut().resource_mut::<SettingsScreen>().0 = true;
+        app.update();
+        app.update();
+        app.update();
+
+        // Two picker rows are spawned (card-back + background); each
+        // must carry the FocusRow marker.
+        let row_count = app
+            .world_mut()
+            .query_filtered::<Entity, With<FocusRow>>()
+            .iter(app.world())
+            .count();
+        assert!(
+            row_count >= 2,
+            "expected at least two FocusRow containers (card-back + background); got {row_count}"
+        );
     }
 
     #[test]
