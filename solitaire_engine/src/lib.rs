@@ -31,6 +31,7 @@ pub mod splash_plugin;
 pub mod stats_plugin;
 pub mod sync_plugin;
 pub mod table_plugin;
+pub mod theme;
 pub mod time_attack_plugin;
 pub mod ui_focus;
 pub mod ui_modal;

@@ -46,6 +46,10 @@ usvg      = "0.47"
 resvg     = "0.47"
 tiny-skia = "0.12"
 
+# Theme manifest format. RON keeps the file human-editable while
+# preserving Rust-style structures the importer can validate.
+ron = "0.12"
+
 axum               = "0.8"
 sqlx               = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 jsonwebtoken       = { version = "10", default-features = false, features = ["rust_crypto"] }

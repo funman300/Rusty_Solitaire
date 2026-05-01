@@ -7679,6 +7679,7 @@ dependencies = [
  "chrono",
  "kira",
  "resvg",
+ "ron",
  "serde",
  "solitaire_core",
  "solitaire_data",

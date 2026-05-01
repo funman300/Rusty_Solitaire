@@ -18,6 +18,7 @@ thiserror      = { workspace = true }
 usvg           = { workspace = true }
 resvg          = { workspace = true }
 tiny-skia      = { workspace = true }
+ron            = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
