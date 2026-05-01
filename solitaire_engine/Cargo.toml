@@ -13,6 +13,11 @@ solitaire_sync = { workspace = true }
 chrono         = { workspace = true }
 uuid           = { workspace = true }
 tokio          = { workspace = true }
+serde          = { workspace = true }
+thiserror      = { workspace = true }
+usvg           = { workspace = true }
+resvg          = { workspace = true }
+tiny-skia      = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

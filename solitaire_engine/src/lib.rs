@@ -1,5 +1,6 @@
 //! Bevy integration layer for Solitaire Quest.
 
+pub mod assets;
 pub mod card_animation;
 pub mod achievement_plugin;
 pub mod animation_plugin;

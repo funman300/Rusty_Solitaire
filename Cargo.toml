@@ -38,6 +38,14 @@ solitaire_engine = { path = "solitaire_engine" }
 bevy = "0.18"
 kira = "0.12"
 
+# SVG rasterisation pipeline for the runtime card-theme system.
+# usvg parses + simplifies; resvg renders to a tiny-skia Pixmap;
+# tiny-skia provides the CPU rasteriser. All three are maintained
+# together by the resvg-rs project and version in lockstep.
+usvg      = "0.47"
+resvg     = "0.47"
+tiny-skia = "0.12"
+
 axum               = "0.8"
 sqlx               = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate"] }
 jsonwebtoken       = { version = "10", default-features = false, features = ["rust_crypto"] }
