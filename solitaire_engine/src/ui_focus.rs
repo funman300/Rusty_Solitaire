@@ -364,8 +364,7 @@ fn handle_focus_keys(
             .filter(|e| {
                 focusables
                     .get(*e)
-                    .map(|(_, disabled)| !disabled)
-                    .unwrap_or(false)
+                    .is_ok_and(|(_, disabled)| !disabled)
             })
             .collect();
         if !row_cycle.is_empty()
@@ -466,12 +465,7 @@ fn handle_focus_keys(
     // Stable sort by `Focusable::order` so explicit priorities (e.g.
     // HUD spawn-order: 0..5) drive the cycle. The pre-sort by entity
     // index above is the tiebreaker for entries sharing an `order`.
-    group.sort_by_key(|e| {
-        focusables
-            .get(*e)
-            .map(|(f, _)| f.order)
-            .unwrap_or(i32::MAX)
-    });
+    group.sort_by_key(|e| focusables.get(*e).map_or(i32::MAX, |(f, _)| f.order));
 
     if group.is_empty() {
         // Still consume the key so the card-selection plugin doesn't

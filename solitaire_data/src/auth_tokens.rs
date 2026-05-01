@@ -40,8 +40,9 @@ const SERVICE: &str = "solitaire_quest_server";
 fn map_keyring_err(err: keyring_core::Error, username: &str) -> TokenError {
     let msg = err.to_string();
     match err {
-        keyring_core::Error::NoStorageAccess(_) => TokenError::KeychainUnavailable(msg),
-        keyring_core::Error::NoDefaultStore => TokenError::KeychainUnavailable(msg),
+        keyring_core::Error::NoStorageAccess(_) | keyring_core::Error::NoDefaultStore => {
+            TokenError::KeychainUnavailable(msg)
+        }
         keyring_core::Error::NoEntry => TokenError::NotFound(username.to_string()),
         _ => TokenError::Keyring(msg),
     }

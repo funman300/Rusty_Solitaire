@@ -257,7 +257,7 @@ fn handle_selection_keys(
 
                 // --- Priority 2: tableau stack move ---
                 // Count the full contiguous face-up run in the source pile.
-                let run_len = face_up_run_len(game.0.piles.get(pile).map(|p| p.cards.as_slice()).unwrap_or(&[]));
+                let run_len = face_up_run_len(game.0.piles.get(pile).map_or(&[], |p| p.cards.as_slice()));
                 let bottom_card = game
                     .0
                     .piles

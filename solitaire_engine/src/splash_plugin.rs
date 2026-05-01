@@ -259,9 +259,7 @@ fn dismiss_splash_on_input(
         return;
     }
 
-    let touch_pressed = touches
-        .map(|t| t.iter_just_pressed().next().is_some())
-        .unwrap_or(false);
+    let touch_pressed = touches.is_some_and(|t| t.iter_just_pressed().next().is_some());
     let dismissed = keys.get_just_pressed().next().is_some()
         || mouse.get_just_pressed().next().is_some()
         || touch_pressed;

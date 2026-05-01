@@ -153,8 +153,7 @@ fn toggle_leaderboard_screen(
     // Spawn the panel immediately with whatever data we have so far.
     let remote_available = provider
         .as_ref()
-        .map(|p| p.0.backend_name() != "local")
-        .unwrap_or(false);
+        .is_some_and(|p| p.0.backend_name() != "local");
     spawn_leaderboard_screen(&mut commands, &data, remote_available, font_res.as_deref());
 
     // Start a background fetch if not already in flight.
@@ -215,8 +214,7 @@ fn update_leaderboard_panel(
     }
     let remote_available = provider
         .as_ref()
-        .map(|p| p.0.backend_name() != "local")
-        .unwrap_or(false);
+        .is_some_and(|p| p.0.backend_name() != "local");
     for entity in &screens {
         commands.entity(entity).despawn();
         spawn_leaderboard_screen(&mut commands, &data, remote_available, font_res.as_deref());
@@ -473,12 +471,10 @@ fn spawn_leaderboard_screen(
 
                     let time_str = entry
                         .best_time_secs
-                        .map(format_secs)
-                        .unwrap_or_else(|| "-".to_string());
+                        .map_or_else(|| "-".to_string(), format_secs);
                     let score_str = entry
                         .best_score
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "-".to_string());
+                        .map_or_else(|| "-".to_string(), |s| s.to_string());
 
                     card.spawn(Node {
                         flex_direction: FlexDirection::Row,

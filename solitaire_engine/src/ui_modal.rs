@@ -409,8 +409,7 @@ pub fn apply_modal_enter_speed(
 ) {
     let speed = settings
         .as_ref()
-        .map(|s| s.0.animation_speed)
-        .unwrap_or(AnimSpeed::Normal);
+        .map_or(AnimSpeed::Normal, |s| s.0.animation_speed);
     for mut entering in &mut q {
         entering.duration = scaled_duration(MOTION_MODAL_SECS, speed);
     }

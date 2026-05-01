@@ -138,8 +138,7 @@ fn cleanup_tmp_files_in(dir: &Path) {
             if path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.ends_with(".json.tmp"))
-                .unwrap_or(false)
+                .is_some_and(|n| n.ends_with(".json.tmp"))
             {
                 let _ = fs::remove_file(&path);
             }

@@ -153,8 +153,7 @@ fn tick_elapsed_time(
 fn seed_from_system_time() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_nanos() as u64)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -201,8 +200,7 @@ fn handle_new_game(
         // where SettingsPlugin is not installed.
         let draw_mode = settings
             .as_ref()
-            .map(|s| s.0.draw_mode.clone())
-            .unwrap_or_else(|| game.0.draw_mode.clone());
+            .map_or_else(|| game.0.draw_mode.clone(), |s| s.0.draw_mode.clone());
         let mode = ev.mode.unwrap_or(game.0.mode);
         game.0 = GameState::new_with_mode(seed, draw_mode, mode);
         // Delete any previously saved in-progress state — this is a fresh game.

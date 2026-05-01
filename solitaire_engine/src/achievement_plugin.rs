@@ -212,9 +212,7 @@ fn evaluate_on_win(
 /// Convenience: resolve an achievement ID to its human-readable name.
 /// Used by the toast renderer in `animation_plugin`.
 pub fn display_name_for(id: &str) -> String {
-    achievement_by_id(id)
-        .map(|d| d.name.to_string())
-        .unwrap_or_else(|| id.to_string())
+    achievement_by_id(id).map_or_else(|| id.to_string(), |d| d.name.to_string())
 }
 
 /// Marker on the "Done" button inside the Achievements modal.
@@ -292,12 +290,10 @@ fn spawn_achievements_screen(
 
         for record in &sorted {
             let def = achievement_by_id(&record.id);
-            let (name, description) = def
-                .map(|d| (d.name, d.description))
-                .unwrap_or((&record.id, ""));
+            let (name, description) = def.map_or((record.id.as_str(), ""), |d| (d.name, d.description));
 
             // Hide secret locked achievements so they remain a surprise.
-            let is_secret = def.map(|d| d.secret).unwrap_or(false);
+            let is_secret = def.is_some_and(|d| d.secret);
             if is_secret && !record.unlocked {
                 continue;
             }
@@ -401,7 +397,7 @@ fn tooltip_for_row(unlocked: bool, def: Option<&AchievementDef>) -> String {
             None => "Earned!".to_string(),
         }
     } else {
-        let description = def.map(|d| d.description).unwrap_or("");
+        let description = def.map_or("", |d| d.description);
         let how = if description.is_empty() {
             "How to unlock: keep playing.".to_string()
         } else {

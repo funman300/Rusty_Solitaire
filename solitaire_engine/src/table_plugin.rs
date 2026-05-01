@@ -142,14 +142,10 @@ fn setup_table(
     let window_size = windows
         .iter()
         .next()
-        .map(default_window_size)
-        .unwrap_or(Vec2::new(1280.0, 800.0));
+        .map_or(Vec2::new(1280.0, 800.0), default_window_size);
     let layout = compute_layout(window_size);
 
-    let selected_bg = settings
-        .as_ref()
-        .map(|s| s.0.selected_background)
-        .unwrap_or(0);
+    let selected_bg = settings.as_ref().map_or(0, |s| s.0.selected_background);
 
     let image_handle = bg_images
         .as_ref()
@@ -341,9 +337,7 @@ fn apply_hint_pile_highlight(
             if pile_marker.0 != ev.dest_pile {
                 continue;
             }
-            let original_color = existing
-                .map(|h| h.original_color)
-                .unwrap_or(sprite.color);
+            let original_color = existing.map_or(sprite.color, |h| h.original_color);
             sprite.color = HINT_PILE_HIGHLIGHT_COLOUR;
             commands.entity(entity).insert(HintPileHighlight {
                 timer: 2.0,

@@ -360,16 +360,13 @@ fn sync_settings_panel_visibility(
     if screen.0 {
         if panels.is_empty() {
             let status_label = sync_status
-                .map(|s| sync_status_label(&s.0))
-                .unwrap_or_else(|| "Status: local only".to_string());
+                .map_or_else(|| "Status: local only".to_string(), |s| sync_status_label(&s.0));
             let unlocked_backs = progress
                 .as_ref()
-                .map(|p| p.0.unlocked_card_backs.as_slice())
-                .unwrap_or(&[0]);
+                .map_or(&[0][..], |p| p.0.unlocked_card_backs.as_slice());
             let unlocked_bgs = progress
                 .as_ref()
-                .map(|p| p.0.unlocked_backgrounds.as_slice())
-                .unwrap_or(&[0]);
+                .map_or(&[0][..], |p| p.0.unlocked_backgrounds.as_slice());
             spawn_settings_panel(
                 &mut commands,
                 &settings.0,
@@ -530,7 +527,7 @@ fn handle_settings_buttons(
                     persist(&path, &settings.0);
                     changed.write(SettingsChangedEvent(settings.0.clone()));
                     if let Ok(mut t) = sfx_text.single_mut() {
-                        **t = format!("{:.2}", after);
+                        **t = format!("{after:.2}");
                     }
                 }
             }
@@ -541,7 +538,7 @@ fn handle_settings_buttons(
                     persist(&path, &settings.0);
                     changed.write(SettingsChangedEvent(settings.0.clone()));
                     if let Ok(mut t) = sfx_text.single_mut() {
-                        **t = format!("{:.2}", after);
+                        **t = format!("{after:.2}");
                     }
                 }
             }
@@ -552,7 +549,7 @@ fn handle_settings_buttons(
                     persist(&path, &settings.0);
                     changed.write(SettingsChangedEvent(settings.0.clone()));
                     if let Ok(mut t) = music_text.single_mut() {
-                        **t = format!("{:.2}", after);
+                        **t = format!("{after:.2}");
                     }
                 }
             }
@@ -563,7 +560,7 @@ fn handle_settings_buttons(
                     persist(&path, &settings.0);
                     changed.write(SettingsChangedEvent(settings.0.clone()));
                     if let Ok(mut t) = music_text.single_mut() {
-                        **t = format!("{:.2}", after);
+                        **t = format!("{after:.2}");
                     }
                 }
             }
@@ -1082,7 +1079,7 @@ fn volume_row<Marker: Component>(
             ));
             row.spawn((
                 marker,
-                Text::new(format!("{:.2}", value)),
+                Text::new(format!("{value:.2}")),
                 value_font,
                 TextColor(TEXT_PRIMARY),
             ));

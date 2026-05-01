@@ -327,8 +327,7 @@ fn handle_mute_keys(
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let (sfx_vol, music_vol) = settings
         .as_ref()
-        .map(|s| (s.0.sfx_volume, s.0.music_volume))
-        .unwrap_or((1.0, 0.5));
+        .map_or((1.0, 0.5), |s| (s.0.sfx_volume, s.0.music_volume));
 
     if shift {
         // Shift+M: toggle music mute only, SFX unaffected.

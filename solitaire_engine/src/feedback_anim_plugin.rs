@@ -380,9 +380,7 @@ fn start_deal_anim(
     let stock_start = Vec3::new(stock_pos.x, stock_pos.y, 0.0);
 
     let speed = settings.as_ref().map(|s| &s.0.animation_speed);
-    let stagger_secs = speed
-        .map(deal_stagger_secs_for_speed)
-        .unwrap_or(DEAL_STAGGER_SECS);
+    let stagger_secs = speed.map_or(DEAL_STAGGER_SECS, deal_stagger_secs_for_speed);
 
     for (index, (entity, card_marker, transform)) in card_entities.iter().enumerate() {
         let final_pos = transform.translation;

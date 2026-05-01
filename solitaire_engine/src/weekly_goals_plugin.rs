@@ -121,9 +121,7 @@ fn evaluate_weekly_goals(
 
 /// Resolve a goal id to its description (used for toasts).
 pub fn weekly_goal_description(id: &str) -> String {
-    weekly_goal_by_id(id)
-        .map(|g| g.description.to_string())
-        .unwrap_or_else(|| id.to_string())
+    weekly_goal_by_id(id).map_or_else(|| id.to_string(), |g| g.description.to_string())
 }
 
 #[cfg(test)]

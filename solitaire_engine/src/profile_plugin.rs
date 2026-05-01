@@ -208,7 +208,7 @@ fn spawn_profile_screen(
             let records = &ar.0;
             let unlocked_count = records.iter().filter(|r| r.unlocked).count();
             card.spawn((
-                Text::new(format!("{} / 18 unlocked", unlocked_count)),
+                Text::new(format!("{unlocked_count} / 18 unlocked")),
                 font_row.clone(),
                 TextColor(ACCENT_PRIMARY),
             ));
@@ -216,7 +216,7 @@ fn spawn_profile_screen(
             let mut any_unlocked = false;
             for record in records {
                 let def = achievement_by_id(record.id.as_str());
-                let is_secret = def.map(|d| d.secret).unwrap_or(false);
+                let is_secret = def.is_some_and(|d| d.secret);
                 if is_secret && !record.unlocked {
                     continue;
                 }
@@ -224,7 +224,7 @@ fn spawn_profile_screen(
                     continue;
                 }
                 any_unlocked = true;
-                let name = def.map(|d| d.name).unwrap_or(record.id.as_str());
+                let name = def.map_or(record.id.as_str(), |d| d.name);
                 let date_str = match record.unlock_date {
                     Some(dt) => format!("  ({})", dt.format("%Y-%m-%d")),
                     None => String::new(),

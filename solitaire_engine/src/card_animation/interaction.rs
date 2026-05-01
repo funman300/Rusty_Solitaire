@@ -189,8 +189,7 @@ pub(crate) fn apply_hover_scale(
     hover_state.scale = if let Some(entity) = target_entity {
         cards
             .get(entity)
-            .map(|(_, t)| t.scale.x)
-            .unwrap_or(hover_target)
+            .map_or(hover_target, |(_, t)| t.scale.x)
     } else {
         1.0
     };
