@@ -71,10 +71,12 @@ cargo clippy --workspace -- -D warnings
 ## Credits
 
 Built on [Bevy](https://bevyengine.org/) and the wider Rust ecosystem (Tokio,
-Axum, sqlx, Serde, kira, and many more). Card faces and the default card back
-use xCards artwork (LGPL-3.0); the UI font is FiraMono-Medium (OFL). All audio
-is synthesized programmatically by this project. See [CREDITS.md](CREDITS.md)
-for the full list and license details.
+Axum, sqlx, Serde, kira, and many more). Card faces come from
+[hayeah/playing-cards-assets](https://github.com/hayeah/playing-cards-assets)
+(MIT, derived from the public-domain `vector-playing-cards` library); the
+default card back is original work; the UI font is FiraMono-Medium (OFL).
+All audio is synthesized programmatically by this project. See
+[CREDITS.md](CREDITS.md) for the full list and license details.
 
 ## License
 

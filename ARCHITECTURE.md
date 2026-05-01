@@ -70,8 +70,8 @@ solitaire_quest/
 │
 ├── assets/                     # Loaded at runtime via AssetServer (audio is embedded via include_bytes!())
 │   ├── cards/
-│   │   ├── faces/{RANK}{SUIT}.png   # 52 card faces — xCards @2x artwork (LGPL-3.0)
-│   │   └── backs/back_0.png – back_4.png    # back_0 = xCards bicycle_blue; back_1–4 are generated patterns
+│   │   ├── faces/{RANK}{SUIT}.png   # 52 card faces — rendered from hayeah/playing-cards-assets SVGs (MIT)
+│   │   └── backs/back_0.png – back_4.png    # back_0 = generated default back; back_1–4 are generated patterns
 │   ├── backgrounds/bg_0.png – bg_4.png      # generated textures
 │   ├── fonts/main.ttf          # FiraMono-Medium (170K, OFL)
 │   └── audio/
@@ -1009,5 +1009,7 @@ Using `axum::test` and an in-memory SQLite database:
 | `SyncProvider` trait, not `SyncBackend` match arms | `SyncPlugin` stays backend-agnostic and testable; new backends can be added without touching the plugin | 2026-04-20 |
 | Dropped WebDAV backend | Redundant once the self-hosted server exists; removing it reduces surface area and simplifies settings UI | 2026-04-20 |
 | Dropped GPGS backend | Redundant with the self-hosted server; adds JNI complexity for no user-visible benefit on the target platforms | 2026-04-28 |
-| Card, background, and font assets loaded via `AssetServer` | Reverses the earlier embed-via-`include_bytes!()` decision: PNGs and TTFs are loaded at runtime so artwork can be swapped (e.g. xCards @2x faces, alternate card backs, themed backgrounds) without a recompile, and binary size stays small. Loaders take `Option<Res<AssetServer>>` and fall back gracefully under `MinimalPlugins`. The `assets/` directory must ship alongside the binary. | 2026-04-29 |
+| Card, background, and font assets loaded via `AssetServer` | Reverses the earlier embed-via-`include_bytes!()` decision: PNGs and TTFs are loaded at runtime so artwork can be swapped (e.g. alternate card backs, themed backgrounds) without a recompile, and binary size stays small. Loaders take `Option<Res<AssetServer>>` and fall back gracefully under `MinimalPlugins`. The `assets/` directory must ship alongside the binary. | 2026-04-29 |
 | Audio assets remain embedded via `include_bytes!()` | Audio files are small, change rarely, and the embedded path eliminates a class of runtime-load errors during gameplay; the asset-pipeline reversal does not extend to audio | 2026-04-29 |
+| Card art swapped from xCards (LGPL-3.0) to hayeah/playing-cards-assets (MIT) | Public-release readiness. The previous xCards art carried LGPL relinking obligations that complicate a single-binary distribution; hayeah's set derives from the public-domain `vector-playing-cards` line-art and is permissively MIT-licensed. CREDITS.md license summary collapsed to MIT + OFL-1.1. The default card back is original work in this project's midnight-purple palette. | 2026-05-01 |
+| Runtime SVG card-theme system (`CARD_PLAN.md`) | User-supplied themes need to ship SVG sources so they can rasterise at any resolution on the player's hardware; baking PNGs at build time only would lock theme installation to the developer. The pipeline (usvg → resvg → tiny-skia) rasterises once per (theme, target size) at load time and caches the resulting `Image`, so the runtime cost is paid once, not per frame. The bundled default theme ships via `embedded://`; user themes via `themes://` rooted at `user_theme_dir()`. | 2026-05-01 |
