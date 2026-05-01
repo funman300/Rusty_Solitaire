@@ -248,10 +248,18 @@ fn push_on_exit(
         Ok(handle) => handle.block_on(provider.push(&payload)),
         Err(_) => future::block_on(provider.push(&payload)),
     };
-    if let Err(e) = result {
-        // Log push failures on exit so they appear in crash/log reports.
-        // We cannot surface them to the UI at this point (game loop is done).
-        warn!("sync push on exit failed: {e}");
+    match result {
+        Ok(_) => {}
+        // `UnsupportedPlatform` is the expected response of
+        // `LocalOnlyProvider`; treat it the same as the pull path does —
+        // no backend configured is not a failure.
+        Err(SyncError::UnsupportedPlatform) => {}
+        Err(e) => {
+            // Log real push failures on exit so they appear in crash/log
+            // reports. We cannot surface them to the UI at this point (game
+            // loop is done).
+            warn!("sync push on exit failed: {e}");
+        }
     }
 }
 
