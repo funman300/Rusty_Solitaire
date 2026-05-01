@@ -147,6 +147,10 @@ enum SettingsButton {
     SelectCardBack(usize),
     /// Select a specific background by index from the picker row.
     SelectBackground(usize),
+    /// Select a specific card-art theme by `meta.id` from the
+    /// `ThemeRegistry`. The string is owned so the click handler can
+    /// hand it directly to `Settings::selected_theme_id`.
+    SelectTheme(String),
 }
 
 impl SettingsButton {
@@ -172,6 +176,7 @@ impl SettingsButton {
             // priority so entity-index tiebreaking yields left → right.
             SettingsButton::SelectCardBack(_) => 70,
             SettingsButton::SelectBackground(_) => 80,
+            SettingsButton::SelectTheme(_) => 85,
             // Sync section
             SettingsButton::SyncNow => 90,
             // Done is tagged by `attach_focusable_to_modal_buttons` and
@@ -353,6 +358,7 @@ fn sync_settings_panel_visibility(
     sync_status: Option<Res<SyncStatusResource>>,
     progress: Option<Res<ProgressResource>>,
     font_res: Option<Res<FontResource>>,
+    theme_registry: Option<Res<crate::theme::ThemeRegistry>>,
 ) {
     if !screen.is_changed() {
         return;
@@ -367,12 +373,25 @@ fn sync_settings_panel_visibility(
             let unlocked_bgs = progress
                 .as_ref()
                 .map_or(&[0][..], |p| p.0.unlocked_backgrounds.as_slice());
+            // Snapshot themes by id+display_name so spawn_settings_panel
+            // doesn't have to know about the registry shape. Empty when
+            // ThemeRegistryPlugin isn't installed (tests under
+            // MinimalPlugins) — the picker row simply won't render.
+            let themes: Vec<(String, String)> = theme_registry
+                .as_deref()
+                .map(|r| {
+                    r.iter()
+                        .map(|e| (e.id.clone(), e.display_name.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
             spawn_settings_panel(
                 &mut commands,
                 &settings.0,
                 &status_label,
                 unlocked_backs,
                 unlocked_bgs,
+                &themes,
                 scroll_pos.0,
                 font_res.as_deref(),
             );
@@ -616,6 +635,13 @@ fn handle_settings_buttons(
                 settings.0.selected_background = *idx;
                 persist(&path, &settings.0);
                 changed.write(SettingsChangedEvent(settings.0.clone()));
+            }
+            SettingsButton::SelectTheme(theme_id) => {
+                if settings.0.selected_theme_id != *theme_id {
+                    settings.0.selected_theme_id = theme_id.clone();
+                    persist(&path, &settings.0);
+                    changed.write(SettingsChangedEvent(settings.0.clone()));
+                }
             }
             SettingsButton::SyncNow => {
                 manual_sync.write(ManualSyncRequestEvent);
@@ -902,12 +928,14 @@ fn persist_window_geometry_after_debounce(
 // UI construction
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_settings_panel(
     commands: &mut Commands,
     settings: &Settings,
     sync_status: &str,
     unlocked_card_backs: &[usize],
     unlocked_backgrounds: &[usize],
+    themes: &[(String, String)],
     scroll_offset: f32,
     font_res: Option<&FontResource>,
 ) {
@@ -1014,6 +1042,19 @@ fn spawn_settings_panel(
                 "Choose your felt art. New felts unlock at higher levels.",
                 font_res,
             );
+            // Card-art theme picker — only renders when the registry has
+            // entries (production: always; tests: only when
+            // ThemeRegistryPlugin is installed).
+            if !themes.is_empty() {
+                theme_picker_row(
+                    body,
+                    "Card Theme",
+                    themes,
+                    &settings.selected_theme_id,
+                    "Choose card-face artwork. Imported themes appear here.",
+                    font_res,
+                );
+            }
 
             // --- Sync ---
             section_label(body, "Sync", font_res);
@@ -1190,6 +1231,75 @@ fn picker_row(
                     let text_color = if is_selected { BG_BASE } else { TEXT_PRIMARY };
                     b.spawn((
                         Text::new(format!("{}", idx + 1)),
+                        chip_font.clone(),
+                        TextColor(text_color),
+                    ));
+                });
+            }
+        });
+}
+
+/// Picker row for card-art themes. Distinct from [`picker_row`]
+/// because themes are identified by `String` ids (matching
+/// `ThemeMeta::id`) instead of dense indices, and each chip carries
+/// the theme's display name rather than a numeric label.
+fn theme_picker_row(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    themes: &[(String, String)],
+    selected_id: &str,
+    tooltip: &'static str,
+    font_res: Option<&FontResource>,
+) {
+    let label_font = label_text_font(font_res);
+    let chip_font = TextFont {
+        font: font_res.map(|f| f.0.clone()).unwrap_or_default(),
+        font_size: TYPE_BODY,
+        ..default()
+    };
+    parent
+        .spawn((
+            FocusRow,
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                flex_wrap: FlexWrap::Wrap,
+                ..default()
+            },
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Text::new(label.to_string()),
+                label_font,
+                TextColor(TEXT_SECONDARY),
+            ));
+            for (id, display_name) in themes {
+                let is_selected = id == selected_id;
+                let bg = if is_selected { STATE_SUCCESS } else { BG_ELEVATED_HI };
+                row.spawn((
+                    SettingsButton::SelectTheme(id.clone()),
+                    Button,
+                    Tooltip::new(tooltip),
+                    Node {
+                        // Theme names are wider than numeric chips —
+                        // pad horizontally instead of using a fixed
+                        // square swatch.
+                        padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_2),
+                        min_height: Val::Px(SWATCH_PX),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
+                        ..default()
+                    },
+                    BackgroundColor(bg),
+                    BorderColor::all(BORDER_SUBTLE),
+                ))
+                .with_children(|b| {
+                    let text_color = if is_selected { BG_BASE } else { TEXT_PRIMARY };
+                    b.spawn((
+                        Text::new(display_name.clone()),
                         chip_font.clone(),
                         TextColor(text_color),
                     ));

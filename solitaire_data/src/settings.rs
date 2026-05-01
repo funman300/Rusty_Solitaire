@@ -124,6 +124,14 @@ pub struct Settings {
     /// `None` thanks to `#[serde(default)]`.
     #[serde(default)]
     pub window_geometry: Option<WindowGeometry>,
+    /// Identifier of the active card-art theme. Matches `meta.id` from
+    /// the theme's `theme.ron` manifest. `"default"` is the bundled
+    /// theme and is always present in the registry; user-supplied
+    /// themes register under their own ids when they're imported.
+    /// Older `settings.json` files default cleanly to `"default"` via
+    /// `#[serde(default = ...)]`.
+    #[serde(default = "default_theme_id")]
+    pub selected_theme_id: String,
 }
 
 fn default_draw_mode() -> DrawMode {
@@ -136,6 +144,10 @@ fn default_sfx_volume() -> f32 {
 
 fn default_music_volume() -> f32 {
     0.5
+}
+
+fn default_theme_id() -> String {
+    "default".to_string()
 }
 
 impl Default for Settings {
@@ -152,6 +164,7 @@ impl Default for Settings {
             first_run_complete: false,
             color_blind_mode: false,
             window_geometry: None,
+            selected_theme_id: default_theme_id(),
         }
     }
 }
@@ -304,6 +317,7 @@ mod tests {
             first_run_complete: true,
             color_blind_mode: false,
             window_geometry: None,
+            selected_theme_id: "default".to_string(),
         };
         save_settings_to(&path, &s).expect("save");
         let loaded = load_settings_from(&path);

@@ -47,17 +47,68 @@ impl Plugin for ThemePlugin {
         app.init_asset::<CardTheme>()
             .register_asset_loader(crate::assets::SvgLoader)
             .register_asset_loader(CardThemeLoader)
-            .add_systems(Startup, load_default_theme)
-            .add_systems(Update, sync_card_image_set_with_active_theme);
+            .add_systems(Startup, load_initial_theme)
+            .add_systems(
+                Update,
+                (
+                    sync_card_image_set_with_active_theme,
+                    react_to_settings_theme_change,
+                ),
+            );
     }
 }
 
-/// Kicks off the default-theme load and stashes the handle on
-/// [`ActiveTheme`]. The actual rasterisation runs asynchronously on
+/// Kicks off the initial theme load — the one named by
+/// `Settings::selected_theme_id` if available, falling back to the
+/// embedded default. The actual rasterisation runs asynchronously on
 /// the asset task pool; the sync system below picks up the
 /// `LoadedWithDependencies` event when every face + back is ready.
-fn load_default_theme(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let handle: Handle<CardTheme> = asset_server.load(DEFAULT_THEME_MANIFEST_URL);
+fn load_initial_theme(
+    asset_server: Res<AssetServer>,
+    settings: Option<Res<crate::settings_plugin::SettingsResource>>,
+    mut commands: Commands,
+) {
+    let url = match settings.as_deref() {
+        Some(s) if s.0.selected_theme_id != "default" => {
+            format!("themes://{}/theme.ron", s.0.selected_theme_id)
+        }
+        _ => DEFAULT_THEME_MANIFEST_URL.to_string(),
+    };
+    let handle: Handle<CardTheme> = asset_server.load(url);
+    commands.insert_resource(ActiveTheme(handle));
+}
+
+/// Watches [`crate::settings_plugin::SettingsChangedEvent`] and
+/// triggers a fresh theme load whenever
+/// `Settings::selected_theme_id` changes. The settings panel's theme
+/// picker fires the event after persisting; this system is the bridge
+/// that turns the persisted choice into a live `set_theme` call.
+fn react_to_settings_theme_change(
+    mut events: MessageReader<crate::settings_plugin::SettingsChangedEvent>,
+    asset_server: Res<AssetServer>,
+    active: Option<Res<ActiveTheme>>,
+    themes: Res<Assets<CardTheme>>,
+    mut commands: Commands,
+) {
+    let Some(latest) = events.read().last() else {
+        return;
+    };
+    let new_id = latest.0.selected_theme_id.as_str();
+
+    // No-op if the active theme already matches the desired id.
+    if let Some(active) = active.as_deref()
+        && let Some(theme) = themes.get(&active.0)
+        && theme.meta.id == new_id
+    {
+        return;
+    }
+
+    let url = if new_id == "default" {
+        DEFAULT_THEME_MANIFEST_URL.to_string()
+    } else {
+        format!("themes://{new_id}/theme.ron")
+    };
+    let handle: Handle<CardTheme> = asset_server.load(url);
     commands.insert_resource(ActiveTheme(handle));
 }
 
