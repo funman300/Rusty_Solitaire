@@ -108,5 +108,5 @@ Audio files are MIT-licensed alongside the rest of this project.
   license.
 
 If you redistribute Solitaire Quest, you must ship this `CREDITS.md` and the
-`LICENSE` file alongside the binary so the LGPL and OFL notices remain
-visible to end users.
+`LICENSE` file alongside the binary so the MIT (project + hayeah card art)
+and OFL (FiraMono) notices remain visible to end users.

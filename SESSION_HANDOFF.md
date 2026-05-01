@@ -1,13 +1,13 @@
 # Solitaire Quest — UX Overhaul Session Handoff
 
-**Last updated:** 2026-05-01 — Phases 3, 4, and 5 all shipped. Smoke-test bugs closed. v1 release-readiness scope is essentially done; remaining work is the v0.1.0 tag plus desktop packaging.
+**Last updated:** 2026-05-01 — Phases 3, 4, 5 + the seven CARD_PLAN phases all shipped. v0.1.0 tagged locally. Bundled card art + runtime SVG theme system + in-Settings theme picker all live. Remaining work is desktop packaging and a player-side smoke test of the new theme.
 
 ## Status at pause
 
-- **HEAD:** `902560c` — local master is **up to date** with `origin/master`.
-- **Working tree:** clean.
+- **HEAD:** `924a1e2`. v0.1.0 tag created locally (push pending interactive credentials).
+- **Working tree:** clean after the post-Phase cleanup pass.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings` clean.
-- **Tests:** **906 passed / 0 failed** across the workspace.
+- **Tests:** **960 passed / 0 failed / 9 ignored** across the workspace.
 
 ## Where we are
 
@@ -74,15 +74,53 @@ Smoke test surfaced three issues: window-resize lag, tableau columns clipped bel
 
 ## Open punch list for v1
 
-1. **`xCards` upstream URL** in CREDITS.md is intentionally absent (`f866299`). One-line fill-in when the project owner picks a canonical mirror/fork; LGPL notice obligations are already satisfied without it.
-2. **Tag `v0.1.0`** — workspace builds clean and tests are green; this is the next strategic milestone.
-3. **Desktop packaging** per ARCHITECTURE.md §17 — Docker compose for the server is documented; desktop client packaging (icon, .ico/.icns, signing, AppImage) is not yet done. Needs artwork and signing certs.
+1. **Player smoke-test of the new theme system.** Launch
+   `cargo run -p solitaire_app --features bevy/dynamic_linking` and
+   confirm: (a) hayeah card faces render correctly, (b) the
+   midnight-purple `back.svg` shows on face-down cards, (c) the
+   "Card Theme" picker appears in Settings → Cosmetic with at least
+   the "Default" chip, (d) clicking the chip is a no-op (already
+   selected) without errors.
+2. **Push the v0.1.0 tag** — `git push origin v0.1.0` once you're
+   happy with the smoke-test outcome. Tag exists locally; not yet on
+   origin.
+3. **Desktop packaging** per ARCHITECTURE.md §17. The Arch PKGBUILD
+   exists in `/home/manage/solitaire-quest-pkgbuild/` (separate repo,
+   no remote yet — `git remote add origin <URL>` and push to your
+   gitea / AUR when ready). Still pending: app icon, macOS .icns +
+   notarisation cert, Windows .ico + Authenticode cert, AppImage
+   recipe.
 
 ### Optional, deferred
 
 - Animated focus ring (currently a static overlay; could pulse on focus change).
 - Achievement onboarding pass — show first-time players the achievement panel after their first win.
 - Mode-switch keyboard shortcut from inside the Mode Launcher (today only mouse opens it).
+- Runtime aspect-ratio fidelity for the bundled hayeah cards: the SVG
+  source is ~1.45 height/width while the engine layout assumes 1.4.
+  Cards display ~3% squashed vertically; either widen the layout or
+  letterbox the SVGs to match. Cosmetic-only; not blocking.
+
+## Card-theme system (CARD_PLAN.md, fully shipped)
+
+Seven phases landed across `b8fb3fb` → `924a1e2`. End-to-end flow:
+
+- **Bundled default theme** ships in the binary via `embedded://` —
+  52 hayeah/playing-cards-assets SVGs (MIT) + a midnight-purple
+  `back.svg` (original work).
+- **User themes** live under `themes://` rooted at
+  `solitaire_engine::assets::user_theme_dir()`. Drop a directory
+  containing a valid `theme.ron` + 53 SVG files there and it
+  appears in the registry on next launch.
+- **Importer** at `solitaire_engine::theme::import_theme(zip)`
+  validates an archive (20 MB cap, zip-slip rejection, manifest
+  validation, every referenced SVG round-tripped through the
+  rasteriser) and atomically unpacks it into the user themes dir.
+- **Picker UI** in Settings → Cosmetic offers one chip per
+  registered theme; selection persists to `settings.json` as
+  `selected_theme_id` and propagates to live card sprites via
+  `react_to_settings_theme_change` →
+  `sync_card_image_set_with_active_theme` → `StateChangedEvent`.
 
 ## Resume prompt
 
