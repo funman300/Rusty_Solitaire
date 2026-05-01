@@ -95,6 +95,30 @@ pub const STATE_DANGER: Color = Color::srgb(0.969, 0.447, 0.447);
 /// Info — daily-challenge constraint, draw-cycle indicator. `#6BBBFF`.
 pub const STATE_INFO: Color = Color::srgb(0.420, 0.733, 1.000);
 
+/// Soft fill colour for the drop-target overlay shown over every legal
+/// destination pile while the player is dragging a card. Same green hue
+/// as `STATE_SUCCESS` (`#4ADE80`) so the visual language stays
+/// consistent, but at 10 % alpha so the underlying card faces remain
+/// fully readable through the wash.
+pub const DROP_TARGET_FILL: Color = Color::srgba(0.290, 0.871, 0.502, 0.10);
+
+/// Outline colour for the drop-target overlay. Matches the
+/// `STATE_SUCCESS` hue at 75 % alpha so the rectangle border reads
+/// unmistakably against both the felt and stacked card faces without
+/// drowning the cards themselves.
+pub const DROP_TARGET_OUTLINE: Color = Color::srgba(0.290, 0.871, 0.502, 0.75);
+
+/// Thickness of the drop-target outline edges, in world-space pixels.
+pub const DROP_TARGET_OUTLINE_PX: f32 = 3.0;
+
+/// Sprite-space `Transform.z` for drop-target overlay entities. Sits
+/// well above any static card (top stack z is `~1.04`) but well below
+/// the lifted dragged stack (`DRAG_Z = 500.0` in `input_plugin`) so the
+/// overlay never occludes the card the player is holding. Distinct from
+/// the i32 `Z_*` UI-Node tokens above — those are `ZIndex` values for
+/// `bevy::ui`, while this is a 2D `Sprite` z coordinate.
+pub const Z_DROP_OVERLAY: f32 = 50.0;
+
 /// Subtle border — default popover, card, and idle button outline.
 pub const BORDER_SUBTLE: Color = Color::srgba(0.647, 0.549, 1.000, 0.12);
 

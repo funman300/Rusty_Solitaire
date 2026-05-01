@@ -10,6 +10,17 @@
 //! - **Green** if the dragged stack can legally land there.
 //! - **Default** (nearly transparent white) otherwise.
 //!   The tint is cleared to default the frame the drag ends.
+//!
+//! **Drop-target overlays** (`update_drop_target_overlays`)
+//! Pile markers sit *behind* the card stack, so on a tableau column with
+//! any cards on it the green tint applied above is fully occluded. To
+//! make legal targets unmistakable mid-drag, this system spawns a
+//! translucent green rectangle plus four outline edges over every legal
+//! destination pile. For tableau columns the overlay covers the full
+//! visible fan (matching `input_plugin::pile_drop_rect`); for
+//! foundations and empty tableaux it is card-sized. Overlays are
+//! despawned the frame the drag ends or whenever the legal-target set
+//! changes.
 
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, PrimaryWindow, SystemCursorIcon};
@@ -21,6 +32,9 @@ use crate::card_plugin::{RightClickHighlight, TABLEAU_FAN_FRAC};
 use crate::layout::{Layout, LayoutResource};
 use crate::resources::{DragState, GameStateResource};
 use crate::table_plugin::PileMarker;
+use crate::ui_theme::{
+    DROP_TARGET_FILL, DROP_TARGET_OUTLINE, DROP_TARGET_OUTLINE_PX, Z_DROP_OVERLAY,
+};
 
 /// Semi-transparent white that `table_plugin` uses for idle pile markers.
 /// Kept in sync with the `marker_colour` constant there.
@@ -29,12 +43,26 @@ const MARKER_DEFAULT: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
 /// Green tint applied to pile markers that are valid drop targets during drag.
 const MARKER_VALID: Color = Color::srgba(0.15, 0.85, 0.25, 0.55);
 
+/// Marker component on a parent entity that owns one drop-target overlay
+/// (a translucent fill plus four outline edges as children). The wrapped
+/// `PileType` identifies which pile this overlay highlights, so test
+/// queries and the despawn-on-target-change logic can filter by pile.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct DropTargetOverlay(pub PileType);
+
 /// Renders a custom cursor sprite that follows the pointer and swaps to a grab-hand icon while a card drag is in progress.
 pub struct CursorPlugin;
 
 impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (update_cursor_icon, update_drop_highlights));
+        app.add_systems(
+            Update,
+            (
+                update_cursor_icon,
+                update_drop_highlights,
+                update_drop_target_overlays,
+            ),
+        );
     }
 }
 
@@ -176,6 +204,213 @@ fn update_drop_highlights(
 }
 
 // ---------------------------------------------------------------------------
+// Drop-target overlay sprites — render in front of cards, unlike the pile
+// markers above which sit behind the stack.
+// ---------------------------------------------------------------------------
+
+/// Spawns / despawns translucent overlay sprites over every legal drop
+/// target while a drag is in progress.
+///
+/// The overlay is a parent `Sprite` (the soft fill) with four child
+/// `Sprite`s (top, bottom, left, right edges) that together form the
+/// outline. A new parent is spawned whenever a target appears in the
+/// valid set; a parent is despawned (with its children) whenever its
+/// pile leaves the valid set or the drag ends.
+///
+/// Geometry mirrors `input_plugin::pile_drop_rect` exactly so the
+/// highlighted region matches the actual drop hit-box.
+fn update_drop_target_overlays(
+    mut commands: Commands,
+    drag: Res<DragState>,
+    game: Option<Res<GameStateResource>>,
+    layout: Option<Res<LayoutResource>>,
+    overlays: Query<(Entity, &DropTargetOverlay)>,
+) {
+    // Drag idle → despawn every existing overlay and exit.
+    if drag.is_idle() {
+        for (entity, _) in &overlays {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    let (Some(game), Some(layout)) = (game, layout) else {
+        return;
+    };
+
+    // Resolve the bottom card of the dragged stack — same logic as
+    // `update_drop_highlights` so rules can't drift between the marker
+    // tint and the overlay.
+    let Some(&bottom_id) = drag.cards.first() else {
+        return;
+    };
+    let bottom_card = game
+        .0
+        .piles
+        .values()
+        .flat_map(|p| p.cards.iter())
+        .find(|c| c.id == bottom_id)
+        .cloned();
+    let Some(bottom_card) = bottom_card else {
+        return;
+    };
+    let drag_count = drag.cards.len();
+
+    // Iterate the same pile list as `update_drop_highlights`. Stock and
+    // Waste are excluded because they are never legal drop targets.
+    let candidates = [
+        PileType::Foundation(0),
+        PileType::Foundation(1),
+        PileType::Foundation(2),
+        PileType::Foundation(3),
+        PileType::Tableau(0),
+        PileType::Tableau(1),
+        PileType::Tableau(2),
+        PileType::Tableau(3),
+        PileType::Tableau(4),
+        PileType::Tableau(5),
+        PileType::Tableau(6),
+    ];
+
+    // Compute the new set of valid piles for this frame.
+    let mut valid: Vec<PileType> = Vec::new();
+    for pile in &candidates {
+        let is_valid = match pile {
+            PileType::Foundation(_) => {
+                if drag_count != 1 {
+                    false
+                } else {
+                    game.0
+                        .piles
+                        .get(pile)
+                        .is_some_and(|p| can_place_on_foundation(&bottom_card, p))
+                }
+            }
+            PileType::Tableau(_) => game
+                .0
+                .piles
+                .get(pile)
+                .is_some_and(|p| can_place_on_tableau(&bottom_card, p)),
+            _ => false,
+        };
+        // Don't highlight the origin pile — dropping onto the source is
+        // a no-op.
+        if is_valid && drag.origin_pile.as_ref() != Some(pile) {
+            valid.push(pile.clone());
+        }
+    }
+
+    // Despawn overlays whose pile is no longer valid.
+    for (entity, marker) in &overlays {
+        if !valid.contains(&marker.0) {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Spawn overlays for piles that are now valid but don't yet have one.
+    let already_overlaid: Vec<PileType> = overlays
+        .iter()
+        .map(|(_, m)| m.0.clone())
+        .filter(|p| valid.contains(p))
+        .collect();
+
+    for pile in valid {
+        if already_overlaid.contains(&pile) {
+            continue;
+        }
+        spawn_drop_target_overlay(&mut commands, &pile, &layout.0, &game.0);
+    }
+}
+
+/// Computes the `(centre, size)` of the drop-target overlay for a pile.
+///
+/// Mirrors `input_plugin::pile_drop_rect` — for tableau columns with two
+/// or more cards the rectangle extends downward to cover the full fan;
+/// for everything else it is card-sized. Replicated here rather than
+/// imported because `pile_drop_rect` is private to `input_plugin` and
+/// this overlay is the only other consumer.
+fn drop_overlay_rect(pile: &PileType, layout: &Layout, game: &GameState) -> (Vec2, Vec2) {
+    let centre = layout.pile_positions[pile];
+    if matches!(pile, PileType::Tableau(_)) {
+        let card_count = game.piles.get(pile).map_or(0, |p| p.cards.len());
+        if card_count > 1 {
+            let fan = -layout.card_size.y * TABLEAU_FAN_FRAC;
+            let bottom_card_centre_y = centre.y + fan * (card_count - 1) as f32;
+            let top_edge = centre.y + layout.card_size.y / 2.0;
+            let bottom_edge = bottom_card_centre_y - layout.card_size.y / 2.0;
+            let span_height = top_edge - bottom_edge;
+            let new_centre_y = (top_edge + bottom_edge) / 2.0;
+            return (
+                Vec2::new(centre.x, new_centre_y),
+                Vec2::new(layout.card_size.x, span_height),
+            );
+        }
+    }
+    (centre, layout.card_size)
+}
+
+/// Spawns one overlay parent (fill) plus four edge sprites (outline) at
+/// the appropriate world position for `pile`.
+fn spawn_drop_target_overlay(
+    commands: &mut Commands,
+    pile: &PileType,
+    layout: &Layout,
+    game: &GameState,
+) {
+    let (centre, size) = drop_overlay_rect(pile, layout, game);
+    let edge = DROP_TARGET_OUTLINE_PX;
+
+    commands
+        .spawn((
+            Sprite {
+                color: DROP_TARGET_FILL,
+                custom_size: Some(size),
+                ..default()
+            },
+            Transform::from_xyz(centre.x, centre.y, Z_DROP_OVERLAY),
+            DropTargetOverlay(pile.clone()),
+        ))
+        .with_children(|parent| {
+            // Top edge.
+            parent.spawn((
+                Sprite {
+                    color: DROP_TARGET_OUTLINE,
+                    custom_size: Some(Vec2::new(size.x, edge)),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, size.y / 2.0 - edge / 2.0, 0.01),
+            ));
+            // Bottom edge.
+            parent.spawn((
+                Sprite {
+                    color: DROP_TARGET_OUTLINE,
+                    custom_size: Some(Vec2::new(size.x, edge)),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, -size.y / 2.0 + edge / 2.0, 0.01),
+            ));
+            // Left edge.
+            parent.spawn((
+                Sprite {
+                    color: DROP_TARGET_OUTLINE,
+                    custom_size: Some(Vec2::new(edge, size.y)),
+                    ..default()
+                },
+                Transform::from_xyz(-size.x / 2.0 + edge / 2.0, 0.0, 0.01),
+            ));
+            // Right edge.
+            parent.spawn((
+                Sprite {
+                    color: DROP_TARGET_OUTLINE,
+                    custom_size: Some(Vec2::new(edge, size.y)),
+                    ..default()
+                },
+                Transform::from_xyz(size.x / 2.0 - edge / 2.0, 0.0, 0.01),
+            ));
+        });
+}
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
@@ -256,5 +491,160 @@ mod tests {
         let layout = compute_layout(Vec2::new(1280.0, 800.0));
         // A cursor far off-screen should never hit anything.
         assert!(!cursor_over_draggable(Vec2::new(-9999.0, -9999.0), &game, &layout));
+    }
+
+    // -----------------------------------------------------------------------
+    // Drop-target overlay tests
+    // -----------------------------------------------------------------------
+
+    use crate::layout::compute_layout;
+    use solitaire_core::card::{Card, Rank, Suit};
+    use solitaire_core::game_state::{DrawMode, GameMode, GameState};
+
+    /// Builds an `App` with `MinimalPlugins` and the overlay system
+    /// registered, plus the resources the system needs. Callers
+    /// customise `GameStateResource` and `DragState` after construction.
+    fn overlay_test_app(game: GameState) -> App {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(GameStateResource(game))
+            .insert_resource(LayoutResource(compute_layout(Vec2::new(1280.0, 800.0))))
+            .insert_resource(DragState::default())
+            .add_systems(Update, update_drop_target_overlays);
+        app
+    }
+
+    /// Replaces the top card of a tableau pile with a fresh face-up
+    /// card. Used to make a specific tableau column accept a chosen
+    /// drag stack.
+    fn set_tableau_top(game: &mut GameState, idx: usize, card: Card) {
+        let pile = game
+            .piles
+            .get_mut(&PileType::Tableau(idx))
+            .expect("tableau pile exists");
+        pile.cards.clear();
+        pile.cards.push(card);
+    }
+
+    /// Inserts a single face-up dragged card into the waste pile and
+    /// configures `DragState` so the overlay system treats it as the
+    /// active drag.
+    fn begin_drag_with(app: &mut App, dragged: Card) {
+        // Place the dragged card on the waste pile (origin).
+        {
+            let mut game = app.world_mut().resource_mut::<GameStateResource>();
+            let waste = game
+                .0
+                .piles
+                .get_mut(&PileType::Waste)
+                .expect("waste pile exists");
+            waste.cards.clear();
+            waste.cards.push(dragged.clone());
+        }
+        let mut drag = app.world_mut().resource_mut::<DragState>();
+        drag.cards = vec![dragged.id];
+        drag.origin_pile = Some(PileType::Waste);
+        drag.committed = true;
+    }
+
+    #[test]
+    fn drop_target_overlay_spawns_for_valid_tableau_during_drag() {
+        // 5 of Hearts (red, rank 5) on top of Tableau(2)'s 6 of Spades
+        // (black, rank 6) — alternating colour, one rank lower → legal.
+        let mut game = GameState::new_with_mode(7, DrawMode::DrawOne, GameMode::Classic);
+        set_tableau_top(
+            &mut game,
+            2,
+            Card { id: 9001, suit: Suit::Spades, rank: Rank::Six, face_up: true },
+        );
+        let dragged = Card { id: 9002, suit: Suit::Hearts, rank: Rank::Five, face_up: true };
+
+        let mut app = overlay_test_app(game);
+        begin_drag_with(&mut app, dragged);
+
+        app.update();
+
+        let overlays: Vec<PileType> = app
+            .world_mut()
+            .query::<&DropTargetOverlay>()
+            .iter(app.world())
+            .map(|o| o.0.clone())
+            .collect();
+        assert!(
+            overlays.contains(&PileType::Tableau(2)),
+            "expected Tableau(2) to be highlighted as a legal drop target, got {overlays:?}"
+        );
+    }
+
+    #[test]
+    fn drop_target_overlay_does_not_spawn_for_invalid_destination() {
+        // 5 of Spades (black) onto Tableau(2)'s 6 of Clubs (also black)
+        // — same colour family, illegal. Tableau(2) must NOT be
+        // highlighted.
+        let mut game = GameState::new_with_mode(7, DrawMode::DrawOne, GameMode::Classic);
+        set_tableau_top(
+            &mut game,
+            2,
+            Card { id: 9101, suit: Suit::Clubs, rank: Rank::Six, face_up: true },
+        );
+        let dragged = Card { id: 9102, suit: Suit::Spades, rank: Rank::Five, face_up: true };
+
+        let mut app = overlay_test_app(game);
+        begin_drag_with(&mut app, dragged);
+
+        app.update();
+
+        let overlays: Vec<PileType> = app
+            .world_mut()
+            .query::<&DropTargetOverlay>()
+            .iter(app.world())
+            .map(|o| o.0.clone())
+            .collect();
+        assert!(
+            !overlays.contains(&PileType::Tableau(2)),
+            "Tableau(2) must not be highlighted for an illegal drop, got {overlays:?}"
+        );
+    }
+
+    #[test]
+    fn drop_target_overlays_despawn_on_drag_end() {
+        // Set up a scenario that produces at least one valid overlay,
+        // confirm it spawns, then clear the drag and confirm every
+        // overlay is despawned.
+        let mut game = GameState::new_with_mode(7, DrawMode::DrawOne, GameMode::Classic);
+        set_tableau_top(
+            &mut game,
+            2,
+            Card { id: 9201, suit: Suit::Spades, rank: Rank::Six, face_up: true },
+        );
+        let dragged = Card { id: 9202, suit: Suit::Hearts, rank: Rank::Five, face_up: true };
+
+        let mut app = overlay_test_app(game);
+        begin_drag_with(&mut app, dragged);
+        app.update();
+
+        let count_during_drag = app
+            .world_mut()
+            .query::<&DropTargetOverlay>()
+            .iter(app.world())
+            .count();
+        assert!(
+            count_during_drag >= 1,
+            "expected ≥1 overlay during drag, got {count_during_drag}"
+        );
+
+        // End the drag — every overlay should despawn next frame.
+        app.world_mut().resource_mut::<DragState>().clear();
+        app.update();
+
+        let count_after_drag = app
+            .world_mut()
+            .query::<&DropTargetOverlay>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count_after_drag, 0,
+            "all overlays must despawn when the drag ends"
+        );
     }
 }
