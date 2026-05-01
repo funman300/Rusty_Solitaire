@@ -1,7 +1,7 @@
 # Solitaire Quest — Session Handoff
 
 > Last updated: 2026-04-25
-> Branch: `master` — pushed to https://git.aleshym.co/funman300/Rusty_Solitare.git
+> Branch: `master` — pushed to https://github.com/funman300/Rusty_Solitare.git
 > Test count: **242 passing** (83 core + 60 data + 99 engine), `cargo clippy --workspace -- -D warnings` clean
 
 ---
