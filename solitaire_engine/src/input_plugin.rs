@@ -30,7 +30,9 @@ use solitaire_core::pile::PileType;
 use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 
 use crate::card_animation::tuning::AnimationTuning;
-use crate::card_plugin::{CardEntity, HintHighlight, HintHighlightTimer, TABLEAU_FAN_FRAC};
+use crate::card_plugin::{
+    CardEntity, HintHighlight, HintHighlightTimer, TABLEAU_FACEDOWN_FAN_FRAC, TABLEAU_FAN_FRAC,
+};
 use crate::feedback_anim_plugin::ShakeAnim;
 use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
@@ -960,11 +962,27 @@ fn point_in_rect(point: Vec2, center: Vec2, size: Vec2) -> bool {
 }
 
 /// Where a card at `stack_index` in pile `pile` would be rendered.
+///
+/// For tableau columns the per-card fan step depends on the face-up state of
+/// every preceding card — face-down cards step by `TABLEAU_FACEDOWN_FAN_FRAC`,
+/// face-up cards by `TABLEAU_FAN_FRAC`. Mirrors `card_plugin::card_positions`
+/// exactly; any drift creates an offset between the visible card face and
+/// where clicks land.
 fn card_position(game: &GameState, layout: &Layout, pile: &PileType, stack_index: usize) -> Vec2 {
     let base = layout.pile_positions[pile];
     if matches!(pile, PileType::Tableau(_)) {
-        let fan = -layout.card_size.y * TABLEAU_FAN_FRAC;
-        Vec2::new(base.x, base.y + fan * (stack_index as f32))
+        let mut y_offset = 0.0_f32;
+        if let Some(pile_cards) = game.piles.get(pile) {
+            for card in pile_cards.cards.iter().take(stack_index) {
+                let step = if card.face_up {
+                    TABLEAU_FAN_FRAC
+                } else {
+                    TABLEAU_FACEDOWN_FAN_FRAC
+                };
+                y_offset -= layout.card_size.y * step;
+            }
+        }
+        Vec2::new(base.x, base.y + y_offset)
     } else if matches!(pile, PileType::Waste) && game.draw_mode == DrawMode::DrawThree {
         // In Draw-Three mode the top 3 waste cards are fanned in X to match
         // card_plugin::card_positions(). Hit-testing must use the same offsets
@@ -1419,15 +1437,36 @@ mod tests {
         let game = GameState::new(42, DrawMode::DrawOne);
         let layout = compute_layout(Vec2::new(1280.0, 800.0));
 
-        // Tableau 6 has 7 cards; only index 6 is face-up. A cursor over the
-        // position of the bottom face-down card (index 0) should miss —
-        // that card is face-down and the topmost face-up card overlaps at
-        // a different fanned position.
-        let bottom_pos = card_position(&game, &layout, &PileType::Tableau(6), 0);
-        // Shift to avoid accidental overlap with the face-up card above it.
-        let below_bottom = bottom_pos - Vec2::new(0.0, layout.card_size.y * 0.4);
-        let result = find_draggable_at(below_bottom, &game, &layout);
+        // Tableau 6 has 7 cards: 6 face-down (indices 0..5) + 1 face-up at
+        // the bottom (index 6). Click at the topmost face-down card's
+        // position — its full body is partly visible above the fanned
+        // face-up card, but the iterator should skip face-down cards and
+        // the cursor sits above the face-up card's AABB, so the result
+        // is None.
+        let face_down_pos = card_position(&game, &layout, &PileType::Tableau(6), 0);
+        let result = find_draggable_at(face_down_pos, &game, &layout);
         assert!(result.is_none(), "face-down cards should not be draggable");
+    }
+
+    #[test]
+    fn find_draggable_hits_face_up_card_with_face_down_cards_above_it() {
+        // Regression test for the bug where input_plugin's hit-testing used
+        // a uniform 0.25 fan step but card_plugin renders face-down cards
+        // at 0.12 — so for any column with face-down cards above the
+        // face-up bottom card, clicking the visible card face missed the
+        // hit-test box and only the bottom strip of the card responded.
+        let game = GameState::new(42, DrawMode::DrawOne);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0));
+
+        // Tableau 6 starts with 6 face-down + 1 face-up. The face-up card
+        // sits at base.y - 6 * TABLEAU_FACEDOWN_FAN_FRAC * card_h, NOT at
+        // base.y - 6 * TABLEAU_FAN_FRAC * card_h. Click the centre.
+        let face_up_pos = card_position(&game, &layout, &PileType::Tableau(6), 6);
+        let result = find_draggable_at(face_up_pos, &game, &layout)
+            .expect("clicking the face-up card's visible centre must initiate a drag");
+        assert_eq!(result.0, PileType::Tableau(6));
+        assert_eq!(result.1, 6);
+        assert_eq!(result.2.len(), 1);
     }
 
     #[test]

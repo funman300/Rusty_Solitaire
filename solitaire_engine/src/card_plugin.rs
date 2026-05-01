@@ -34,7 +34,14 @@ use crate::table_plugin::PileMarker;
 pub const TABLEAU_FAN_FRAC: f32 = 0.25;
 
 /// Tighter fan for face-down cards in the tableau — just enough to show the stack.
-const TABLEAU_FACEDOWN_FAN_FRAC: f32 = 0.12;
+/// Per-card vertical step for face-down tableau cards, as a fraction of
+/// card height. Smaller than [`TABLEAU_FAN_FRAC`] because face-down cards
+/// don't need their full body shown — only the back-pattern strip is
+/// visible. Public so `input_plugin` can mirror the exact sprite layout
+/// when hit-testing tableau columns; any drift between this and the
+/// renderer creates a visible offset between the card face and where
+/// clicks land.
+pub const TABLEAU_FACEDOWN_FAN_FRAC: f32 = 0.12;
 
 /// Fraction of card height used as a tiny offset between stacked cards in
 /// non-tableau piles, so stacking is visible.
