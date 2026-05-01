@@ -33,6 +33,16 @@ const CARD_ASPECT: f32 = 1.4;
 /// the tableau row.
 const VERTICAL_GAP_FRAC: f32 = 0.2;
 
+/// Fraction of card height contributed by each additional face-up tableau card
+/// when fanned. Mirrors `card_plugin::TABLEAU_FAN_FRAC` so layout sizing can
+/// solve for a worst-case column without depending on `card_plugin`.
+const TABLEAU_FAN_FRAC: f32 = 0.25;
+
+/// Largest possible face-up tableau column in Klondike: a King down to an Ace
+/// after every face-down card has flipped on column 7. Layout sizing must keep
+/// this column inside the visible window.
+const MAX_TABLEAU_CARDS: f32 = 13.0;
+
 /// Table background colour (dark green felt).
 pub const TABLE_COLOUR: [f32; 3] = [0.059, 0.322, 0.196];
 
@@ -55,8 +65,13 @@ pub struct Layout {
 /// Compute the board layout from a window size.
 ///
 /// # Geometry
-/// - `card_width  = window.x / 9.0` — seven tableau columns with eight gaps
-///   (two outer margins + six inner).
+/// - `card_width` is the smaller of:
+///   - `window.x / 9.0` — seven tableau columns with eight gaps (two outer
+///     margins + six inner). This is the limiter on landscape windows.
+///   - the height-based candidate that keeps a worst-case fanned tableau
+///     column (13 face-up cards, see [`MAX_TABLEAU_CARDS`]) inside the
+///     window with a bottom margin equal to `h_gap`. Limiter on tall/narrow
+///     windows.
 /// - `card_height = card_width * 1.4`.
 /// - Horizontal gap `h_gap = card_width / 4.0`.
 /// - Top row (stock, waste, 4 foundations) aligns with tableau columns
@@ -65,16 +80,43 @@ pub struct Layout {
 pub fn compute_layout(window: Vec2) -> Layout {
     let window = window.max(MIN_WINDOW);
 
-    let card_width = window.x / 9.0;
+    // Width-based candidate (existing behaviour): 7 cards + 8 h_gaps = 9*card_width.
+    let card_width_width_based = window.x / 9.0;
+
+    // Height-based candidate. The vertical budget below the top row must hold
+    // a worst-case fanned tableau column plus a bottom margin equal to h_gap.
+    //
+    // Letting w = card_width and h = w * CARD_ASPECT, the vertical layout is:
+    //   top edge of window     = +window.y / 2
+    //   top of top-row card    = window.y/2 - h_gap                       (h_gap top margin)
+    //   centre of top-row card = window.y/2 - h_gap - h/2
+    //   centre of tableau card = top centre - h - vertical_gap            (vertical_gap = VERTICAL_GAP_FRAC * h)
+    //   bottom of last fanned  = tableau_centre + h/2 - fan_factor * h
+    //                           where fan_factor = 1 + (MAX_TABLEAU_CARDS - 1) * TABLEAU_FAN_FRAC
+    //   bottom of window       = -window.y / 2; require bottom-of-fanned >= -window.y/2 + h_gap
+    //
+    // Substituting h_gap = w/4 and h = CARD_ASPECT * w and solving for the
+    // largest w that fits gives:
+    //   window.y = w * (0.5 + (1 + fan_factor + VERTICAL_GAP_FRAC) * CARD_ASPECT)
+    let fan_factor = 1.0 + (MAX_TABLEAU_CARDS - 1.0) * TABLEAU_FAN_FRAC;
+    let height_denom = 0.5 + (1.0 + fan_factor + VERTICAL_GAP_FRAC) * CARD_ASPECT;
+    let card_width_height_based = window.y / height_denom;
+
+    let card_width = card_width_width_based.min(card_width_height_based);
     let card_height = card_width * CARD_ASPECT;
     let card_size = Vec2::new(card_width, card_height);
 
     let h_gap = card_width / 4.0;
-    // With h_gap = card_width/4, total width = 7*card_width + 8*h_gap = 9*card_width.
-    // Leftmost card's centre sits at: -window.x/2 + h_gap + card_width/2.
+    // Total occupied width = 7*card_width + 8*h_gap = 9*card_width. When card
+    // sizing is height-limited (tall/narrow windows), this is smaller than
+    // window.x, so the grid is centred horizontally; otherwise side_margin
+    // collapses to h_gap and the geometry matches the original width-based
+    // layout exactly.
+    let total_grid_width = 9.0 * card_width;
+    let side_margin = (window.x - total_grid_width) / 2.0 + h_gap;
     let left_edge = -window.x / 2.0;
     let col_x = |col: usize| -> f32 {
-        left_edge + h_gap + card_width / 2.0 + (col as f32) * (card_width + h_gap)
+        left_edge + side_margin + card_width / 2.0 + (col as f32) * (card_width + h_gap)
     };
 
     let vertical_gap = card_height * VERTICAL_GAP_FRAC;
@@ -200,6 +242,74 @@ mod tests {
                 3 + i
             );
         }
+    }
+
+    #[test]
+    fn short_wide_window_constrains_card_width_via_height() {
+        // Short wide window: vertical budget is the bottleneck, so card_width
+        // must be strictly smaller than the naive window.x / 9 candidate to
+        // keep a worst-case 13-card column inside the window. (Most desktop
+        // monitors fall into this regime — e.g. 1280x800, 1920x1080.)
+        let window = Vec2::new(2560.0, 1080.0);
+        let layout = compute_layout(window);
+        let width_based = window.x / 9.0;
+        assert!(
+            layout.card_size.x < width_based,
+            "expected height to be the limiter (card_width {} should be < width-based candidate {})",
+            layout.card_size.x,
+            width_based
+        );
+    }
+
+    #[test]
+    fn tall_narrow_window_keeps_width_based_sizing() {
+        // Tall narrow window: there's plenty of vertical budget, so width is
+        // the bottleneck and card_width matches the legacy window.x / 9
+        // derivation exactly.
+        let window = Vec2::new(900.0, 1600.0);
+        let layout = compute_layout(window);
+        let width_based = window.x / 9.0;
+        assert!(
+            (layout.card_size.x - width_based).abs() < 1e-3,
+            "expected width-based sizing (card_width {} should equal {})",
+            layout.card_size.x,
+            width_based
+        );
+    }
+
+    #[test]
+    fn worst_case_tableau_fits_vertically_on_default_resolution() {
+        // Default app resolution (see solitaire_app/src/main.rs).
+        let window = Vec2::new(1280.0, 800.0);
+        let layout = compute_layout(window);
+        let tableau_y = layout.pile_positions[&PileType::Tableau(6)].y;
+        let card_h = layout.card_size.y;
+        // Bottom edge of the 13th fanned face-up card.
+        let bottom_edge = tableau_y - 12.0 * card_h * TABLEAU_FAN_FRAC - card_h / 2.0;
+        // Bottom of the visible window with the same h_gap-sized margin used at
+        // the top.
+        let h_gap = layout.card_size.x / 4.0;
+        let window_bottom_with_margin = -window.y / 2.0 + h_gap;
+        assert!(
+            bottom_edge >= window_bottom_with_margin - 1e-3,
+            "worst-case tableau bottom {bottom_edge} overflows window margin {window_bottom_with_margin}"
+        );
+    }
+
+    #[test]
+    fn worst_case_tableau_fits_vertically_on_full_hd() {
+        // The bug originally reproduced at 1920x1080. Lock in a regression test.
+        let window = Vec2::new(1920.0, 1080.0);
+        let layout = compute_layout(window);
+        let tableau_y = layout.pile_positions[&PileType::Tableau(6)].y;
+        let card_h = layout.card_size.y;
+        let bottom_edge = tableau_y - 12.0 * card_h * TABLEAU_FAN_FRAC - card_h / 2.0;
+        let h_gap = layout.card_size.x / 4.0;
+        let window_bottom_with_margin = -window.y / 2.0 + h_gap;
+        assert!(
+            bottom_edge >= window_bottom_with_margin - 1e-3,
+            "worst-case tableau bottom {bottom_edge} overflows window margin {window_bottom_with_margin}"
+        );
     }
 
     #[test]
