@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use bevy::prelude::*;
 use chrono::{Local, Timelike, Utc};
 use solitaire_core::achievement::{
-    achievement_by_id, check_achievements, AchievementContext, Reward, ALL_ACHIEVEMENTS,
+    achievement_by_id, check_achievements, AchievementContext, AchievementDef, Reward,
+    ALL_ACHIEVEMENTS,
 };
 use solitaire_data::{
     achievements_file_path, load_achievements_from, save_achievements_to, AchievementRecord,
@@ -32,10 +33,17 @@ use crate::ui_theme::{
     ACCENT_PRIMARY, BORDER_SUBTLE, STATE_SUCCESS, TEXT_DISABLED, TEXT_PRIMARY, TEXT_SECONDARY,
     TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_1, Z_MODAL_PANEL,
 };
+use crate::ui_tooltip::Tooltip;
 
 /// Marker on the achievements overlay root node.
 #[derive(Component, Debug)]
 pub struct AchievementsScreen;
+
+/// Marker on each per-achievement row inside the Achievements modal. Used by
+/// hover-tooltip plumbing and tests so a row can be identified independently
+/// of its visible text.
+#[derive(Component, Debug)]
+pub struct AchievementRow;
 
 /// All per-player achievement records (one per known achievement).
 #[derive(Resource, Debug, Clone)]
@@ -300,11 +308,17 @@ fn spawn_achievements_screen(
                 (TEXT_DISABLED, TEXT_DISABLED, "\u{25CB} ")
             };
 
-            card.spawn(Node {
-                flex_direction: FlexDirection::Column,
-                row_gap: VAL_SPACE_1,
-                ..default()
-            })
+            let tooltip_text = tooltip_for_row(record.unlocked, def);
+
+            card.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: VAL_SPACE_1,
+                    ..default()
+                },
+                AchievementRow,
+                Tooltip::new(tooltip_text),
+            ))
             .with_children(|row| {
                 row.spawn((
                     Text::new(format!("{prefix}{name}")),
@@ -363,6 +377,40 @@ fn format_reward(reward: Reward) -> String {
         Reward::Background(idx) => format!("Background #{idx}"),
         Reward::BonusXp(xp) => format!("+{xp} XP"),
         Reward::Badge => "Badge".to_string(),
+    }
+}
+
+/// Compose the per-row hover-tooltip string. Surfaces information that the
+/// row itself does not always make obvious:
+///
+/// * Unlocked + reward → "Reward: <reward>." — celebrates the prize.
+/// * Unlocked, no reward → "Earned!".
+/// * Locked, non-secret → "How to unlock: <description>." plus the reward
+///   when one is defined; the visible row already shows the same lines, but
+///   gathering them in one tooltip keeps the long list scannable on hover.
+/// * Locked, secret rows are filtered out before they reach this helper —
+///   they get no tooltip so the unlock condition stays a surprise.
+///
+/// Defs are looked up at the call site; `None` means the record refers to an
+/// achievement no longer present in `ALL_ACHIEVEMENTS` (forward-compat) and
+/// gets a generic fallback.
+fn tooltip_for_row(unlocked: bool, def: Option<&AchievementDef>) -> String {
+    if unlocked {
+        match def.and_then(|d| d.reward).map(format_reward) {
+            Some(reward) => format!("Reward: {reward}."),
+            None => "Earned!".to_string(),
+        }
+    } else {
+        let description = def.map(|d| d.description).unwrap_or("");
+        let how = if description.is_empty() {
+            "How to unlock: keep playing.".to_string()
+        } else {
+            format!("How to unlock: {description}.")
+        };
+        match def.and_then(|d| d.reward).map(format_reward) {
+            Some(reward) => format!("{how} Reward: {reward}."),
+            None => how,
+        }
     }
 }
 
@@ -733,5 +781,148 @@ mod tests {
     #[test]
     fn format_reward_badge() {
         assert_eq!(format_reward(Reward::Badge), "Badge");
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-row tooltips
+    // -----------------------------------------------------------------------
+
+    /// Collects every `Tooltip` string attached to an `AchievementRow` in the
+    /// current world. Order is unspecified — callers should search for a
+    /// substring rather than rely on positions.
+    fn collect_row_tooltips(app: &mut App) -> Vec<String> {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Tooltip, With<AchievementRow>>();
+        q.iter(app.world())
+            .map(|t| t.0.clone().into_owned())
+            .collect()
+    }
+
+    /// `on_a_roll` is unlocked and has `Reward::CardBack(1)`. Its row's
+    /// tooltip must surface that reward — the row UI already lists it, but
+    /// the tooltip exists so the value is never just below the fold on
+    /// long lists.
+    #[test]
+    fn unlocked_achievement_row_carries_tooltip_with_reward() {
+        let mut app = headless_app();
+
+        // Pre-unlock on_a_roll directly on the resource so the row renders
+        // in the "unlocked" branch when the screen spawns.
+        {
+            let mut achievements = app.world_mut().resource_mut::<AchievementsResource>();
+            let record = achievements
+                .0
+                .iter_mut()
+                .find(|r| r.id == "on_a_roll")
+                .expect("on_a_roll record must be seeded by AchievementPlugin");
+            record.unlock(Utc::now());
+            record.reward_granted = true;
+        }
+
+        press(&mut app, KeyCode::KeyA);
+        app.update();
+
+        let tips = collect_row_tooltips(&mut app);
+        assert!(
+            !tips.is_empty(),
+            "spawning the achievements screen must attach Tooltips to rows"
+        );
+
+        // The reward for on_a_roll is `Card Back #1`. Find a tooltip
+        // mentioning "Card back" (case-insensitive on "Back" → match the
+        // exact format_reward output).
+        let has_card_back_reward = tips.iter().any(|t| t.contains("Card Back"));
+        assert!(
+            has_card_back_reward,
+            "expected an unlocked-row tooltip to mention the Card Back reward; got: {tips:?}"
+        );
+    }
+
+    /// Locked secret achievements are filtered out of the row list, so the
+    /// screen must not contain a row tooltip carrying the secret
+    /// achievement's reward (`Card Back #4` for `speed_and_skill`) — the
+    /// only fingerprint that would betray the row's identity even though
+    /// the canonical description is already cryptic.
+    #[test]
+    fn locked_secret_achievement_does_not_reveal_condition() {
+        let mut app = headless_app();
+
+        // `speed_and_skill` starts locked under headless_app(); confirm.
+        let locked = app
+            .world()
+            .resource::<AchievementsResource>()
+            .0
+            .iter()
+            .find(|r| r.id == "speed_and_skill")
+            .map(|r| !r.unlocked)
+            .unwrap_or(false);
+        assert!(
+            locked,
+            "precondition: speed_and_skill must be locked in a fresh headless app"
+        );
+
+        press(&mut app, KeyCode::KeyA);
+        app.update();
+
+        let tips = collect_row_tooltips(&mut app);
+        // No row may carry the secret reward — that's the only way the
+        // secret row's identity could leak through the tooltip surface.
+        for t in &tips {
+            assert!(
+                !t.contains("Card Back #4"),
+                "tooltip leaks the secret reward: {t:?}"
+            );
+        }
+
+        // No row may quote the verbatim secret-condition vocabulary. The
+        // canonical secret description in `solitaire_core` is already
+        // generic ("A secret achievement"); these checks guard against a
+        // future leak where someone replaces it with the literal predicate.
+        let leaked_predicate = tips.iter().any(|t| {
+            t.contains("90") && t.to_lowercase().contains("without undo")
+        });
+        assert!(
+            !leaked_predicate,
+            "no tooltip may state the speed_and_skill predicate: {tips:?}"
+        );
+
+        // Sanity: the screen actually rendered some rows. If the spawn
+        // path were broken there'd be nothing to leak in the first place.
+        assert!(!tips.is_empty(), "screen must have rendered rows");
+    }
+
+    // -----------------------------------------------------------------------
+    // tooltip_for_row policy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tooltip_for_row_unlocked_with_reward_mentions_reward() {
+        let def = achievement_by_id("on_a_roll").expect("on_a_roll exists");
+        let s = tooltip_for_row(true, Some(def));
+        assert!(s.contains("Card Back"), "got {s:?}");
+    }
+
+    #[test]
+    fn tooltip_for_row_unlocked_without_reward_says_earned() {
+        let def = achievement_by_id("first_win").expect("first_win exists");
+        assert_eq!(tooltip_for_row(true, Some(def)), "Earned!");
+    }
+
+    #[test]
+    fn tooltip_for_row_locked_includes_description_and_reward() {
+        let def = achievement_by_id("lightning").expect("lightning exists");
+        let s = tooltip_for_row(false, Some(def));
+        assert!(s.contains("How to unlock"));
+        assert!(s.contains("under 90 seconds"));
+        assert!(s.contains("Card Back #2"));
+    }
+
+    #[test]
+    fn tooltip_for_row_locked_no_reward_omits_reward() {
+        let def = achievement_by_id("first_win").expect("first_win exists");
+        let s = tooltip_for_row(false, Some(def));
+        assert!(s.contains("How to unlock"));
+        assert!(!s.contains("Reward"), "got {s:?}");
     }
 }
