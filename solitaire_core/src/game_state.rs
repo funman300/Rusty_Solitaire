@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
-use crate::card::{Card, Suit};
+use crate::card::Card;
 use crate::deck::{deal_klondike, Deck};
 use crate::error::MoveError;
 use crate::pile::{Pile, PileType};
@@ -8,6 +8,20 @@ use crate::rules::{can_place_on_foundation, can_place_on_tableau};
 use crate::scoring::{compute_time_bonus as scoring_time_bonus, score_move, score_undo as scoring_undo};
 
 const MAX_UNDO_STACK: usize = 64;
+
+/// Save-file schema version for `GameState`. Increment when the on-disk
+/// representation changes incompatibly so `load_game_state_from` can refuse
+/// older formats and start the player on a fresh game.
+///
+/// History:
+/// - v1: `Foundation(Suit)` keys.
+/// - v2 (current): `Foundation(u8)` slot keys; claimed suit derived from the
+///   bottom card of the pile.
+pub const GAME_STATE_SCHEMA_VERSION: u32 = 2;
+
+/// Default value for `GameState::schema_version` when deserialising older
+/// save files that pre-date the field.
+fn schema_v1() -> u32 { 1 }
 
 /// Serialize `HashMap<PileType, Pile>` as a `Vec` of `(key, value)` pairs so
 /// that JSON (which requires string map keys) round-trips correctly.
@@ -98,6 +112,11 @@ pub struct GameState {
     /// Used by the `comeback` achievement condition.
     #[serde(default)]
     pub recycle_count: u32,
+    /// Save-file schema version. Defaults to `1` for older files that pre-date
+    /// the field. The loader refuses any value other than
+    /// [`GAME_STATE_SCHEMA_VERSION`].
+    #[serde(default = "schema_v1")]
+    pub schema_version: u32,
     undo_stack: VecDeque<StateSnapshot>,
 }
 
@@ -116,8 +135,8 @@ impl GameState {
         let mut piles: HashMap<PileType, Pile> = HashMap::new();
         piles.insert(PileType::Stock, stock);
         piles.insert(PileType::Waste, Pile::new(PileType::Waste));
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            piles.insert(PileType::Foundation(suit), Pile::new(PileType::Foundation(suit)));
+        for slot in 0..4_u8 {
+            piles.insert(PileType::Foundation(slot), Pile::new(PileType::Foundation(slot)));
         }
         for (i, pile) in tableau.into_iter().enumerate() {
             piles.insert(PileType::Tableau(i), pile);
@@ -135,6 +154,7 @@ impl GameState {
             is_auto_completable: false,
             undo_count: 0,
             recycle_count: 0,
+            schema_version: GAME_STATE_SCHEMA_VERSION,
             undo_stack: VecDeque::new(),
         }
     }
@@ -247,14 +267,14 @@ impl GameState {
             let bottom_card = from_pile.cards[start].clone();
 
             match &to {
-                PileType::Foundation(suit) => {
+                PileType::Foundation(_) => {
                     if count != 1 {
                         return Err(MoveError::RuleViolation(
                             "only one card can move to foundation at a time".into(),
                         ));
                     }
                     let dest = self.piles.get(&to).ok_or(MoveError::InvalidDestination)?;
-                    if !can_place_on_foundation(&bottom_card, dest, *suit) {
+                    if !can_place_on_foundation(&bottom_card, dest) {
                         return Err(MoveError::RuleViolation("invalid foundation placement".into()));
                     }
                 }
@@ -332,15 +352,13 @@ impl GameState {
         Ok(())
     }
 
-    /// Returns `true` when all four foundations each contain 13 cards.
+    /// Returns `true` when all four foundation slots each contain 13 cards.
     pub fn check_win(&self) -> bool {
-        [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades]
-            .iter()
-            .all(|&suit| {
-                self.piles
-                    .get(&PileType::Foundation(suit))
-                    .is_some_and(|p| p.cards.len() == 13)
-            })
+        (0..4_u8).all(|slot| {
+            self.piles
+                .get(&PileType::Foundation(slot))
+                .is_some_and(|p| p.cards.len() == 13)
+        })
     }
 
     /// Returns `true` when stock and waste are empty and all tableau cards are face-up.
@@ -379,13 +397,34 @@ impl GameState {
         if !self.is_auto_completable || self.is_won {
             return None;
         }
-        let suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
         for i in 0..7 {
             let tableau = PileType::Tableau(i);
             if let Some(card) = self.piles[&tableau].cards.last() {
-                for &suit in &suits {
-                    let foundation = PileType::Foundation(suit);
-                    if can_place_on_foundation(card, &self.piles[&foundation], suit) {
+                // Prefer the slot that already claims this card's suit so
+                // Aces don't sometimes land in slot 0 and then leave the
+                // matching suit-claimed slot empty.
+                let mut candidate: Option<u8> = None;
+                let mut empty_slot: Option<u8> = None;
+                for slot in 0..4_u8 {
+                    let foundation = PileType::Foundation(slot);
+                    let pile = &self.piles[&foundation];
+                    if pile.cards.is_empty() {
+                        if empty_slot.is_none() {
+                            empty_slot = Some(slot);
+                        }
+                    } else if pile.claimed_suit() == Some(card.suit) {
+                        candidate = Some(slot);
+                        break;
+                    }
+                }
+                let target_slot = candidate.or_else(|| {
+                    // Only fall back to an empty slot if the card is an Ace,
+                    // which is the only rank that can claim an empty slot.
+                    if card.rank.value() == 1 { empty_slot } else { None }
+                });
+                if let Some(slot) = target_slot {
+                    let foundation = PileType::Foundation(slot);
+                    if can_place_on_foundation(card, &self.piles[&foundation]) {
                         return Some((tableau, foundation));
                     }
                 }
@@ -403,7 +442,7 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card::{Card, Rank};
+    use crate::card::{Card, Rank, Suit};
 
     fn new_game() -> GameState {
         GameState::new(42, DrawMode::DrawOne)
@@ -434,8 +473,8 @@ mod tests {
     #[test]
     fn new_game_foundations_are_empty() {
         let g = new_game();
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            assert!(g.piles[&PileType::Foundation(suit)].cards.is_empty());
+        for slot in 0..4_u8 {
+            assert!(g.piles[&PileType::Foundation(slot)].cards.is_empty());
         }
     }
 
@@ -662,7 +701,7 @@ mod tests {
         ];
         let result = g.move_cards(
             PileType::Tableau(0),
-            PileType::Foundation(Suit::Clubs),
+            PileType::Foundation(0),
             2,
         );
         assert!(
@@ -706,8 +745,9 @@ mod tests {
     #[test]
     fn win_detection_all_foundations_complete() {
         let mut g = new_game();
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            let f = g.piles.get_mut(&PileType::Foundation(suit)).unwrap();
+        let suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
+        for (slot, suit) in suits.into_iter().enumerate() {
+            let f = g.piles.get_mut(&PileType::Foundation(slot as u8)).unwrap();
             f.cards.clear();
             for rank in [
                 Rank::Ace, Rank::Two, Rank::Three, Rank::Four, Rank::Five,
@@ -1039,7 +1079,8 @@ mod tests {
 
         let mv = g.next_auto_complete_move().expect("should find a move");
         assert_eq!(mv.0, PileType::Tableau(0));
-        assert_eq!(mv.1, PileType::Foundation(Suit::Clubs));
+        // Slot 0 is the first empty foundation; the Ace lands there.
+        assert_eq!(mv.1, PileType::Foundation(0));
     }
 
     #[test]
@@ -1048,5 +1089,144 @@ mod tests {
         g.is_auto_completable = true;
         g.is_won = true;
         assert!(g.next_auto_complete_move().is_none());
+    }
+
+    // --- Slot-based foundation behaviour (refactor coverage) ---
+
+    /// Aces land in the first empty slot regardless of suit, and successive
+    /// Aces fan out across slots 0, 1, 2, 3 in deterministic order.
+    #[test]
+    fn any_ace_lands_in_first_empty_foundation() {
+        let mut g = new_game();
+        // Clear stock/waste/tableau so we can hand-construct moves directly.
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        // Place an Ace of Clubs on tableau 0; move it to slot 0.
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 1, suit: Suit::Clubs, rank: Rank::Ace, face_up: true,
+        });
+        g.move_cards(PileType::Tableau(0), PileType::Foundation(0), 1).unwrap();
+        // Now place an Ace of Spades on tableau 0 and move it to slot 1.
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 2, suit: Suit::Spades, rank: Rank::Ace, face_up: true,
+        });
+        g.move_cards(PileType::Tableau(0), PileType::Foundation(1), 1).unwrap();
+
+        assert_eq!(g.piles[&PileType::Foundation(0)].claimed_suit(), Some(Suit::Clubs));
+        assert_eq!(g.piles[&PileType::Foundation(1)].claimed_suit(), Some(Suit::Spades));
+    }
+
+    /// `Pile::claimed_suit` reads the bottom card's suit on a populated
+    /// foundation slot, regardless of which slot index the pile occupies.
+    #[test]
+    fn claimed_suit_is_derived_from_bottom_card() {
+        let mut g = new_game();
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 50, suit: Suit::Hearts, rank: Rank::Ace, face_up: true,
+        });
+        g.move_cards(PileType::Tableau(0), PileType::Foundation(2), 1).unwrap();
+
+        assert_eq!(
+            g.piles[&PileType::Foundation(2)].claimed_suit(),
+            Some(Suit::Hearts)
+        );
+    }
+
+    /// Undoing the only card from a foundation slot drops the claimed suit;
+    /// the slot then accepts a different Ace.
+    #[test]
+    fn foundation_claim_drops_when_emptied_via_undo() {
+        let mut g = new_game();
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 1, suit: Suit::Hearts, rank: Rank::Ace, face_up: true,
+        });
+        g.move_cards(PileType::Tableau(0), PileType::Foundation(0), 1).unwrap();
+        assert_eq!(g.piles[&PileType::Foundation(0)].claimed_suit(), Some(Suit::Hearts));
+
+        g.undo().unwrap();
+        assert!(g.piles[&PileType::Foundation(0)].cards.is_empty());
+        assert!(g.piles[&PileType::Foundation(0)].claimed_suit().is_none());
+
+        // A different Ace can now claim slot 0.
+        let t0 = g.piles.get_mut(&PileType::Tableau(0)).unwrap();
+        t0.cards.clear();
+        t0.cards.push(Card { id: 2, suit: Suit::Spades, rank: Rank::Ace, face_up: true });
+        g.move_cards(PileType::Tableau(0), PileType::Foundation(0), 1).unwrap();
+        assert_eq!(g.piles[&PileType::Foundation(0)].claimed_suit(), Some(Suit::Spades));
+    }
+
+    /// Successive Aces from the waste pile distribute across slots 0..=3 in
+    /// order — the player picks the slot, but `move_cards` accepts any
+    /// empty-slot placement for an Ace.
+    #[test]
+    fn multiple_aces_distribute_across_slots() {
+        let mut g = new_game();
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        let aces = [
+            (Suit::Clubs, 10),
+            (Suit::Diamonds, 11),
+            (Suit::Hearts, 12),
+            (Suit::Spades, 13),
+        ];
+        for (slot, (suit, id)) in aces.iter().enumerate() {
+            g.piles.get_mut(&PileType::Waste).unwrap().cards.push(Card {
+                id: *id, suit: *suit, rank: Rank::Ace, face_up: true,
+            });
+            g.move_cards(PileType::Waste, PileType::Foundation(slot as u8), 1).unwrap();
+        }
+        for (slot, (suit, _)) in aces.iter().enumerate() {
+            assert_eq!(
+                g.piles[&PileType::Foundation(slot as u8)].claimed_suit(),
+                Some(*suit),
+                "slot {slot} should claim {suit:?}",
+            );
+        }
+    }
+
+    /// Auto-complete prefers the foundation slot whose claimed suit matches
+    /// the candidate card's suit, even if an empty slot exists at a lower
+    /// index.
+    #[test]
+    fn next_auto_complete_move_picks_slot_with_matching_claim() {
+        let mut g = new_game();
+        g.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+        g.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        for i in 0..7 {
+            g.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        // Slot 0 is empty; slot 1 already claims Hearts via Ace of Hearts.
+        g.piles.get_mut(&PileType::Foundation(1)).unwrap().cards.push(Card {
+            id: 1, suit: Suit::Hearts, rank: Rank::Ace, face_up: true,
+        });
+        // Tableau 0 holds the 2 of Hearts to play.
+        g.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+            id: 2, suit: Suit::Hearts, rank: Rank::Two, face_up: true,
+        });
+        g.is_auto_completable = true;
+
+        let mv = g.next_auto_complete_move().expect("auto-complete must find slot 1");
+        assert_eq!(mv.0, PileType::Tableau(0));
+        assert_eq!(
+            mv.1,
+            PileType::Foundation(1),
+            "must target the Hearts-claimed slot, not the empty slot 0",
+        );
     }
 }

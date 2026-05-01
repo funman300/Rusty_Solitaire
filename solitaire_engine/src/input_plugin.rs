@@ -320,16 +320,23 @@ fn handle_keyboard_hint(
     }
 
     // Fire an informational toast describing where the hinted card should
-    // move so the player always sees the suggestion in text.
+    // move so the player always sees the suggestion in text. When the
+    // destination foundation already claims a suit, surface that suit so the
+    // player keeps thinking in suit terms; otherwise fall back to "foundation".
     let msg = match to {
-        PileType::Foundation(suit) => {
-            let suit_name = match suit {
-                Suit::Clubs => "Clubs",
-                Suit::Diamonds => "Diamonds",
-                Suit::Hearts => "Hearts",
-                Suit::Spades => "Spades",
-            };
-            format!("Hint: move to {suit_name} foundation")
+        PileType::Foundation(_) => {
+            let claimed = g.0.piles.get(to).and_then(|p| p.claimed_suit());
+            if let Some(suit) = claimed {
+                let suit_name = match suit {
+                    Suit::Clubs => "Clubs",
+                    Suit::Diamonds => "Diamonds",
+                    Suit::Hearts => "Hearts",
+                    Suit::Spades => "Spades",
+                };
+                format!("Hint: move to {suit_name} foundation")
+            } else {
+                "Hint: move to foundation".to_string()
+            }
         }
         PileType::Tableau(col) => format!("Hint: move to tableau (col {})", col + 1),
         _ => "Hint: move card".to_string(),
@@ -634,12 +641,11 @@ fn end_drag(
             let bottom_card_id = drag.cards[0];
             if let Some(bottom_card) = card_by_id(&game.0, bottom_card_id) {
                 let ok = match &target {
-                    PileType::Foundation(suit) => {
+                    PileType::Foundation(_) => {
                         count == 1
                             && can_place_on_foundation(
                                 &bottom_card,
                                 &game.0.piles[&target],
-                                *suit,
                             )
                     }
                     PileType::Tableau(_) => {
@@ -879,9 +885,9 @@ fn touch_end_drag(
                 let bottom_card_id = drag.cards[0];
                 if let Some(bottom_card) = card_by_id(&game.0, bottom_card_id) {
                     let ok = match &target {
-                        PileType::Foundation(suit) => {
+                        PileType::Foundation(_) => {
                             count == 1
-                                && can_place_on_foundation(&bottom_card, &game.0.piles[&target], *suit)
+                                && can_place_on_foundation(&bottom_card, &game.0.piles[&target])
                         }
                         PileType::Tableau(_) => {
                             can_place_on_tableau(&bottom_card, &game.0.piles[&target])
@@ -1016,10 +1022,10 @@ fn find_draggable_at(
     // Within a pile, we consider cards top-down because the visual top card is drawn last.
     let piles = [
         PileType::Waste,
-        PileType::Foundation(Suit::Clubs),
-        PileType::Foundation(Suit::Diamonds),
-        PileType::Foundation(Suit::Hearts),
-        PileType::Foundation(Suit::Spades),
+        PileType::Foundation(0),
+        PileType::Foundation(1),
+        PileType::Foundation(2),
+        PileType::Foundation(3),
         PileType::Tableau(0),
         PileType::Tableau(1),
         PileType::Tableau(2),
@@ -1079,10 +1085,10 @@ fn find_drop_target(
     origin: &PileType,
 ) -> Option<PileType> {
     let piles = [
-        PileType::Foundation(Suit::Clubs),
-        PileType::Foundation(Suit::Diamonds),
-        PileType::Foundation(Suit::Hearts),
-        PileType::Foundation(Suit::Spades),
+        PileType::Foundation(0),
+        PileType::Foundation(1),
+        PileType::Foundation(2),
+        PileType::Foundation(3),
         PileType::Tableau(0),
         PileType::Tableau(1),
         PileType::Tableau(2),
@@ -1138,11 +1144,11 @@ const DOUBLE_CLICK_WINDOW: f32 = 0.35;
 ///
 /// Returns `None` if no legal move exists from the card's current location.
 pub fn best_destination(card: &Card, game: &GameState) -> Option<PileType> {
-    // Try all four foundations first.
-    for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-        let dest = PileType::Foundation(suit);
+    // Try all four foundation slots first.
+    for slot in 0..4_u8 {
+        let dest = PileType::Foundation(slot);
         if let Some(pile) = game.piles.get(&dest)
-            && can_place_on_foundation(card, pile, suit) {
+            && can_place_on_foundation(card, pile) {
                 return Some(dest);
             }
     }
@@ -1298,7 +1304,6 @@ fn handle_double_click(
 /// This is the backing data for the cycling hint system: the H key steps
 /// through `hints[HintCycleIndex % hints.len()]` on each press.
 pub fn all_hints(game: &GameState) -> Vec<(PileType, PileType, usize)> {
-    let suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
     let sources: Vec<PileType> = {
         let mut s = vec![PileType::Waste];
         for i in 0..7_usize {
@@ -1313,12 +1318,12 @@ pub fn all_hints(game: &GameState) -> Vec<(PileType, PileType, usize)> {
     for from in &sources {
         let Some(from_pile) = game.piles.get(from) else { continue };
         let Some(card) = from_pile.cards.last().filter(|c| c.face_up) else { continue };
-        for &suit in &suits {
-            let dest = PileType::Foundation(suit);
+        for slot in 0..4_u8 {
+            let dest = PileType::Foundation(slot);
             if let Some(dest_pile) = game.piles.get(&dest)
-                && can_place_on_foundation(card, dest_pile, suit) {
+                && can_place_on_foundation(card, dest_pile) {
                     hints.push((from.clone(), dest, 1));
-                    // Each source card can go to at most one foundation suit;
+                    // Each source card can land on at most one foundation slot;
                     // no need to check the remaining three for this card.
                     break;
                 }
@@ -1616,7 +1621,7 @@ mod tests {
         let layout = compute_layout(Vec2::new(1280.0, 800.0));
         for pile in [
             PileType::Waste,
-            PileType::Foundation(Suit::Hearts),
+            PileType::Foundation(2),
         ] {
             let (_, size) = pile_drop_rect(&pile, &layout, &game);
             assert_eq!(size, layout.card_size);
@@ -1638,13 +1643,15 @@ mod tests {
         waste.cards.clear();
         waste.cards.push(Card { id: 200, suit: Suit::Clubs, rank: Rank::Ace, face_up: true });
 
-        // Foundation for Clubs is empty — Ace should go there.
-        let foundation = game.piles.get_mut(&PileType::Foundation(Suit::Clubs)).unwrap();
-        foundation.cards.clear();
+        // All four foundation slots empty — the Ace lands in slot 0 (first
+        // empty slot in iteration order).
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
+        }
 
         let card = Card { id: 200, suit: Suit::Clubs, rank: Rank::Ace, face_up: true };
         let dest = best_destination(&card, &game);
-        assert_eq!(dest, Some(PileType::Foundation(Suit::Clubs)));
+        assert_eq!(dest, Some(PileType::Foundation(0)));
     }
 
     #[test]
@@ -1653,9 +1660,9 @@ mod tests {
         use solitaire_core::game_state::GameMode;
         let mut game = GameState::new_with_mode(1, DrawMode::DrawOne, GameMode::Classic);
 
-        // Clear all foundations — a Two of Clubs cannot go there.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        // Clear all foundation slots — a Two of Clubs cannot go there.
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
 
         // Put a Two of Clubs as the card.
@@ -1682,8 +1689,8 @@ mod tests {
         let mut game = GameState::new(1, DrawMode::DrawOne);
 
         // Clear everything except one card that has nowhere to go.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1704,8 +1711,8 @@ mod tests {
         let mut game = GameState::new(1, DrawMode::DrawOne);
 
         // Clear all piles for a clean test.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1737,8 +1744,8 @@ mod tests {
         use solitaire_core::card::{Card, Rank, Suit};
         let mut game = GameState::new(1, DrawMode::DrawOne);
 
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1768,8 +1775,8 @@ mod tests {
         use solitaire_core::card::{Card, Rank, Suit};
         let mut game = GameState::new(1, DrawMode::DrawOne);
 
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1806,13 +1813,16 @@ mod tests {
         game.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
             id: 500, suit: Suit::Clubs, rank: Rank::Ace, face_up: true,
         });
-        game.piles.get_mut(&PileType::Foundation(Suit::Clubs)).unwrap().cards.clear();
+        // All foundation slots empty — Ace lands in slot 0 (first match).
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
+        }
 
         let hint = find_hint(&game);
         assert!(hint.is_some(), "should find a hint");
         let (from, to, count) = hint.unwrap();
         assert_eq!(from, PileType::Tableau(0));
-        assert_eq!(to, PileType::Foundation(Suit::Clubs));
+        assert_eq!(to, PileType::Foundation(0));
         assert_eq!(count, 1);
     }
 
@@ -1822,8 +1832,8 @@ mod tests {
         let mut game = GameState::new(1, DrawMode::DrawOne);
 
         // Put only a Two on tableau 0, empty everything else.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1872,8 +1882,8 @@ mod tests {
 
         // Remove all foundation, tableau, and waste cards so no pile-to-pile
         // move exists. Leave one card in the stock.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1904,8 +1914,8 @@ mod tests {
         let mut game = GameState::new(1, DrawMode::DrawOne);
 
         // Clear every pile, then put a single card that has nowhere to go.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();

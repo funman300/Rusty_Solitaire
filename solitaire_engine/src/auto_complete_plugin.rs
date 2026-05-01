@@ -196,7 +196,8 @@ mod tests {
         // At least one MoveRequestEvent should have been fired.
         assert!(!fired.is_empty(), "expected at least one MoveRequestEvent");
         assert_eq!(fired[0].from, PileType::Tableau(0));
-        assert_eq!(fired[0].to, PileType::Foundation(Suit::Clubs));
+        // First empty foundation slot wins on a fresh nearly-won board.
+        assert_eq!(fired[0].to, PileType::Foundation(0));
     }
 
     #[test]

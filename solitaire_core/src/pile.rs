@@ -8,8 +8,10 @@ pub enum PileType {
     Stock,
     /// The face-up discard pile drawn to.
     Waste,
-    /// One of the four suit-ordered foundation piles.
-    Foundation(Suit),
+    /// One of the four foundation slots (0..=3). The claimed suit, if any,
+    /// is derived from the bottom card of the pile (always an Ace by
+    /// construction).
+    Foundation(u8),
     /// One of the seven tableau columns (0–6).
     Tableau(usize),
 }
@@ -17,7 +19,7 @@ pub enum PileType {
 /// A named collection of cards in a specific board position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pile {
-    /// Which pile this is (Stock, Waste, Foundation suit, or Tableau column).
+    /// Which pile this is (Stock, Waste, Foundation slot, or Tableau column).
     pub pile_type: PileType,
     /// Cards in the pile, bottom-to-top stacking order. Last element is the top card.
     pub cards: Vec<Card>,
@@ -32,6 +34,16 @@ impl Pile {
     /// Returns a reference to the top (last) card, or `None` if empty.
     pub fn top(&self) -> Option<&Card> {
         self.cards.last()
+    }
+
+    /// For foundation piles: returns `Some(suit)` once at least one card has
+    /// landed (the bottom card is always an Ace of the claimed suit).
+    /// Returns `None` for empty foundations or non-foundation piles.
+    pub fn claimed_suit(&self) -> Option<Suit> {
+        match self.pile_type {
+            PileType::Foundation(_) => self.cards.first().map(|c| c.suit),
+            _ => None,
+        }
     }
 }
 
@@ -61,12 +73,33 @@ mod tests {
     }
 
     #[test]
-    fn pile_type_foundation_uses_suit() {
-        assert_ne!(PileType::Foundation(Suit::Hearts), PileType::Foundation(Suit::Spades));
+    fn pile_type_foundation_uses_slot_index() {
+        assert_ne!(PileType::Foundation(0), PileType::Foundation(3));
     }
 
     #[test]
     fn pile_type_tableau_uses_index() {
         assert_ne!(PileType::Tableau(0), PileType::Tableau(6));
+    }
+
+    #[test]
+    fn claimed_suit_is_none_for_empty_foundation() {
+        let pile = Pile::new(PileType::Foundation(0));
+        assert!(pile.claimed_suit().is_none());
+    }
+
+    #[test]
+    fn claimed_suit_is_none_for_non_foundation() {
+        let mut pile = Pile::new(PileType::Tableau(0));
+        pile.cards.push(Card { id: 0, suit: Suit::Hearts, rank: Rank::Ace, face_up: true });
+        assert!(pile.claimed_suit().is_none());
+    }
+
+    #[test]
+    fn claimed_suit_returns_bottom_card_suit() {
+        let mut pile = Pile::new(PileType::Foundation(2));
+        pile.cards.push(Card { id: 0, suit: Suit::Hearts, rank: Rank::Ace, face_up: true });
+        pile.cards.push(Card { id: 1, suit: Suit::Hearts, rank: Rank::Two, face_up: true });
+        assert_eq!(pile.claimed_suit(), Some(Suit::Hearts));
     }
 }

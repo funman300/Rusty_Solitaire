@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use solitaire_core::game_state::GameState;
+use solitaire_core::game_state::{GameState, GAME_STATE_SCHEMA_VERSION};
 
 use crate::stats::StatsSnapshot;
 
@@ -72,10 +72,21 @@ pub fn game_state_file_path() -> Option<PathBuf> {
 }
 
 /// Load an in-progress `GameState` from `path`. Returns `None` if the file is
-/// missing, corrupt, or represents a finished game.
+/// missing, corrupt, represents a finished game, or carries a save-schema
+/// version other than [`GAME_STATE_SCHEMA_VERSION`].
+///
+/// Schema mismatch is treated as "no save" so a player upgrading across an
+/// incompatible game-state format change starts fresh instead of seeing a
+/// half-loaded game (or a deserialiser error). v1 saves with the old
+/// `Foundation(Suit)` key shape will fail to parse outright; any v1 saves
+/// that happen to round-trip but report `schema_version: 1` are also rejected
+/// here.
 pub fn load_game_state_from(path: &Path) -> Option<GameState> {
     let data = fs::read(path).ok()?;
     let gs: GameState = serde_json::from_slice(&data).ok()?;
+    if gs.schema_version != GAME_STATE_SCHEMA_VERSION {
+        return None;
+    }
     if gs.is_won {
         None
     } else {
@@ -330,5 +341,50 @@ mod tests {
         save_game_state_to(&path, &gs).expect("save");
         let tmp = path.with_extension("json.tmp");
         assert!(!tmp.exists(), ".tmp must be cleaned up after rename");
+    }
+
+    /// Pre-v2 save files used `Foundation(Suit)` keys and either fail to
+    /// parse outright or surface a `schema_version: 1`. Either path must
+    /// produce `None` so the player launches into a fresh game.
+    ///
+    /// Sibling assertion: the stats round-trip path is unaffected — only
+    /// the game-state schema bumped.
+    #[test]
+    fn save_format_v1_is_rejected() {
+        let path = gs_path("schema_v1");
+        let _ = fs::remove_file(&path);
+
+        // A pared-down v1 JSON literal: foundation pile keys use the old
+        // suit-tagged form and the file omits `schema_version` (so it
+        // deserialises with the default of 1). Even if a future change
+        // makes `Foundation(Suit)` parse-compatible, the schema-version
+        // gate keeps this case rejected.
+        let v1_json = r#"{
+            "piles": [
+                [{"Foundation": "Hearts"}, {"pile_type": {"Foundation": "Hearts"}, "cards": []}]
+            ],
+            "draw_mode": "DrawOne",
+            "score": 0,
+            "move_count": 0,
+            "elapsed_seconds": 0,
+            "seed": 42,
+            "is_won": false,
+            "is_auto_completable": false,
+            "undo_count": 0,
+            "undo_stack": []
+        }"#;
+        fs::write(&path, v1_json).expect("write v1 fixture");
+
+        assert!(
+            load_game_state_from(&path).is_none(),
+            "v1 game_state.json must be rejected (parse failure or schema bump)",
+        );
+
+        // Sibling sanity: stats files are independent and still round-trip.
+        let stats_path = tmp_path("schema_unrelated_stats");
+        let _ = fs::remove_file(&stats_path);
+        save_stats_to(&stats_path, &StatsSnapshot::default()).expect("save stats");
+        let loaded = load_stats_from(&stats_path);
+        assert_eq!(loaded, StatsSnapshot::default());
     }
 }

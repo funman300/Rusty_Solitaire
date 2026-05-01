@@ -225,8 +225,8 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
     let mut piles: Vec<PileType> = Vec::with_capacity(13);
     piles.push(PileType::Stock);
     piles.push(PileType::Waste);
-    for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-        piles.push(PileType::Foundation(suit));
+    for slot in 0..4_u8 {
+        piles.push(PileType::Foundation(slot));
     }
     for i in 0..7 {
         piles.push(PileType::Tableau(i));
@@ -244,18 +244,9 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
             PileMarker(pile.clone()),
         ));
 
-        // Task #35 — suit symbol on empty foundation placeholders.
-        if let PileType::Foundation(suit) = &pile {
-            let symbol = suit_symbol(suit).to_string();
-            entity.with_children(|b| {
-                b.spawn((
-                    Text2d::new(symbol),
-                    TextFont { font_size, ..default() },
-                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.45)),
-                    Transform::from_xyz(0.0, 0.0, 0.1),
-                ));
-            });
-        }
+        // Foundation slots no longer carry a suit letter — any Ace can claim
+        // any empty slot, so a fixed C/D/H/S badge would be misleading. Empty
+        // foundation markers render as plain translucent rectangles.
 
         // Task #43 — King indicator on empty tableau placeholders.
         if let PileType::Tableau(_) = &pile {

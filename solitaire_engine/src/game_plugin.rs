@@ -479,7 +479,6 @@ fn handle_undo(
 /// - Any face-up card on Waste or Tableau piles that can legally move to any
 ///   Foundation or Tableau destination.
 pub fn has_legal_moves(game: &GameState) -> bool {
-    use solitaire_core::card::Suit;
     use solitaire_core::pile::PileType;
     use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 
@@ -489,8 +488,6 @@ pub fn has_legal_moves(game: &GameState) -> bool {
     {
         return true;
     }
-
-    let suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
 
     // Check each playable source pile.
     let sources: Vec<PileType> = {
@@ -505,11 +502,11 @@ pub fn has_legal_moves(game: &GameState) -> bool {
         let Some(from_pile) = game.piles.get(from) else { continue };
         let Some(card) = from_pile.cards.last().filter(|c| c.face_up) else { continue };
 
-        // Check foundations.
-        for &suit in &suits {
-            let dest = PileType::Foundation(suit);
+        // Check foundation slots.
+        for slot in 0..4_u8 {
+            let dest = PileType::Foundation(slot);
             if let Some(dest_pile) = game.piles.get(&dest)
-                && can_place_on_foundation(card, dest_pile, suit) {
+                && can_place_on_foundation(card, dest_pile) {
                     return true;
                 }
         }
@@ -1116,8 +1113,8 @@ mod tests {
         game.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
 
         // Clear all tableau and foundations, put Ace of Clubs on tableau 0.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1139,8 +1136,8 @@ mod tests {
         game.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
 
         // Clear all foundations and all tableau.
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-            game.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
         }
         for i in 0..7_usize {
             game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1234,8 +1231,8 @@ mod tests {
             let mut gs = app.world_mut().resource_mut::<GameStateResource>();
             gs.0.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
             gs.0.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
-            for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-                gs.0.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+            for slot in 0..4_u8 {
+                gs.0.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
             }
             for i in 0..7_usize {
                 gs.0.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1273,8 +1270,8 @@ mod tests {
             let mut gs = app.world_mut().resource_mut::<GameStateResource>();
             gs.0.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
             gs.0.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
-            for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-                gs.0.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+            for slot in 0..4_u8 {
+                gs.0.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
             }
             for i in 0..7_usize {
                 gs.0.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
@@ -1340,8 +1337,8 @@ mod tests {
             let mut gs = app.world_mut().resource_mut::<GameStateResource>();
             gs.0.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
             gs.0.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
-            for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-                gs.0.piles.get_mut(&PileType::Foundation(suit)).unwrap().cards.clear();
+            for slot in 0..4_u8 {
+                gs.0.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
             }
             for i in 0..7_usize {
                 gs.0.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();

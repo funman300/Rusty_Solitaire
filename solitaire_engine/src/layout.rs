@@ -7,7 +7,6 @@ use std::collections::HashMap;
 
 use bevy::math::Vec2;
 use bevy::prelude::{Resource, SystemSet};
-use solitaire_core::card::Suit;
 use solitaire_core::pile::PileType;
 
 /// Schedule labels for layout-related systems so cross-plugin ordering is
@@ -138,11 +137,10 @@ pub fn compute_layout(window: Vec2) -> Layout {
     pile_positions.insert(PileType::Waste, Vec2::new(col_x(1), top_y));
 
     // Column 2 is skipped — visual separation between waste and foundations.
-    let foundation_suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
-    for (i, suit) in foundation_suits.into_iter().enumerate() {
+    for slot in 0..4_u8 {
         pile_positions.insert(
-            PileType::Foundation(suit),
-            Vec2::new(col_x(3 + i), top_y),
+            PileType::Foundation(slot),
+            Vec2::new(col_x(3 + slot as usize), top_y),
         );
     }
 
@@ -167,11 +165,10 @@ mod tests {
     fn assert_all_piles_present(layout: &Layout) {
         assert!(layout.pile_positions.contains_key(&PileType::Stock));
         assert!(layout.pile_positions.contains_key(&PileType::Waste));
-        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+        for slot in 0..4_u8 {
             assert!(
-                layout.pile_positions.contains_key(&PileType::Foundation(suit)),
-                "missing foundation for {:?}",
-                suit
+                layout.pile_positions.contains_key(&PileType::Foundation(slot)),
+                "missing foundation slot {slot}",
             );
         }
         for i in 0..7 {
@@ -257,15 +254,13 @@ mod tests {
     #[test]
     fn foundations_align_with_tableau_cols_3_to_6() {
         let layout = compute_layout(Vec2::new(1280.0, 800.0));
-        let foundation_suits = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
-        for (i, suit) in foundation_suits.into_iter().enumerate() {
-            let f_x = layout.pile_positions[&PileType::Foundation(suit)].x;
-            let t_x = layout.pile_positions[&PileType::Tableau(3 + i)].x;
+        for slot in 0..4_u8 {
+            let f_x = layout.pile_positions[&PileType::Foundation(slot)].x;
+            let t_x = layout.pile_positions[&PileType::Tableau(3 + slot as usize)].x;
             assert!(
                 (f_x - t_x).abs() < 1e-5,
-                "foundation {:?} should align with tableau {}",
-                suit,
-                3 + i
+                "foundation slot {slot} should align with tableau {}",
+                3 + slot as usize,
             );
         }
     }

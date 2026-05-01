@@ -33,12 +33,11 @@ pub fn compute_time_bonus(elapsed_seconds: u64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::card::Suit;
 
     #[test]
     fn move_to_foundation_scores_ten() {
-        assert_eq!(score_move(&PileType::Waste, &PileType::Foundation(Suit::Hearts)), 10);
-        assert_eq!(score_move(&PileType::Tableau(0), &PileType::Foundation(Suit::Clubs)), 10);
+        assert_eq!(score_move(&PileType::Waste, &PileType::Foundation(2)), 10);
+        assert_eq!(score_move(&PileType::Tableau(0), &PileType::Foundation(0)), 10);
     }
 
     #[test]
@@ -74,7 +73,7 @@ mod tests {
     #[test]
     fn non_waste_to_tableau_scores_zero() {
         // Foundation → Tableau is impossible in practice but must score 0.
-        assert_eq!(score_move(&PileType::Foundation(Suit::Clubs), &PileType::Tableau(0)), 0);
+        assert_eq!(score_move(&PileType::Foundation(0), &PileType::Tableau(0)), 0);
         // Tableau → Tableau (restack) scores 0.
         assert_eq!(score_move(&PileType::Tableau(1), &PileType::Tableau(2)), 0);
     }

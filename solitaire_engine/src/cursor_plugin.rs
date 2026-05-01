@@ -13,7 +13,6 @@
 
 use bevy::prelude::*;
 use bevy::window::{CursorIcon, PrimaryWindow, SystemCursorIcon};
-use solitaire_core::card::Suit;
 use solitaire_core::game_state::{DrawMode, GameState};
 use solitaire_core::pile::PileType;
 use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
@@ -82,10 +81,10 @@ fn update_cursor_icon(
 fn cursor_over_draggable(cursor: Vec2, game: &GameState, layout: &Layout) -> bool {
     let piles = [
         PileType::Waste,
-        PileType::Foundation(Suit::Clubs),
-        PileType::Foundation(Suit::Diamonds),
-        PileType::Foundation(Suit::Hearts),
-        PileType::Foundation(Suit::Spades),
+        PileType::Foundation(0),
+        PileType::Foundation(1),
+        PileType::Foundation(2),
+        PileType::Foundation(3),
         PileType::Tableau(0),
         PileType::Tableau(1),
         PileType::Tableau(2),
@@ -158,12 +157,12 @@ fn update_drop_highlights(
 
     for (marker, mut sprite, _rch) in &mut markers {
         let valid = match &marker.0 {
-            PileType::Foundation(suit) => {
+            PileType::Foundation(slot) => {
                 if drag_count != 1 {
                     false
                 } else {
-                    let pile = game.0.piles.get(&PileType::Foundation(*suit));
-                    pile.is_some_and(|p| can_place_on_foundation(&bottom_card, p, *suit))
+                    let pile = game.0.piles.get(&PileType::Foundation(*slot));
+                    pile.is_some_and(|p| can_place_on_foundation(&bottom_card, p))
                 }
             }
             PileType::Tableau(idx) => {

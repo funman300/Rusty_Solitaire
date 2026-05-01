@@ -1,16 +1,18 @@
-use crate::card::{Card, Suit};
+use crate::card::Card;
 use crate::pile::Pile;
 
-/// Returns `true` if `card` can be placed on `pile` as the next card in the foundation for `suit`.
+/// Returns `true` if `card` can be placed on the foundation `pile`.
 ///
-/// Foundation rules: same suit, Ace starts, each subsequent card is one rank higher.
-pub fn can_place_on_foundation(card: &Card, pile: &Pile, suit: Suit) -> bool {
-    if card.suit != suit {
-        return false;
-    }
+/// Foundation rules:
+/// - When the pile is empty, any Ace is accepted; the placed Ace's suit
+///   becomes the pile's claimed suit (derived from the bottom card via
+///   [`Pile::claimed_suit`](crate::pile::Pile::claimed_suit)).
+/// - When the pile is non-empty, the next card must match the top card's
+///   suit and be exactly one rank higher.
+pub fn can_place_on_foundation(card: &Card, pile: &Pile) -> bool {
     match pile.cards.last() {
         None => card.rank.value() == 1,
-        Some(top) => card.rank.value() == top.rank.value() + 1,
+        Some(top) => card.suit == top.suit && card.rank.value() == top.rank.value() + 1,
     }
 }
 
@@ -45,37 +47,46 @@ mod tests {
     // Foundation tests
     #[test]
     fn foundation_ace_on_empty_is_valid() {
-        let c = card(Suit::Hearts, Rank::Ace);
-        let p = Pile::new(PileType::Foundation(Suit::Hearts));
-        assert!(can_place_on_foundation(&c, &p, Suit::Hearts));
+        // Every suit's Ace must land on an empty foundation slot regardless of
+        // its slot index; the slot claims the suit only after the Ace lands.
+        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+            let c = card(suit, Rank::Ace);
+            let p = Pile::new(PileType::Foundation(0));
+            assert!(
+                can_place_on_foundation(&c, &p),
+                "Ace of {suit:?} must land on empty slot 0",
+            );
+        }
     }
 
     #[test]
     fn foundation_non_ace_on_empty_is_invalid() {
         let c = card(Suit::Hearts, Rank::Two);
-        let p = Pile::new(PileType::Foundation(Suit::Hearts));
-        assert!(!can_place_on_foundation(&c, &p, Suit::Hearts));
+        let p = Pile::new(PileType::Foundation(0));
+        assert!(!can_place_on_foundation(&c, &p));
     }
 
     #[test]
     fn foundation_two_on_ace_same_suit_is_valid() {
         let c = card(Suit::Clubs, Rank::Two);
-        let p = pile_with(PileType::Foundation(Suit::Clubs), vec![card(Suit::Clubs, Rank::Ace)]);
-        assert!(can_place_on_foundation(&c, &p, Suit::Clubs));
+        let p = pile_with(PileType::Foundation(0), vec![card(Suit::Clubs, Rank::Ace)]);
+        assert!(can_place_on_foundation(&c, &p));
     }
 
     #[test]
-    fn foundation_wrong_suit_is_invalid() {
-        let c = card(Suit::Hearts, Rank::Ace);
-        let p = Pile::new(PileType::Foundation(Suit::Spades));
-        assert!(!can_place_on_foundation(&c, &p, Suit::Spades));
+    fn foundation_second_card_must_match_claimed_suit() {
+        // Place Ace of Hearts on slot 0, then attempt 2 of Spades — rejected
+        // because the slot's claimed suit is Hearts after the Ace lands.
+        let p = pile_with(PileType::Foundation(0), vec![card(Suit::Hearts, Rank::Ace)]);
+        let c = card(Suit::Spades, Rank::Two);
+        assert!(!can_place_on_foundation(&c, &p));
     }
 
     #[test]
     fn foundation_skipping_rank_is_invalid() {
         let c = card(Suit::Diamonds, Rank::Three);
-        let p = pile_with(PileType::Foundation(Suit::Diamonds), vec![card(Suit::Diamonds, Rank::Ace)]);
-        assert!(!can_place_on_foundation(&c, &p, Suit::Diamonds));
+        let p = pile_with(PileType::Foundation(0), vec![card(Suit::Diamonds, Rank::Ace)]);
+        assert!(!can_place_on_foundation(&c, &p));
     }
 
     // Tableau tests
@@ -125,16 +136,16 @@ mod tests {
     fn foundation_king_on_queen_completes_suit() {
         // The last card placed to complete a foundation is always King on Queen.
         let c = card(Suit::Spades, Rank::King);
-        let p = pile_with(PileType::Foundation(Suit::Spades), vec![card(Suit::Spades, Rank::Queen)]);
-        assert!(can_place_on_foundation(&c, &p, Suit::Spades));
+        let p = pile_with(PileType::Foundation(0), vec![card(Suit::Spades, Rank::Queen)]);
+        assert!(can_place_on_foundation(&c, &p));
     }
 
     #[test]
     fn foundation_king_wrong_suit_is_invalid() {
-        // King of Hearts cannot go on a Spades foundation even if rank matches.
+        // King of Hearts cannot go on a Spades-claimed foundation even if rank matches.
         let c = card(Suit::Hearts, Rank::King);
-        let p = pile_with(PileType::Foundation(Suit::Spades), vec![card(Suit::Spades, Rank::Queen)]);
-        assert!(!can_place_on_foundation(&c, &p, Suit::Spades));
+        let p = pile_with(PileType::Foundation(0), vec![card(Suit::Spades, Rank::Queen)]);
+        assert!(!can_place_on_foundation(&c, &p));
     }
 
     #[test]

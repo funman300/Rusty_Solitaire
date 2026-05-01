@@ -1557,6 +1557,7 @@ fn update_hud(
 /// indicator stays in sync with the selection resource.
 fn update_selection_hud(
     selection: Option<Res<SelectionState>>,
+    game: Option<Res<GameStateResource>>,
     mut q: Query<&mut Text, With<HudSelection>>,
 ) {
     let Ok(mut t) = q.single_mut() else { return };
@@ -1564,7 +1565,29 @@ fn update_selection_hud(
         None => String::new(),
         Some(PileType::Waste) => "▶ Waste".to_string(),
         Some(PileType::Stock) => "▶ Stock".to_string(),
-        Some(PileType::Foundation(suit)) => {
+        Some(PileType::Foundation(slot)) => match game.as_deref() {
+            Some(g) => foundation_selection_label(*slot, &g.0),
+            // No game resource means we can't probe claimed_suit; show the
+            // slot-based placeholder so the HUD still surfaces the selection.
+            None => format!("▶ Foundation {}", slot + 1),
+        },
+        Some(PileType::Tableau(idx)) => format!("▶ Column {}", idx + 1),
+    };
+    **t = label;
+}
+
+/// Returns the HUD selection label for a foundation slot.
+///
+/// When the slot has a claimed suit (any card has landed) the announcement is
+/// "▶ {Suit} Foundation"; while the slot is empty it falls back to a
+/// "▶ Foundation N" placeholder labelled by the 1-based slot index.
+fn foundation_selection_label(slot: u8, game: &solitaire_core::game_state::GameState) -> String {
+    let claimed = game
+        .piles
+        .get(&PileType::Foundation(slot))
+        .and_then(|p| p.claimed_suit());
+    match claimed {
+        Some(suit) => {
             let s = match suit {
                 Suit::Clubs => "Clubs",
                 Suit::Diamonds => "Diamonds",
@@ -1573,9 +1596,8 @@ fn update_selection_hud(
             };
             format!("▶ {s} Foundation")
         }
-        Some(PileType::Tableau(idx)) => format!("▶ Column {}", idx + 1),
-    };
-    **t = label;
+        None => format!("▶ Foundation {}", slot + 1),
+    }
 }
 
 /// Fires `InfoToastEvent("Auto-completing...")` exactly once each time

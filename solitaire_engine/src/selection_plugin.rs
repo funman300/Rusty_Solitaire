@@ -18,7 +18,6 @@
 
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
-use solitaire_core::card::Suit;
 use solitaire_core::pile::PileType;
 
 use crate::card_plugin::CardEntity;
@@ -82,15 +81,12 @@ impl Plugin for SelectionPlugin {
 
 /// The ordered list of piles that are considered for keyboard cycling.
 ///
-/// Order: Waste → Foundation×4 → Tableau 0–6.
+/// Order: Waste → Foundation slots 0–3 → Tableau 0–6.
 fn cycled_piles() -> Vec<PileType> {
-    let mut piles = vec![
-        PileType::Waste,
-        PileType::Foundation(Suit::Clubs),
-        PileType::Foundation(Suit::Diamonds),
-        PileType::Foundation(Suit::Hearts),
-        PileType::Foundation(Suit::Spades),
-    ];
+    let mut piles = vec![PileType::Waste];
+    for slot in 0..4_u8 {
+        piles.push(PileType::Foundation(slot));
+    }
     for i in 0..7_usize {
         piles.push(PileType::Tableau(i));
     }
@@ -183,10 +179,10 @@ fn handle_selection_keys(
     let available: Vec<PileType> = {
         let all = [
             PileType::Waste,
-            PileType::Foundation(Suit::Clubs),
-            PileType::Foundation(Suit::Diamonds),
-            PileType::Foundation(Suit::Hearts),
-            PileType::Foundation(Suit::Spades),
+            PileType::Foundation(0),
+            PileType::Foundation(1),
+            PileType::Foundation(2),
+            PileType::Foundation(3),
             PileType::Tableau(0),
             PileType::Tableau(1),
             PileType::Tableau(2),
@@ -325,10 +321,10 @@ fn try_foundation_dest(
     game: &solitaire_core::game_state::GameState,
 ) -> Option<PileType> {
     use solitaire_core::rules::can_place_on_foundation;
-    for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
-        let dest = PileType::Foundation(suit);
+    for slot in 0..4_u8 {
+        let dest = PileType::Foundation(slot);
         if let Some(pile) = game.piles.get(&dest)
-            && can_place_on_foundation(card, pile, suit) {
+            && can_place_on_foundation(card, pile) {
                 return Some(dest);
             }
     }

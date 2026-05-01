@@ -436,10 +436,10 @@ fn card_positions<'a>(game: &'a GameState, layout: &Layout) -> Vec<(&'a Card, Ve
     let piles = [
         PileType::Stock,
         PileType::Waste,
-        PileType::Foundation(Suit::Clubs),
-        PileType::Foundation(Suit::Diamonds),
-        PileType::Foundation(Suit::Hearts),
-        PileType::Foundation(Suit::Spades),
+        PileType::Foundation(0),
+        PileType::Foundation(1),
+        PileType::Foundation(2),
+        PileType::Foundation(3),
         PileType::Tableau(0),
         PileType::Tableau(1),
         PileType::Tableau(2),
@@ -985,8 +985,8 @@ fn handle_right_click(
         let pile_type = &pile_marker.0;
         let Some(pile) = game.0.piles.get(pile_type) else { continue };
         let legal = match pile_type {
-            PileType::Foundation(suit) => {
-                can_place_on_foundation(&card, pile, *suit)
+            PileType::Foundation(_) => {
+                can_place_on_foundation(&card, pile)
             }
             PileType::Tableau(_) => can_place_on_tableau(&card, pile),
             _ => false,
