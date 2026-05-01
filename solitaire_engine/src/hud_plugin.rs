@@ -252,6 +252,7 @@ impl Plugin for HudPlugin {
             .add_message::<ToggleSettingsRequestEvent>()
             .add_message::<ToggleLeaderboardRequestEvent>()
             .init_resource::<PreviousScore>()
+            .init_resource::<HudActionFade>()
             .add_systems(Startup, (spawn_hud_band, spawn_hud, spawn_action_buttons))
             .add_systems(Update, update_hud.after(GameMutation))
             .add_systems(Update, announce_auto_complete.after(GameMutation))
@@ -279,7 +280,13 @@ impl Plugin for HudPlugin {
                     handle_menu_option_click,
                     paint_action_buttons,
                 ),
-            );
+            )
+            // Fade lives in `Last` so it always overrides whatever the
+            // hover/paint pass set on `BackgroundColor` this frame.
+            // Otherwise on a hover-state change (`Changed<Interaction>`),
+            // `paint_action_buttons` would clobber the alpha back to 1.0
+            // mid-fade and produce a visible blip.
+            .add_systems(Last, (update_action_fade, apply_action_fade).chain());
     }
 }
 
@@ -987,6 +994,93 @@ fn handle_menu_option_click(
         && let Ok(entity) = popovers.single() {
             commands.entity(entity).despawn();
         }
+}
+
+/// Auto-fade state for the action button bar. The bar fades out when
+/// the cursor is in the play area (below the HUD band) and back in when
+/// the cursor approaches the top of the window — same UX as a video
+/// player's auto-hide controls. Buttons remain fully interactive when
+/// visible; when faded out they're geometrically out of cursor reach
+/// (hover requires the cursor to be on a button), so no extra
+/// pointer-events guard is needed.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct HudActionFade {
+    /// Currently displayed alpha. Lerped toward `target` each frame.
+    pub alpha: f32,
+    /// Where `alpha` is heading — 0.0 (faded out) or 1.0 (visible).
+    pub target: f32,
+}
+
+impl Default for HudActionFade {
+    fn default() -> Self {
+        // Start visible so the player sees the controls on first launch
+        // before they've moved the cursor anywhere.
+        Self {
+            alpha: 1.0,
+            target: 1.0,
+        }
+    }
+}
+
+/// Cursor-y threshold (in window pixels, 0 = top) below which the bar
+/// stays visible. Set slightly above `HUD_BAND_HEIGHT` so the bar fades
+/// in as the cursor approaches, not only once it crosses into the band.
+const ACTION_FADE_REVEAL_PX: f32 = HUD_BAND_HEIGHT + 32.0;
+
+/// Lerp rate for fading (per second). 6.0 ≈ 167 ms for a full
+/// transition — fast enough to feel responsive without flashing on
+/// brief cursor wanders into the reveal zone.
+const ACTION_FADE_RATE_PER_SEC: f32 = 6.0;
+
+/// Updates the fade state from cursor position. Sets `target = 1.0` if
+/// the cursor is in the reveal zone (top of window) or off-screen
+/// (player is using keyboard); `0.0` otherwise. Lerps `alpha` toward
+/// `target` at a fixed rate so the visual transition is smooth across
+/// variable framerates.
+fn update_action_fade(
+    windows: Query<&Window>,
+    time: Res<Time>,
+    mut fade: ResMut<HudActionFade>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    fade.target = match window.cursor_position() {
+        Some(pos) if pos.y <= ACTION_FADE_REVEAL_PX => 1.0,
+        Some(_) => 0.0,
+        // Off-window cursor: assume keyboard navigation and keep the
+        // bar visible so Tab cycling doesn't lead to invisible focus.
+        None => 1.0,
+    };
+
+    let dt = time.delta_secs();
+    let max_step = ACTION_FADE_RATE_PER_SEC * dt;
+    let diff = fade.target - fade.alpha;
+    fade.alpha = (fade.alpha + diff.clamp(-max_step, max_step)).clamp(0.0, 1.0);
+}
+
+/// Applies the current fade alpha to every action button's
+/// `BackgroundColor` and to its child label / hotkey-chip text. Runs in
+/// `Last` (after `paint_action_buttons`) so a hover-state change in the
+/// same frame doesn't override the fade with an opaque idle / hover
+/// colour.
+fn apply_action_fade(
+    fade: Res<HudActionFade>,
+    mut buttons: Query<(&Children, &mut BackgroundColor), With<ActionButton>>,
+    mut text_q: Query<&mut TextColor>,
+) {
+    for (children, mut bg) in &mut buttons {
+        let mut c = bg.0;
+        c.set_alpha(fade.alpha);
+        bg.0 = c;
+        for child in children.iter() {
+            if let Ok(mut tc) = text_q.get_mut(child) {
+                let mut cc = tc.0;
+                cc.set_alpha(fade.alpha);
+                tc.0 = cc;
+            }
+        }
+    }
 }
 
 /// Visual feedback for every action button — paints idle / hover / pressed
