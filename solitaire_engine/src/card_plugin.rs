@@ -161,6 +161,40 @@ const FLIP_HALF_SECS: f32 = 0.08;
 #[derive(Component, Debug)]
 pub struct ShadowEntity;
 
+/// Throttle interval for resize-driven card snap work, in seconds.
+///
+/// `WindowResized` fires once per pixel of drag, so a fast corner-drag can
+/// produce dozens of events per frame. Re-running the per-card snap logic
+/// (52 cards × sprite/transform/font_size touches) for every event is the
+/// dominant cost of resize lag. We coalesce pending work and apply it at most
+/// once per [`RESIZE_THROTTLE_SECS`] (~20 Hz). The user still sees updates
+/// during a sustained drag, and the layout always catches up to the final
+/// size when the drag stops because the pending size is held until applied.
+const RESIZE_THROTTLE_SECS: f32 = 0.05;
+
+/// Holds the latest pending window size from `WindowResized` events plus a
+/// timestamp for the last applied snap, so the resize-snap work can be
+/// rate-limited to ~20 Hz during sustained drags.
+#[derive(Resource, Debug, Default)]
+pub struct ResizeThrottle {
+    /// Latest unapplied window size from `WindowResized`. `None` when there is
+    /// nothing to apply.
+    pub pending: Option<Vec2>,
+    /// `Time::elapsed_secs()` value at the moment of the most recent applied
+    /// snap. `0.0` until the first apply.
+    pub last_applied_secs: f32,
+}
+
+/// Pure helper used by the throttled resize-snap system: returns `true` when
+/// a pending resize should be flushed given the current `now_secs` and the
+/// last-applied timestamp. Throttle interval is [`RESIZE_THROTTLE_SECS`].
+///
+/// Extracted so the rate-limit logic can be unit-tested without spinning up
+/// a full Bevy app.
+fn should_apply_resize(now_secs: f32, last_applied_secs: f32) -> bool {
+    (now_secs - last_applied_secs) >= RESIZE_THROTTLE_SECS
+}
+
 /// Renders cards by reading `GameStateResource` on `StateChangedEvent`.
 pub struct CardPlugin;
 
@@ -173,6 +207,7 @@ impl Plugin for CardPlugin {
         // `MinimalPlugins` (tests) this resource is absent by default, so we
         // ensure it exists here. Under `DefaultPlugins` the call is a no-op.
         app.init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ResizeThrottle>()
             .add_message::<SettingsChangedEvent>()
             .add_message::<CardFlippedEvent>()
             .add_message::<CardFaceRevealedEvent>()
@@ -192,7 +227,8 @@ impl Plugin for CardPlugin {
                     clear_right_click_highlights_on_state_change.after(GameMutation),
                     clear_right_click_highlights_on_pause,
                     update_stock_empty_indicator.after(GameMutation),
-                    snap_cards_on_window_resize.after(LayoutSystem::UpdateOnResize),
+                    collect_resize_events.after(LayoutSystem::UpdateOnResize),
+                    snap_cards_on_window_resize.after(collect_resize_events),
                 ),
             );
     }
@@ -1023,10 +1059,10 @@ const STOCK_NORMAL_COLOUR: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
 /// spawned (if not already present). When the stock is non-empty the marker is
 /// restored to `STOCK_NORMAL_COLOUR` and any `StockEmptyLabel` children are
 /// despawned.
-fn apply_stock_empty_indicator(
+fn apply_stock_empty_indicator<F: bevy::ecs::query::QueryFilter>(
     commands: &mut Commands,
     game: &GameState,
-    pile_markers: &mut Query<(Entity, &PileMarker, &mut Sprite)>,
+    pile_markers: &mut Query<(Entity, &PileMarker, &mut Sprite), F>,
     label_children: &Query<(Entity, &ChildOf), With<StockEmptyLabel>>,
     layout: &Layout,
 ) {
@@ -1116,61 +1152,89 @@ fn update_stock_empty_indicator(
     );
 }
 
-/// Snaps every card sprite to its target position and size when the window
-/// is resized.
+/// Coalesces every `WindowResized` event arriving this frame into the latest
+/// pending size on [`ResizeThrottle`].
 ///
-/// This replaces the old "fire `StateChangedEvent` from `on_window_resized`"
-/// path. That path went through `sync_cards_on_change` → `update_card_entity`,
-/// which inserts a `CardAnim` slide tween whenever the card moves more than
-/// 1 unit. During a corner drag, every frame's `WindowResized` event
-/// retargeted the tween from the card's mid-slide position, so cards never
-/// reached steady state — the visible "snap back and forth" jitter.
+/// `WindowResized` fires per pixel of resize drag, so a fast corner drag can
+/// emit many events per frame. Reading `.last()` keeps only the final size —
+/// every frame's snap target is the most recent window size, never a stale
+/// one. Pending stays set across frames until the throttled applier consumes
+/// it; that's how we still flush the final "release" position when the user
+/// stops dragging.
+fn collect_resize_events(
+    mut events: MessageReader<WindowResized>,
+    mut throttle: ResMut<ResizeThrottle>,
+) {
+    if let Some(ev) = events.read().last() {
+        throttle.pending = Some(Vec2::new(ev.width, ev.height));
+    }
+}
+
+/// Snaps every card sprite to its target position, size, and (in the
+/// fallback Text2d label path) font size when the window is resized.
 ///
-/// Calls `sync_cards` with `slide_secs = 0.0` so `update_card_entity` snaps
-/// instantly (line `(cur - target).length() > 1.0 && slide_secs > 0.0` falls
-/// to the snap branch), refreshes the `Sprite` with the new
-/// `layout.card_size` (so cards visibly resize, not just reposition), and
-/// removes any in-flight `CardAnim`.
+/// **In-place mutation only.** Resize is the hot path — events fire per
+/// pixel of drag, so this system cannot afford the despawn/respawn churn
+/// `update_card_entity` does. We mutate `Sprite.custom_size`, `Transform`,
+/// and child `TextFont.font_size` directly, leaving the card image handle,
+/// suit/rank, and `CardLabel` entity untouched. Cards keep their identity
+/// across resizes; only their size and position change. The full repaint
+/// path lives in [`update_card_entity`] and is still used by every non-resize
+/// caller (deals, moves, flips, settings toggles).
+///
+/// **Throttled to ~20 Hz.** [`ResizeThrottle::pending`] is consumed at most
+/// once per [`RESIZE_THROTTLE_SECS`]. When events stop arriving, the next
+/// tick past the throttle window flushes the final size and clears
+/// `pending`, so the steady-state always matches the user's release size.
+///
+/// **Cancels in-flight slides.** Any `CardAnim` is removed so a mid-slide
+/// tween is not retargeted relative to the previous card-size's position.
 ///
 /// The "↺" stock-empty label's `font_size` is derived from
 /// `layout.card_size.x`, so this system also reapplies the stock indicator —
-/// otherwise the label would not rescale on resize once
-/// `update_stock_empty_indicator` stopped firing on resize.
+/// otherwise the label would not rescale on resize.
 ///
-/// Scheduled `.after(LayoutSystem::UpdateOnResize)` so `LayoutResource` has
-/// been refreshed by `table_plugin::on_window_resized` before this runs.
+/// Scheduled after [`collect_resize_events`] (which itself runs after
+/// `LayoutSystem::UpdateOnResize`) so `LayoutResource` reflects the latest
+/// window size before we read it.
 #[allow(clippy::too_many_arguments)]
 fn snap_cards_on_window_resize(
-    mut events: MessageReader<WindowResized>,
     mut commands: Commands,
+    time: Res<Time>,
+    mut throttle: ResMut<ResizeThrottle>,
     game: Option<Res<GameStateResource>>,
     layout: Option<Res<LayoutResource>>,
-    settings: Option<Res<SettingsResource>>,
     card_images: Option<Res<CardImageSet>>,
-    entities: Query<(Entity, &CardEntity, &Transform)>,
-    mut pile_markers: Query<(Entity, &PileMarker, &mut Sprite)>,
+    entities: Query<(Entity, &CardEntity, &mut Sprite, &mut Transform), Without<CardLabel>>,
+    label_query: Query<&mut TextFont, (With<CardLabel>, Without<StockEmptyLabel>)>,
+    mut pile_markers: Query<(Entity, &PileMarker, &mut Sprite), Without<CardEntity>>,
     label_children: Query<(Entity, &ChildOf), With<StockEmptyLabel>>,
 ) {
-    if events.read().next().is_none() {
+    if throttle.pending.is_none() {
         return;
     }
-    let Some(game) = game else { return };
-    let Some(layout) = layout else { return };
+    let now = time.elapsed_secs();
+    if !should_apply_resize(now, throttle.last_applied_secs) {
+        return;
+    }
 
-    let selected_back = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
-    let back_colour = card_back_colour(selected_back);
-    let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
+    let Some(game) = game else {
+        // Nothing to apply — clear pending so we don't busy-loop.
+        throttle.pending = None;
+        return;
+    };
+    let Some(layout) = layout else {
+        throttle.pending = None;
+        return;
+    };
 
-    sync_cards(
-        commands.reborrow(),
+    resize_cards_in_place(
+        &mut commands,
         &game.0,
         &layout.0,
-        0.0,
-        back_colour,
-        color_blind,
-        &entities,
         card_images.as_deref(),
-        selected_back,
+        entities,
+        label_query,
     );
 
     apply_stock_empty_indicator(
@@ -1180,6 +1244,59 @@ fn snap_cards_on_window_resize(
         &label_children,
         &layout.0,
     );
+
+    throttle.last_applied_secs = now;
+    throttle.pending = None;
+}
+
+/// In-place "size-only" sibling of [`sync_cards`]: walks every existing card
+/// entity, updates `Sprite.custom_size` and the snap-`Transform` to match the
+/// fresh layout, and (in fallback solid-colour mode) also updates the child
+/// `TextFont.font_size` of any `CardLabel`. No despawning, no `Sprite`
+/// replacement, no children rebuild — that's the entire point of this path.
+///
+/// Called only from the resize handler. Game-state changes (deals, moves,
+/// flips, settings toggles) still flow through [`sync_cards`] /
+/// [`update_card_entity`], which handle add/remove/repaint correctly.
+///
+/// Any in-flight `CardAnim` slide is removed so a mid-tween card is not
+/// retargeted relative to the previous card-size's position.
+fn resize_cards_in_place(
+    commands: &mut Commands,
+    game: &GameState,
+    layout: &Layout,
+    card_images: Option<&CardImageSet>,
+    mut entities: Query<(Entity, &CardEntity, &mut Sprite, &mut Transform), Without<CardLabel>>,
+    mut label_query: Query<&mut TextFont, (With<CardLabel>, Without<StockEmptyLabel>)>,
+) {
+    let positions = card_positions(game, layout);
+    let pos_by_id: HashMap<u32, (Vec2, f32)> = positions
+        .into_iter()
+        .map(|(c, p, z)| (c.id, (p, z)))
+        .collect();
+
+    for (entity, marker, mut sprite, mut transform) in entities.iter_mut() {
+        let Some(&(pos, z)) = pos_by_id.get(&marker.card_id) else {
+            continue;
+        };
+        sprite.custom_size = Some(layout.card_size);
+        transform.translation.x = pos.x;
+        transform.translation.y = pos.y;
+        transform.translation.z = z;
+        // Cancel any in-flight slide so it doesn't retarget from a stale
+        // mid-animation position computed against the previous card size.
+        commands.entity(entity).remove::<CardAnim>();
+    }
+
+    // Only the solid-colour fallback path uses CardLabel/Text2d overlays;
+    // when PNG faces are loaded the rank/suit are baked into the image and
+    // there is nothing to resize on the label side.
+    if card_images.is_none() {
+        let new_font_size = layout.card_size.x * FONT_SIZE_FRAC;
+        for mut font in label_query.iter_mut() {
+            font.font_size = new_font_size;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1652,6 +1769,154 @@ mod tests {
         assert!(
             actual_span < uniform_span,
             "tighter face-down fan should reduce column span ({actual_span:.1} >= uniform {uniform_span:.1})"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Resize-lag fix — throttle helper + in-place mutation regression tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn should_apply_resize_returns_false_below_threshold() {
+        // 0 elapsed since last apply: still inside the throttle window.
+        assert!(!should_apply_resize(0.0, 0.0));
+        // Just under the threshold: still throttled.
+        assert!(!should_apply_resize(RESIZE_THROTTLE_SECS - 0.001, 0.0));
+    }
+
+    #[test]
+    fn should_apply_resize_returns_true_at_or_past_threshold() {
+        // Exactly at the threshold the work should fire.
+        assert!(should_apply_resize(RESIZE_THROTTLE_SECS, 0.0));
+        // Comfortably past the threshold: definitely fire.
+        assert!(should_apply_resize(1.0, 0.0));
+    }
+
+    #[test]
+    fn should_apply_resize_uses_last_applied_as_baseline() {
+        // After an apply at t=10.0, a subsequent check at t=10.04 is still
+        // throttled (under the 50 ms window).
+        assert!(!should_apply_resize(10.04, 10.0));
+        // At t=10.05 the next apply is allowed.
+        assert!(should_apply_resize(10.05, 10.0));
+    }
+
+    /// Helper: drive enough `app.update()` ticks at 200 ms each to comfortably
+    /// exceed the throttle window. `Time<Virtual>` clamps each delta to
+    /// `max_delta` (default 250 ms) regardless of the requested step, so we
+    /// step in 200 ms slices.
+    fn advance_past_resize_throttle(app: &mut App) {
+        use bevy::time::TimeUpdateStrategy;
+        use std::time::Duration;
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(0.2),
+        ));
+        // One tick to advance Time, plus one extra so the snap system runs
+        // after the throttle window has elapsed.
+        app.update();
+        app.update();
+    }
+
+    fn fire_window_resize(app: &mut App, width: f32, height: f32) {
+        // Any Entity will do — the snap system reads only width/height.
+        let window = bevy::ecs::entity::Entity::from_raw_u32(0)
+            .expect("Entity::from_raw_u32(0) is a valid placeholder");
+        app.world_mut().write_message(WindowResized {
+            window,
+            width,
+            height,
+        });
+    }
+
+    #[test]
+    fn resize_does_not_despawn_card_labels() {
+        // Spawn a fresh app, capture the current set of CardLabel entity IDs,
+        // fire a WindowResized, run the throttled snap, and assert *every*
+        // captured label still exists. The whole point of the in-place resize
+        // path is that it doesn't despawn-and-respawn label children — old
+        // entity IDs must remain alive.
+        let mut app = app();
+
+        let labels_before: std::collections::HashSet<bevy::prelude::Entity> = app
+            .world_mut()
+            .query_filtered::<bevy::prelude::Entity, With<CardLabel>>()
+            .iter(app.world())
+            .collect();
+        assert!(
+            !labels_before.is_empty(),
+            "fixture should have spawned CardLabel children in the fallback solid-colour path"
+        );
+
+        fire_window_resize(&mut app, 1024.0, 768.0);
+        advance_past_resize_throttle(&mut app);
+
+        let labels_after: std::collections::HashSet<bevy::prelude::Entity> = app
+            .world_mut()
+            .query_filtered::<bevy::prelude::Entity, With<CardLabel>>()
+            .iter(app.world())
+            .collect();
+
+        // Same set of entities — no entity was despawned. (Bevy reuses
+        // indices but bumps generations on despawn, so direct Entity equality
+        // is sufficient here.)
+        for e in &labels_before {
+            assert!(
+                labels_after.contains(e),
+                "CardLabel entity {e:?} was despawned by the resize handler — \
+                 expected the in-place path to leave label entities untouched"
+            );
+        }
+    }
+
+    #[test]
+    fn resize_in_place_updates_card_label_font_size() {
+        // Capture an arbitrary CardLabel's TextFont.font_size before resize,
+        // fire a WindowResized to a *smaller* window, run the throttled snap,
+        // and assert the font_size shrank. This proves the in-place path
+        // actually mutates the existing TextFont (rather than skipping it or
+        // falling back to despawn/respawn).
+        let mut app = app();
+
+        // Read the first CardLabel's font size.
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&TextFont, With<CardLabel>>();
+        let before = q
+            .iter(app.world())
+            .next()
+            .expect("fixture should have at least one CardLabel")
+            .font_size;
+        assert!(before > 0.0, "baseline font size must be positive, got {before}");
+
+        // Resize to a window smaller than the default fixture so the
+        // computed font size is unambiguously smaller.
+        fire_window_resize(&mut app, 800.0, 600.0);
+        advance_past_resize_throttle(&mut app);
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&TextFont, With<CardLabel>>();
+        let after = q
+            .iter(app.world())
+            .next()
+            .expect("CardLabel must still exist after in-place resize")
+            .font_size;
+
+        assert!(
+            after < before,
+            "smaller window should shrink CardLabel font size in place \
+             (before={before}, after={after})"
+        );
+
+        // Sanity-check: the new font size matches FONT_SIZE_FRAC × the
+        // post-resize card width, so the in-place path is using the
+        // refreshed Layout.
+        let expected_layout = crate::layout::compute_layout(Vec2::new(800.0, 600.0));
+        let expected = expected_layout.card_size.x * FONT_SIZE_FRAC;
+        assert!(
+            (after - expected).abs() < 1e-3,
+            "after-resize font size should equal layout.card_size.x * FONT_SIZE_FRAC \
+             (got {after}, expected {expected})"
         );
     }
 }
