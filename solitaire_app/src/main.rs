@@ -3,7 +3,7 @@ use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, WindowPosition};
+use bevy::window::{MonitorSelection, PresentMode, WindowPosition};
 use solitaire_data::{load_settings_from, provider_for_backend, settings_file_path, Settings};
 use solitaire_engine::{
     AchievementPlugin, AnimationPlugin, AudioPlugin, AutoCompletePlugin, CardAnimationPlugin,
@@ -50,6 +50,13 @@ fn main() {
                         name: Some("solitaire-quest".into()),
                         resolution: (1280u32, 800u32).into(),
                         position: WindowPosition::Centered(MonitorSelection::Primary),
+                        // AutoNoVsync prefers Mailbox (triple-buffered) and
+                        // falls back to Immediate, eliminating the vsync stall
+                        // that AutoVsync produces during continuous window
+                        // resize on X11 / Wayland. The game's frame budget is
+                        // small enough that a few stray dropped frames from
+                        // disabling vsync are imperceptible.
+                        present_mode: PresentMode::AutoNoVsync,
                         resize_constraints: bevy::window::WindowResizeConstraints {
                             min_width: 800.0,
                             min_height: 600.0,
