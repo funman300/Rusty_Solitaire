@@ -1,4 +1,5 @@
 /target
+/.sccache-cache
 *.db
 *.db-shm
 *.db-wal
