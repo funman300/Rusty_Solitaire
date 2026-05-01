@@ -153,13 +153,28 @@ pub fn rasterize_svg(svg_bytes: &[u8], target: UVec2) -> Result<Image, SvgLoader
 }
 
 /// Returns a process-wide font database populated with the OS-installed
-/// fonts the user has available. Initialised lazily on first SVG that
-/// references text, then shared (via `Arc`) across every subsequent
-/// rasterisation. `usvg::Options::default()` ships an empty `fontdb`,
-/// so without this call any text glyph in an SVG renders with no font
-/// match — the visible symptom on the bundled hayeah artwork is the
-/// "No match for Arial font-family" warn spam plus glyphs that fall
-/// through to whatever shape-only path usvg uses for missing fonts.
+/// fonts plus the bundled FiraMono-Medium face. Initialised lazily on
+/// first SVG that references text, then shared (via `Arc`) across every
+/// subsequent rasterisation.
+///
+/// `usvg::Options::default()` ships an empty `fontdb`, so without this
+/// call any text glyph in an SVG renders with no font match — the
+/// visible symptom on the bundled hayeah artwork is the "No match for
+/// Arial font-family" warn spam plus glyphs that fall through to
+/// whatever shape-only path usvg uses for missing fonts.
+///
+/// **Bundled font as last-resort fallback.** Loading only system fonts
+/// breaks on minimal Linux installs, fresh Wayland sessions, and
+/// chroots where fontconfig has nothing usable to serve as
+/// `sans-serif`. The cards on the bundled hayeah theme reference
+/// `Bitstream Vera Sans` and `Arial` by name — if neither is installed
+/// AND the resolver's CSS-generic fallbacks (`SansSerif`/`Serif`) also
+/// don't resolve, the rank/suit text vanishes entirely. Loading the
+/// project's bundled FiraMono via `include_bytes!()` and pinning it as
+/// the generic-family target guarantees a working last-resort glyph
+/// source on every machine. This was the cause of "card font didn't
+/// carry over" on a fresh second-machine pull.
+///
 /// `load_system_fonts` is comparatively expensive (~50–200 ms on a
 /// typical desktop) so we only pay it once for the lifetime of the
 /// process, gated by `OnceLock`.
@@ -168,6 +183,20 @@ fn shared_fontdb() -> Arc<fontdb::Database> {
     DB.get_or_init(|| {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        // The bundled FiraMono lives at the workspace root, so the
+        // include_bytes! path goes up three levels from this source
+        // file (assets → src → solitaire_engine → workspace root).
+        db.load_font_data(include_bytes!("../../../assets/fonts/main.ttf").to_vec());
+        // Pin the CSS generics to the bundled face as the resolution
+        // target. Named-family lookups (Bitstream Vera Sans, Arial)
+        // still try the system db first; only when those miss does
+        // the resolver fall through to SansSerif / Serif, and now
+        // those are guaranteed to land on FiraMono.
+        db.set_sans_serif_family("Fira Mono");
+        db.set_serif_family("Fira Mono");
+        db.set_monospace_family("Fira Mono");
+        db.set_cursive_family("Fira Mono");
+        db.set_fantasy_family("Fira Mono");
         Arc::new(db)
     })
     .clone()
