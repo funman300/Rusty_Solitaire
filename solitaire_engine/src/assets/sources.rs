@@ -83,6 +83,78 @@ const DEFAULT_THEME_MANIFEST_PATH: &str = "solitaire_engine/assets/themes/defaul
 const DEFAULT_THEME_MANIFEST_BYTES: &[u8] =
     include_bytes!("../../assets/themes/default/theme.ron");
 
+/// Generates a `(stable_path, bytes)` entry for one default-theme
+/// SVG so the bulk-embed table below stays declarative. The path
+/// matches what `theme.ron` references; `include_bytes!` resolves
+/// relative to this source file.
+macro_rules! embed_default_svg {
+    ($name:literal) => {
+        (
+            concat!("solitaire_engine/assets/themes/default/", $name),
+            include_bytes!(concat!("../../assets/themes/default/", $name)) as &[u8],
+        )
+    };
+}
+
+/// Every default-theme SVG file bundled into the binary. Adding a new
+/// face / back artwork is a single `embed_default_svg!(...)` line —
+/// the populate function below iterates this table.
+const DEFAULT_THEME_SVGS: &[(&str, &[u8])] = &[
+    embed_default_svg!("back.svg"),
+    embed_default_svg!("clubs_ace.svg"),
+    embed_default_svg!("clubs_2.svg"),
+    embed_default_svg!("clubs_3.svg"),
+    embed_default_svg!("clubs_4.svg"),
+    embed_default_svg!("clubs_5.svg"),
+    embed_default_svg!("clubs_6.svg"),
+    embed_default_svg!("clubs_7.svg"),
+    embed_default_svg!("clubs_8.svg"),
+    embed_default_svg!("clubs_9.svg"),
+    embed_default_svg!("clubs_10.svg"),
+    embed_default_svg!("clubs_jack.svg"),
+    embed_default_svg!("clubs_queen.svg"),
+    embed_default_svg!("clubs_king.svg"),
+    embed_default_svg!("diamonds_ace.svg"),
+    embed_default_svg!("diamonds_2.svg"),
+    embed_default_svg!("diamonds_3.svg"),
+    embed_default_svg!("diamonds_4.svg"),
+    embed_default_svg!("diamonds_5.svg"),
+    embed_default_svg!("diamonds_6.svg"),
+    embed_default_svg!("diamonds_7.svg"),
+    embed_default_svg!("diamonds_8.svg"),
+    embed_default_svg!("diamonds_9.svg"),
+    embed_default_svg!("diamonds_10.svg"),
+    embed_default_svg!("diamonds_jack.svg"),
+    embed_default_svg!("diamonds_queen.svg"),
+    embed_default_svg!("diamonds_king.svg"),
+    embed_default_svg!("hearts_ace.svg"),
+    embed_default_svg!("hearts_2.svg"),
+    embed_default_svg!("hearts_3.svg"),
+    embed_default_svg!("hearts_4.svg"),
+    embed_default_svg!("hearts_5.svg"),
+    embed_default_svg!("hearts_6.svg"),
+    embed_default_svg!("hearts_7.svg"),
+    embed_default_svg!("hearts_8.svg"),
+    embed_default_svg!("hearts_9.svg"),
+    embed_default_svg!("hearts_10.svg"),
+    embed_default_svg!("hearts_jack.svg"),
+    embed_default_svg!("hearts_queen.svg"),
+    embed_default_svg!("hearts_king.svg"),
+    embed_default_svg!("spades_ace.svg"),
+    embed_default_svg!("spades_2.svg"),
+    embed_default_svg!("spades_3.svg"),
+    embed_default_svg!("spades_4.svg"),
+    embed_default_svg!("spades_5.svg"),
+    embed_default_svg!("spades_6.svg"),
+    embed_default_svg!("spades_7.svg"),
+    embed_default_svg!("spades_8.svg"),
+    embed_default_svg!("spades_9.svg"),
+    embed_default_svg!("spades_10.svg"),
+    embed_default_svg!("spades_jack.svg"),
+    embed_default_svg!("spades_queen.svg"),
+    embed_default_svg!("spades_king.svg"),
+];
+
 /// Registers asset sources that must be in place *before*
 /// `AssetPlugin` is built.
 ///
@@ -128,26 +200,39 @@ impl Plugin for AssetSourcesPlugin {
 /// unit test below can exercise it without spinning up a full Bevy
 /// `App` with `AssetPlugin`.
 ///
-/// **Adding files to the bundled default theme** is a single edit
-/// per file: add an `include_bytes!` constant that points at the file
-/// under `solitaire_engine/assets/themes/default/`, then add a
-/// matching `registry.insert_asset(...)` call here. Keep the
-/// `asset_path` argument exactly the relative path that the manifest
-/// references (e.g. `solitaire_engine/assets/themes/default/back.svg`).
+/// **Adding files to the bundled default theme** is a single edit:
+/// append one `embed_default_svg!("filename.svg")` line to the
+/// `DEFAULT_THEME_SVGS` table above. The file resolves relative to
+/// `solitaire_engine/assets/themes/default/` and registers under
+/// the matching `embedded://` URL automatically.
 pub fn populate_embedded_default_theme(app: &mut App) {
     let registry = app
         .world_mut()
         .get_resource_or_insert_with(EmbeddedAssetRegistry::default);
 
-    // `full_path` is only consulted by the optional
-    // `embedded_watcher` cargo feature (which we don't enable). Use
-    // the manifest's logical workspace path so a future debugger
-    // session sees a sensible source-of-truth string.
+    // The manifest first — its asset URL is the entry point everything
+    // else (`set_theme`, the registry, the loader) references via
+    // `DEFAULT_THEME_MANIFEST_URL`.
+    //
+    // `full_path` is only consulted by the optional `embedded_watcher`
+    // cargo feature (which we don't enable). Use the manifest's
+    // logical workspace path so a future debugger session sees a
+    // sensible source-of-truth string.
     registry.insert_asset(
         std::path::PathBuf::from(DEFAULT_THEME_MANIFEST_PATH),
         std::path::Path::new(DEFAULT_THEME_MANIFEST_PATH),
         DEFAULT_THEME_MANIFEST_BYTES,
     );
+
+    // Then every face + back SVG. The manifest references each by the
+    // same relative path used here.
+    for (path, bytes) in DEFAULT_THEME_SVGS {
+        registry.insert_asset(
+            std::path::PathBuf::from(*path),
+            std::path::Path::new(*path),
+            *bytes,
+        );
+    }
 }
 
 #[cfg(test)]
