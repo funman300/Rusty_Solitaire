@@ -107,6 +107,12 @@ impl AssetLoader for SvgLoader {
 pub fn rasterize_svg(svg_bytes: &[u8], target: UVec2) -> Result<Image, SvgLoaderError> {
     let opt = usvg::Options {
         fontdb: shared_fontdb(),
+        // Default for SVG elements without an explicit `font-family` —
+        // resolved by fontdb's generic-family alias to whatever
+        // sans-serif the system has installed (DejaVu Sans on most
+        // Linux installs, Helvetica on macOS, Arial on Windows).
+        font_family: "sans-serif".to_string(),
+        font_resolver: lenient_font_resolver(),
         ..Default::default()
     };
     let tree = usvg::Tree::from_data(svg_bytes, &opt)?;
@@ -167,6 +173,54 @@ fn shared_fontdb() -> Arc<fontdb::Database> {
     .clone()
 }
 
+/// Builds a `usvg::FontResolver` that mirrors the upstream default
+/// `select_font` but appends the CSS generics `sans-serif` and `serif`
+/// to every query's family list. The upstream selector only appends
+/// `serif` and emits a `log::warn!` when its `fontdb.query` returns
+/// `None`; on systems without the named families requested by the
+/// SVG (e.g. Arial on Linux), every text node bridges that warn into
+/// our tracing output. By appending two generics — both resolved via
+/// fontconfig (or fontdb's built-in defaults) to whatever sans-serif /
+/// serif the user has installed — we guarantee the query finds *some*
+/// face, so the warn branch is never taken. The visible behaviour is
+/// "use the system's default font when the requested one isn't
+/// installed", which is the intent here.
+///
+/// The fallback `select_fallback` is kept as the upstream default —
+/// per-character fallback (for combining marks, scripts the primary
+/// face doesn't cover) doesn't have the same warn-spam pathology.
+fn lenient_font_resolver() -> usvg::FontResolver<'static> {
+    use usvg::{FontFamily, FontResolver};
+
+    usvg::FontResolver {
+        select_font: Box::new(|font, db| {
+            let mut families: Vec<fontdb::Family> = font
+                .families()
+                .iter()
+                .map(|f| match f {
+                    FontFamily::Serif => fontdb::Family::Serif,
+                    FontFamily::SansSerif => fontdb::Family::SansSerif,
+                    FontFamily::Cursive => fontdb::Family::Cursive,
+                    FontFamily::Fantasy => fontdb::Family::Fantasy,
+                    FontFamily::Monospace => fontdb::Family::Monospace,
+                    FontFamily::Named(s) => fontdb::Family::Name(s),
+                })
+                .collect();
+            families.push(fontdb::Family::SansSerif);
+            families.push(fontdb::Family::Serif);
+
+            let query = fontdb::Query {
+                families: &families,
+                weight: fontdb::Weight(font.weight()),
+                stretch: font.stretch().into(),
+                style: font.style().into(),
+            };
+            db.query(&query)
+        }),
+        select_fallback: FontResolver::default_fallback_selector(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +253,28 @@ mod tests {
     fn rejects_zero_dimension() {
         let err = rasterize_svg(TEST_SVG, UVec2::new(0, 100)).unwrap_err();
         assert!(matches!(err, SvgLoaderError::PixmapAlloc(0, 100)));
+    }
+
+    /// SVG with a text node that requests an unlikely-installed family
+    /// ("FontThatProbablyDoesNotExist"). Exercises `lenient_font_resolver`'s
+    /// "fall through to system sans-serif/serif" behaviour: rasterising
+    /// must succeed, never panic, and the test runner's log output must
+    /// not contain `No match for ... font-family.` for the named family.
+    /// Catching the warn directly would require a tracing subscriber; we
+    /// rely on `cargo test`'s default behaviour of capturing stdout/stderr
+    /// and surfacing only failing tests' output, plus visual review of
+    /// the suite's log stream.
+    const TEST_SVG_WITH_TEXT: &[u8] = br##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" width="200" height="300">
+  <text x="100" y="150" style="font-family:FontThatProbablyDoesNotExist;font-size:32">A</text>
+</svg>"##;
+
+    #[test]
+    fn rasterizes_svg_with_unmatched_font_family() {
+        let image =
+            rasterize_svg(TEST_SVG_WITH_TEXT, UVec2::new(64, 96)).expect("rasterisation");
+        assert_eq!(image.size().x, 64);
+        assert_eq!(image.size().y, 96);
     }
 
     #[test]
