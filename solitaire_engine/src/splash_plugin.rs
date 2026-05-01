@@ -42,6 +42,7 @@ use bevy::input::touch::Touches;
 use bevy::prelude::*;
 
 use crate::font_plugin::FontResource;
+use crate::settings_plugin::SettingsResource;
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_BASE, MOTION_SPLASH_FADE_SECS, MOTION_SPLASH_TOTAL_SECS, TEXT_SECONDARY,
     TYPE_CAPTION, TYPE_DISPLAY, VAL_SPACE_2, Z_SPLASH,
@@ -108,7 +109,25 @@ struct SplashSubtitle;
 /// at full alpha (the first `advance_splash` tick will overwrite the
 /// alpha based on age), centres a "Solitaire Quest" title in
 /// [`ACCENT_PRIMARY`], and pins a small build-version line below.
-fn spawn_splash(mut commands: Commands, font_res: Option<Res<FontResource>>) {
+///
+/// **Skipped on subsequent launches.** If `SettingsResource` reports
+/// `first_run_complete == true`, the player has already seen the brand
+/// beat at least once and we go straight to gameplay — having to wait
+/// 1.6 s on every launch wears thin fast. The splash still shows on
+/// first run, after a save reset (settings.json deleted), and under
+/// `MinimalPlugins` (no `SettingsResource` registered) so the test
+/// fixture observes the same spawn it always did.
+fn spawn_splash(
+    mut commands: Commands,
+    font_res: Option<Res<FontResource>>,
+    settings: Option<Res<SettingsResource>>,
+) {
+    if let Some(settings) = settings.as_deref()
+        && settings.0.first_run_complete
+    {
+        return;
+    }
+
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
     let title_font = TextFont {
         font: font_handle.clone(),
@@ -368,6 +387,47 @@ mod tests {
             count_splash_roots(&mut app),
             1,
             "SplashRoot must exist after Startup"
+        );
+    }
+
+    #[test]
+    fn splash_skipped_when_first_run_complete() {
+        use solitaire_data::Settings;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins).add_plugins(SplashPlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+        // Insert a SettingsResource that says "I've been here before"
+        // before any Startup system runs. spawn_splash should observe
+        // first_run_complete and decline to spawn the overlay.
+        app.insert_resource(SettingsResource(Settings {
+            first_run_complete: true,
+            ..Settings::default()
+        }));
+        app.update();
+        assert_eq!(
+            count_splash_roots(&mut app),
+            0,
+            "SplashRoot must NOT spawn on subsequent launches"
+        );
+    }
+
+    #[test]
+    fn splash_still_shows_when_first_run_incomplete() {
+        use solitaire_data::Settings;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins).add_plugins(SplashPlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.insert_resource(SettingsResource(Settings {
+            first_run_complete: false,
+            ..Settings::default()
+        }));
+        app.update();
+        assert_eq!(
+            count_splash_roots(&mut app),
+            1,
+            "SplashRoot must spawn for first-run players (first_run_complete = false)"
         );
     }
 
