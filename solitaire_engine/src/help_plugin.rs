@@ -95,6 +95,17 @@ const CONTROL_SECTIONS: &[ControlSection] = &[
         ],
     },
     ControlSection {
+        title: "Mouse",
+        rows: &[
+            ControlRow { keys: "Double-click", description: "Auto-move card to its best destination" },
+            ControlRow { keys: "Right-click", description: "Highlight legal destinations briefly" },
+            ControlRow {
+                keys: "Hold RMB",
+                description: "Open radial menu — release over an icon to quick-drop",
+            },
+        ],
+    },
+    ControlSection {
         title: "Keyboard drag",
         rows: &[
             ControlRow { keys: "Tab", description: "Focus next draggable card" },

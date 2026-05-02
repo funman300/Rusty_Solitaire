@@ -10,9 +10,9 @@ use solitaire_engine::{
     AudioPlugin, AutoCompletePlugin, CardAnimationPlugin, CardPlugin, ChallengePlugin,
     CursorPlugin, DailyChallengePlugin, FeedbackAnimPlugin, FontPlugin, GamePlugin, HelpPlugin,
     HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin, OnboardingPlugin, PausePlugin,
-    ProfilePlugin, ProgressPlugin, SelectionPlugin, SettingsPlugin, SplashPlugin, StatsPlugin,
-    SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin, TimeAttackPlugin, UiFocusPlugin,
-    UiModalPlugin, UiTooltipPlugin, WeeklyGoalsPlugin, WinSummaryPlugin,
+    ProfilePlugin, ProgressPlugin, RadialMenuPlugin, SelectionPlugin, SettingsPlugin, SplashPlugin,
+    StatsPlugin, SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin, TimeAttackPlugin,
+    UiFocusPlugin, UiModalPlugin, UiTooltipPlugin, WeeklyGoalsPlugin, WinSummaryPlugin,
 };
 
 fn main() {
@@ -111,6 +111,7 @@ fn main() {
         .add_plugins(CardPlugin)
         .add_plugins(CursorPlugin)
         .add_plugins(InputPlugin)
+        .add_plugins(RadialMenuPlugin)
         .add_plugins(SelectionPlugin)
         .add_plugins(AnimationPlugin)
         .add_plugins(FeedbackAnimPlugin)

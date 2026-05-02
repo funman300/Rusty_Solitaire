@@ -23,6 +23,7 @@ pub mod layout;
 pub mod onboarding_plugin;
 pub mod pause_plugin;
 pub mod profile_plugin;
+pub mod radial_menu;
 pub mod settings_plugin;
 pub mod progress_plugin;
 pub mod resources;
@@ -104,6 +105,10 @@ pub use input_plugin::InputPlugin;
 pub use onboarding_plugin::{OnboardingPlugin, OnboardingScreen};
 pub use pause_plugin::{ForfeitConfirmScreen, PausePlugin, PauseScreen, PausedResource};
 pub use profile_plugin::{ProfilePlugin, ProfileScreen};
+pub use radial_menu::{
+    legal_destinations_for_card, radial_anchor_for_index, radial_hovered_index, RadialIcon,
+    RadialMenuPlugin, RightClickRadialState, Z_RADIAL_MENU,
+};
 pub use settings_plugin::{
     PendingWindowGeometry, SettingsChangedEvent, SettingsPlugin, SettingsResource, SettingsScreen,
     SFX_STEP, WINDOW_GEOMETRY_DEBOUNCE_SECS,
