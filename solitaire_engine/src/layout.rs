@@ -26,7 +26,11 @@ pub enum LayoutSystem {
 pub const MIN_WINDOW: Vec2 = Vec2::new(800.0, 600.0);
 
 /// Aspect ratio (height / width) of a standard playing card.
-const CARD_ASPECT: f32 = 1.4;
+///
+/// Matches the bundled hayeah/playing-cards-assets SVG dimensions
+/// (167.087 × 242.667 → 1.4523). Pre-v0.11 the constant was 1.4,
+/// which rendered the cards ~3.6 % squashed vertically.
+const CARD_ASPECT: f32 = 1.4523;
 
 /// Fraction of card height used as vertical padding between the top row and
 /// the tableau row.
@@ -59,7 +63,7 @@ pub const TABLE_COLOUR: [f32; 3] = [0.059, 0.322, 0.196];
 pub struct Layout {
     /// Width and height of a single card, in world units (Bevy 2D world-space).
     ///
-    /// `x` is the card width; `y` is the card height (always `x * 1.4`).
+    /// `x` is the card width; `y` is the card height (`x * CARD_ASPECT`).
     /// All pile positions and fan offsets are derived from this value.
     pub card_size: Vec2,
     /// Centre position of each pile, in 2D world coordinates.
@@ -80,7 +84,8 @@ pub struct Layout {
 ///     column (13 face-up cards, see [`MAX_TABLEAU_CARDS`]) inside the
 ///     window with a bottom margin equal to `h_gap`. Limiter on tall/narrow
 ///     windows.
-/// - `card_height = card_width * 1.4`.
+/// - `card_height = card_width * CARD_ASPECT` (1.4523, matches the
+///   bundled hayeah card art's natural SVG dimensions).
 /// - Horizontal gap `h_gap = card_width / 4.0`.
 /// - Top row (stock, waste, 4 foundations) aligns with tableau columns
 ///   0, 1, 3, 4, 5, 6 — column 2 is intentionally empty to separate the
