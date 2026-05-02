@@ -24,7 +24,7 @@ The card-theme system, HUD restructure, modal scaffold, and the four big UX feel
 
 ### Canonical remote
 
-`github.com/funman300/Rusty_Solitare` is the canonical repo. Always push there.
+`github.com/funman300/Rusty_Solitaire` is the canonical repo. Always push there. (Earlier sessions used `Rusty_Solitare` — single-i typo — as the repo name; the rename to `Rusty_Solitaire` happened in session 7. Local clone directories may still be named `Rusty_Solitare`; that's just a directory name and works fine.)
 
 ## Session 7 (shipped 2026-05-02)
 
@@ -66,7 +66,8 @@ Seven phases landed across `b8fb3fb` → `924a1e2`. End-to-end:
 
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
-Working directory: <Rusty_Solitare clone path on this machine>.
+Working directory: <Rusty_Solitaire clone path on this machine — local
+directory may still be named Rusty_Solitare from earlier; that's fine>.
 Branch: master. Direction is OPEN — the session-6 UX punch list is
 fully shipped. The player will choose between cutting v0.11.0, doing
 release prep (README/CHANGELOG/packaging), or starting a new UX
