@@ -1,20 +1,20 @@
 # Solitaire Quest — UX Overhaul Session Handoff
 
-**Last updated:** 2026-05-01 (session 6) — Six commits landed today on top of `v0.10.0`: four bug fixes surfaced by the player's first end-to-end smoke test of the embedded-theme path, plus a HUD-band layout reservation and an auto-fade for the action button bar. Direction has shifted from "cut a release" to "keep iterating on UX."
+**Last updated:** 2026-05-02 (session 7) — UX iteration round complete: every item from session 6's UX punch list has shipped, plus a font-fallback fix surfaced by a second-machine smoke test. Six commits on top of session 6's `c4970b1`. Direction now opens for the next round — release prep or another UX pass, the player's call.
 
 ## Status at pause
 
-- **HEAD:** `c4970b1`. **Pushed to GitHub** (`origin = https://github.com/funman300/Rusty_Solitare.git`).
+- **HEAD:** `655dfde`. Local master is **3 commits ahead** of `origin/master` (`f6c9166`, `f712b89`, `655dfde` unpushed; `fdb6c2e` and `95df542` already pushed).
 - **Working tree:** clean. (`CARD_PLAN.md` is untracked but intentionally so — it's a plan doc, not source.)
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings` clean.
-- **Tests:** **962 passed / 0 failed / 9 ignored** across the workspace.
-- **Tags on origin:** `v0.9.0`, `v0.10.0`. Local-only stale tag `v0.1.0` (points at a doc commit far behind HEAD — safe to `git tag -d v0.1.0`).
+- **Tests:** **982 passed / 0 failed** across the workspace (+20 from session 6's 962 baseline).
+- **Tags on origin:** `v0.9.0`, `v0.10.0`. Stale local-only `v0.1.0` is still safe to `git tag -d v0.1.0`.
 
 ## Where we are
 
-The card-theme system, HUD restructure, and modal scaffold are all complete. Today's session was a player-smoke-test pass that surfaced four bugs (theme assets not loading, an exit-time false-warn, two flavours of usvg font-substitution noise) plus two cosmetic wins (HUD crowding the cards, action buttons cluttering the play surface even when idle). All shipped.
+Session 6's UX punch list was four items. All four shipped today, plus an unrelated font-fallback fix from a second-machine smoke test.
 
-The player explicitly said **the direction is more UX iteration, not release prep** — so the v0.11.0 cut and desktop packaging are deferred until they say otherwise.
+The card-theme system, HUD restructure, modal scaffold, and the four big UX feel items (foundations, drop shadows, drop highlights, stock badge) are all in. Direction is open — the deferred release-prep items (`v0.11.0` cut, README/CHANGELOG refresh, desktop packaging) are still on the table, and a fresh round of UX iteration is also available.
 
 ### Design direction (unchanged)
 
@@ -24,42 +24,34 @@ The player explicitly said **the direction is more UX iteration, not release pre
 
 ### Canonical remote
 
-`github.com/funman300/Rusty_Solitare` is the canonical repo. Earlier in this session a self-hosted Gitea remote (`git.aleshym.co/funman300/Rusty_Solitare`) was the source of truth on one machine, which caused commits to silently not reach the machine running the game. **Always push to GitHub.**
+`github.com/funman300/Rusty_Solitare` is the canonical repo. Always push there.
 
-## Session 6 (shipped 2026-05-01)
+## Session 7 (shipped 2026-05-02)
 
 | Area | Commit | What landed |
 |---|---|---|
-| Theme loader | `ab1d098` | `AssetPath::resolve` (concatenates) → `resolve_embed` (RFC 1808 sibling resolution). Was producing paths like `…/theme.ron/hearts_4.svg` and failing to load every face SVG. |
-| Sync exit log | `9a9026e` | `push_on_exit` now silently no-ops on `LocalOnlyProvider`'s `UnsupportedPlatform` instead of warn-spamming "sync push on exit failed" every shutdown. Mirrors the pull path's existing handling. |
-| Font warn (filter) | `78cf30e` | Initial fix: populated usvg fontdb with system fonts + LogPlugin filter. Insufficient on its own (warnings still fired). Superseded by next commit. |
-| Font warn (resolver) | `efa063f` | Custom `usvg::FontResolver.select_font` appends `Family::SansSerif` and `Family::Serif` to every query so unmatched named families (Arial on Linux) silently fall through to whatever sans-serif fontconfig points at. Reverts the LogPlugin filter. |
-| HUD band | `2c72e1f` | `layout::HUD_BAND_HEIGHT = 64` reserved at top; `top_y` shifts down. Translucent `BG_HUD_BAND` strip painted via `hud_plugin::spawn_hud_band`. Cards no longer crowd the action buttons / score text. |
-| Action fade | `c4970b1` | `HudActionFade` resource + cursor-tracked auto-hide. Buttons fade out when cursor is below `HUD_BAND_HEIGHT + 32 px`, fade back in when it returns. Lerp at 6/sec ≈ 167 ms transition. Applied in `Last` schedule so paint_action_buttons can't clobber. |
+| Font fallback | `fdb6c2e` | `shared_fontdb` now `include_bytes!()`s `assets/fonts/main.ttf` (FiraMono) and pins every CSS generic to `"Fira Mono"` so unmatched named families on minimal Linux installs / fresh Wayland sessions / chroots don't drop card rank/suit text. Surfaced when a second-machine pull rendered cards without glyphs. |
+| Unlock foundations | `95df542` | `PileType::Foundation(Suit)` → `Foundation(u8)` (slot 0..3). `Pile::claimed_suit()` derives the claim from the bottom card — no separate field, no claim-stuck-after-undo class of bugs. `can_place_on_foundation` drops its suit parameter. `next_auto_complete_move` prefers a slot whose claimed suit matches the candidate before falling back to the first empty slot for an Ace. Empty foundation markers render as plain placeholders (no "C/D/H/S"). HUD selection label and hint toast read `claimed_suit()` and fall through to "Foundation N" / "move to foundation" when the slot is empty. Save-format invalidation: `GameState.schema_version` bumped 1 → 2; old `game_state.json` files silently fall through to "fresh game on launch." Stats / progress / achievements / settings live in separate files and are unaffected. 9 new tests. |
+| Drop overlay | `f6c9166` | The pre-existing `update_drop_highlights` system tinted `PileMarker` sprites green for valid drops, but markers were occluded by stacked cards — invisible during real play. New `update_drop_target_overlays` spawns a soft-fill + 3 px outlined box ABOVE cards for every legal target (full fanned column for tableaux, card-sized for foundations / empty tableaux). `Z_DROP_OVERLAY = 50` sits above static cards but below `DRAG_Z = 500` so the dragged card never gets occluded. Reuses `STATE_SUCCESS` hue. The original marker-tint system is untouched. 3 new tests. |
+| Drop shadows | `f712b89` | Each `CardEntity` spawns a `CardShadow` child sprite — neutral black at 25 % alpha, sized `card_size + 4 px`, offset `(2, -3)`, local z `-0.05`. `update_card_shadows_on_drag` snaps shadows in `DragState.cards` to a lifted state (40 % alpha, `(4, -6)` offset, `(8, 8)` padding). `resize_cards_in_place` extended to keep shadows cheap on window resize. `update_card_entity`'s `despawn_related` is followed by a fresh `add_card_shadow_child` so flips / theme swaps re-attach shadows. Pure `card_shadow_params(is_dragged)` helper unit-tested. 4 new tests. |
+| Stock badge | `655dfde` | A small `·N` chip at the top-right corner of the stock pile shows the remaining count. `update_stock_count_badge` spawns a top-level world entity whose `Transform.translation` is recomputed each tick from `LayoutResource`, so window resize / theme swap don't strand it. Hides via `Visibility::Hidden` when the stock empties — the existing `↺` `StockEmptyLabel` takes over and they never co-render. `Z_STOCK_BADGE = 30` sits between cards and `Z_DROP_OVERLAY`. 4 new tests. |
 
-## Open punch list — UX iteration (current direction)
+## Open punch list — release prep (still deferred unless player chooses now)
 
-The player's request, in priority order they've expressed:
+1. **Cut `v0.11.0`** — meaningful slice since `v0.10.0`: full card-theme system (CARD_PLAN phases 1–7 + theme picker + hayeah art), HUD overhaul (band + fade), session 6's four bug fixes, and session 7's font fallback + four UX feel wins. (`git tag -d v0.1.0` first to clean up the stale local tag.)
+2. **README + CHANGELOG refresh** — README was last touched at `a6b8348` before the Settings picker shipped; doesn't mention card themes, the auto-fade, or any of session 7's UX work.
+3. **Desktop packaging** per `ARCHITECTURE.md §17`. The Arch PKGBUILD exists in `/home/manage/solitaire-quest-pkgbuild/` (separate repo, no remote yet). Pending: app icon, macOS `.icns` + notarisation cert, Windows `.ico` + Authenticode cert, AppImage recipe.
 
-1. **Unlock foundations** — currently `PileType::Foundation(Suit)` pre-assigns each foundation to a fixed suit (the slots show "C / D / H / S" placeholders). Player wants any Ace to land in any empty foundation; the slot then claims that suit until empty again. Cleanest path: change variant to `Foundation(u8)` (slot 0–3) and track the claimed suit as runtime state on `Pile`. Touches ~80 call sites in `solitaire_core` + `solitaire_engine`. Does NOT cross `solitaire_sync` (PileType is not transmitted), so no API break. **One-time invalidation of in-progress `game_state.json` saves on first launch after upgrade.**
-2. **Card drop shadows against the felt** — cards currently read as flat stickers. Subtle 2-3 px shadow under each card, slightly stronger when picked up. "Make the play surface feel physical."
-3. **Drop-target highlighting during drag** — when the player is holding a card, legal target piles glow / lift slightly. Highest gameplay-feel win in this list. Currently drops feel guess-y because there's no preview.
-4. **Stock-pile remaining-count badge** — small "·N" chip on the corner of the stock so the player knows how many cards remain before a recycle. Currently they recycle blind.
+## Open punch list — UX iteration (next-round candidates)
 
-## Open punch list — release prep (deferred per player)
+The session-6 list is exhausted. Candidates for a next round, none formally requested by the player:
 
-These are still on the table but the player has explicitly deferred them in favour of more UX work:
-
-1. **Cut `v0.11.0`** — meaningful slice since `v0.10.0`: full card-theme system (CARD_PLAN phases 1–7 + theme picker + hayeah art), HUD overhaul (band + fade), and the four bug fixes from session 6. (`git tag -d v0.1.0` first to clean up the stale local tag.)
-2. **README + CHANGELOG refresh** — README was last touched at `a6b8348` before the Settings picker shipped; doesn't mention card themes or the auto-fade.
-3. **Desktop packaging** per `ARCHITECTURE.md §17`. The Arch PKGBUILD exists in `/home/manage/solitaire-quest-pkgbuild/` (separate repo, no remote yet). Pending: app icon, macOS .icns + notarisation cert, Windows .ico + Authenticode cert, AppImage recipe.
-
-### Optional, deferred (lower priority than the four UX items above)
-
-- Animated focus ring (currently a static overlay; could pulse on focus change).
-- Achievement onboarding pass — show first-time players the achievement panel after their first win.
-- Mode-switch keyboard shortcut from inside the Mode Launcher (today only mouse opens it).
-- Runtime aspect-ratio fidelity: hayeah SVGs are ~1.45 h/w; engine layout assumes 1.4. Cards render ~3 % squashed vertically. Cosmetic.
+- **Animated focus ring** (currently a static overlay; could pulse on focus change).
+- **Achievement onboarding pass** — show first-time players the achievement panel after their first win.
+- **Mode-switch keyboard shortcut** from inside the Mode Launcher (today only mouse opens it).
+- **Runtime aspect-ratio fidelity** — hayeah SVGs are ~1.45 h/w; engine layout assumes 1.4. Cards render ~3 % squashed vertically. Cosmetic.
+- **Foundation completion celebration** — when a foundation reaches its King, do a small flourish (sparkle, lift, sound). The auto-complete cascade already covers the win moment, but per-foundation closure is currently silent.
+- **Drag-cancel return animation** — illegal drops snap cards back instantly. A short ease-back tween ("springs back to where it came from") would feel more forgiving.
 
 ## Card-theme system (CARD_PLAN.md, fully shipped)
 
@@ -73,37 +65,36 @@ Seven phases landed across `b8fb3fb` → `924a1e2`. End-to-end:
 ## Resume prompt
 
 ```
-You are a senior Rust + Bevy developer iterating on UX for Solitaire
-Quest. Working directory: <Rusty_Solitare clone path on this machine>.
-Branch: master. Current direction is UX iteration, NOT release prep —
-the player explicitly deferred v0.11.0 and packaging in favour of more
-gameplay-feel work.
+You are a senior Rust + Bevy developer working on Solitaire Quest.
+Working directory: <Rusty_Solitare clone path on this machine>.
+Branch: master. Direction is OPEN — the session-6 UX punch list is
+fully shipped. The player will choose between cutting v0.11.0, doing
+release prep (README/CHANGELOG/packaging), or starting a new UX
+iteration round.
 
-State: HEAD=c4970b1, fully pushed to GitHub
-(origin = https://github.com/funman300/Rusty_Solitare.git).
-Working tree clean apart from untracked CARD_PLAN.md (intentional).
+State: HEAD=655dfde. Local master is 3 commits ahead of origin
+(f6c9166, f712b89, 655dfde unpushed; fdb6c2e and 95df542 already
+pushed). Working tree clean apart from untracked CARD_PLAN.md
+(intentional).
 Build: cargo clippy --workspace --all-targets -- -D warnings clean.
-Tests: 962 passed / 0 failed / 9 ignored.
+Tests: 982 passed / 0 failed.
 
 READ FIRST (in order, before doing anything):
-  1. SESSION_HANDOFF.md  — full state, session 6 changelog, punch list
+  1. SESSION_HANDOFF.md  — full state, session 7 changelog, punch list
   2. CLAUDE.md           — hard rules (UI-first, no panics, etc.)
   3. ARCHITECTURE.md     — crate responsibilities + data flow
   4. ~/.claude/projects/<this-project>/memory/MEMORY.md
                          — saved feedback / project context (machine-local;
                            may be missing on a fresh machine)
 
-PUNCH LIST — UX iteration, in priority order the player expressed:
-  1. Unlock foundations: any Ace lands in any empty slot, slot claims
-     that suit until emptied. Refactor PileType::Foundation(Suit) →
-     Foundation(u8). ~80 call sites. Invalidates in-progress saves.
-     Does NOT cross solitaire_sync.
-  2. Card drop shadows against the felt.
-  3. Drop-target highlighting during drag (highest gameplay-feel win).
-  4. Stock-pile remaining-count badge.
-
-DEFERRED (do not start without explicit direction):
-  - Cut v0.11.0, README/CHANGELOG refresh, desktop packaging.
+DECISION TO ASK THE PLAYER FIRST:
+  A. Push the 3 unpushed commits and cut v0.11.0?
+  B. Skip the tag for now, refresh README + CHANGELOG, then tag?
+  C. Skip release prep entirely and start a new UX iteration round?
+     If C, see the session-7 next-round candidates list (animated
+     focus ring, achievement onboarding, mode-switch keyboard
+     shortcut, aspect-ratio fidelity, foundation completion flourish,
+     drag-cancel return tween).
 
 WORKFLOW NOTES:
   - Commits use:
@@ -113,7 +104,6 @@ WORKFLOW NOTES:
   - Every commit must pass build / clippy / test before pushing.
   - Push to GitHub (origin) — that is the canonical remote.
 
-OPEN AT THE START: ask which punch-list item to start on. The player
-prefers being asked over you picking unilaterally; (1) is the largest
-in code-touch and they may want to scope it first.
+OPEN AT THE START: ask which of A / B / C. Don't pick unilaterally —
+this is a directional choice, not a tactical one.
 ```
