@@ -29,10 +29,11 @@ use crate::pause_plugin::PausedResource;
 use crate::resources::{DragState, GameStateResource};
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
 use crate::table_plugin::PileMarker;
+use crate::font_plugin::FontResource;
 use crate::ui_theme::{
     CARD_SHADOW_ALPHA_DRAG, CARD_SHADOW_ALPHA_IDLE, CARD_SHADOW_COLOR, CARD_SHADOW_LOCAL_Z,
     CARD_SHADOW_OFFSET_DRAG, CARD_SHADOW_OFFSET_IDLE, CARD_SHADOW_PADDING_DRAG,
-    CARD_SHADOW_PADDING_IDLE,
+    CARD_SHADOW_PADDING_IDLE, STOCK_BADGE_BG, STOCK_BADGE_FG, TYPE_CAPTION, Z_STOCK_BADGE,
 };
 
 /// Fraction of card height used as vertical offset between face-up tableau cards.
@@ -140,10 +141,13 @@ pub struct StockEmptyLabel;
 /// Marker on the chip-background sprite of the stock-pile remaining-count
 /// badge.
 ///
-/// The badge is spawned as a child of the stock [`PileMarker`] entity so its
-/// transform tracks the stock pile through resizes. The chip sits in the
-/// top-right corner of the stock pile and is hidden while the stock is empty
-/// (the existing `↺` overlay covers the recycle hint instead).
+/// The badge is spawned as a *top-level* world entity (not parented to the
+/// stock [`PileMarker`]) and its `Transform` is recomputed each frame from
+/// `LayoutResource` so it tracks the stock pile through window resizes.
+/// The chip sits in the top-right corner of the stock pile and is hidden
+/// while the stock is empty — the existing `↺` overlay
+/// ([`StockEmptyLabel`]) covers the recycle hint instead, so the two
+/// indicators never render simultaneously.
 #[derive(Component, Debug)]
 pub struct StockCountBadge;
 
@@ -324,6 +328,7 @@ impl Plugin for CardPlugin {
                     clear_right_click_highlights_on_state_change.after(GameMutation),
                     clear_right_click_highlights_on_pause,
                     update_stock_empty_indicator.after(GameMutation),
+                    update_stock_count_badge.after(GameMutation),
                     collect_resize_events.after(LayoutSystem::UpdateOnResize),
                     snap_cards_on_window_resize.after(collect_resize_events),
                 ),
@@ -1294,6 +1299,159 @@ fn update_stock_empty_indicator(
         &label_children,
         &layout.0,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Stock-pile remaining-count badge
+//
+// Shows a small "·N" chip pinned to the top-right corner of the stock pile so
+// the player can see how many cards remain before the next recycle. The
+// existing `StockEmptyLabel` (`↺` overlay) covers the empty-stock case, so
+// the badge hides itself when the stock has zero cards — the two indicators
+// never render at the same time.
+// ---------------------------------------------------------------------------
+
+/// Inset (in pixels) from the top-right corner of the stock pile sprite to
+/// the centre of the count badge. A small inward offset keeps the chip from
+/// drifting half-off the card while still reading as "attached" to the
+/// corner.
+const STOCK_BADGE_INSET: Vec2 = Vec2::new(-12.0, -8.0);
+
+/// Width / height of the badge background sprite, in world pixels. Sized so
+/// a 2-digit count (max "24") fits comfortably with `TYPE_CAPTION` text.
+const STOCK_BADGE_SIZE: Vec2 = Vec2::new(28.0, 16.0);
+
+/// Returns the count of cards currently in the stock pile.
+///
+/// Pure helper extracted so the count source is identical between the spawn
+/// system, the update system, and the unit tests.
+fn stock_card_count(game: &GameState) -> usize {
+    game.piles
+        .get(&PileType::Stock)
+        .map_or(0, |p| p.cards.len())
+}
+
+/// Returns the world-space `Vec3` for the centre of the stock-count badge,
+/// given the current `Layout`. The badge sits at the top-right corner of
+/// the stock pile sprite, inset by [`STOCK_BADGE_INSET`].
+fn stock_badge_translation(layout: &Layout) -> Vec3 {
+    // Empty layouts don't contain a Stock entry — fall back to origin so
+    // the badge stays in a deterministic spot until the layout is filled.
+    let pile_pos = layout
+        .pile_positions
+        .get(&PileType::Stock)
+        .copied()
+        .unwrap_or(Vec2::ZERO);
+    let half = layout.card_size * 0.5;
+    let x = pile_pos.x + half.x + STOCK_BADGE_INSET.x;
+    let y = pile_pos.y + half.y + STOCK_BADGE_INSET.y;
+    Vec3::new(x, y, Z_STOCK_BADGE)
+}
+
+/// Spawns the stock-count badge entity (background sprite + child text)
+/// into the world. Called once, when the badge does not yet exist.
+fn spawn_stock_count_badge(
+    commands: &mut Commands,
+    layout: &Layout,
+    font: Option<&Handle<Font>>,
+    count: usize,
+) {
+    let translation = stock_badge_translation(layout);
+    let visibility = if count == 0 {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    let text_font = TextFont {
+        font: font.cloned().unwrap_or_default(),
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
+
+    commands
+        .spawn((
+            StockCountBadge,
+            Sprite {
+                color: STOCK_BADGE_BG,
+                custom_size: Some(STOCK_BADGE_SIZE),
+                ..default()
+            },
+            Transform::from_translation(translation),
+            visibility,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                StockCountBadgeText,
+                Text2d::new(format!("·{count}")),
+                text_font,
+                TextColor(STOCK_BADGE_FG),
+                // Slightly above the chip background so the digits aren't
+                // occluded by the sprite they sit on.
+                Transform::from_xyz(0.0, 0.0, 0.1),
+            ));
+        });
+}
+
+/// Spawns the stock-pile remaining-count badge if it does not yet exist,
+/// and otherwise updates its text and visibility in place.
+///
+/// Visibility rule: hidden when the stock is empty (the existing `↺`
+/// `StockEmptyLabel` overlay covers that state), shown when one or more
+/// cards remain.
+///
+/// Position is recomputed from `LayoutResource` every tick so the badge
+/// follows the stock pile across `WindowResized` layout updates without
+/// needing a dedicated resize handler.
+#[allow(clippy::too_many_arguments)]
+fn update_stock_count_badge(
+    mut commands: Commands,
+    game: Option<Res<GameStateResource>>,
+    layout: Option<Res<LayoutResource>>,
+    font: Option<Res<FontResource>>,
+    mut badges: Query<(Entity, &mut Transform, &mut Visibility), With<StockCountBadge>>,
+    children: Query<&Children, With<StockCountBadge>>,
+    mut texts: Query<&mut Text2d, With<StockCountBadgeText>>,
+) {
+    let Some(game) = game else { return };
+    let Some(layout) = layout else { return };
+
+    let count = stock_card_count(&game.0);
+    let translation = stock_badge_translation(&layout.0);
+    let target_visibility = if count == 0 {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+
+    if badges.is_empty() {
+        spawn_stock_count_badge(
+            &mut commands,
+            &layout.0,
+            font.as_ref().map(|f| &f.0),
+            count,
+        );
+        return;
+    }
+
+    for (entity, mut transform, mut visibility) in badges.iter_mut() {
+        transform.translation = translation;
+        if *visibility != target_visibility {
+            *visibility = target_visibility;
+        }
+        // Update the child text to reflect the latest count. The text node
+        // is created at spawn time, so under normal operation we always
+        // have exactly one child here.
+        if let Ok(badge_children) = children.get(entity) {
+            for child in badge_children.iter() {
+                if let Ok(mut text) = texts.get_mut(child) {
+                    let new = format!("·{count}");
+                    if text.0 != new {
+                        text.0 = new;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Coalesces every `WindowResized` event arriving this frame into the latest
@@ -2271,5 +2429,100 @@ mod tests {
             }
         }
         panic!("no CardShadow child found for card_id {card_id}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Stock-pile remaining-count badge tests
+    // -----------------------------------------------------------------------
+
+    /// Reads the current `Text2d` payload of the single `StockCountBadgeText`
+    /// in the world, panicking if zero or more than one are spawned.
+    fn stock_badge_text(app: &mut App) -> String {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Text2d, With<StockCountBadgeText>>();
+        let texts: Vec<String> = q.iter(app.world()).map(|t| t.0.clone()).collect();
+        assert_eq!(
+            texts.len(),
+            1,
+            "expected exactly one StockCountBadgeText, got {}",
+            texts.len()
+        );
+        texts.into_iter().next().unwrap()
+    }
+
+    /// Reads the `Visibility` of the single `StockCountBadge` background sprite.
+    fn stock_badge_visibility(app: &mut App) -> Visibility {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Visibility, With<StockCountBadge>>();
+        let vs: Vec<Visibility> = q.iter(app.world()).copied().collect();
+        assert_eq!(
+            vs.len(),
+            1,
+            "expected exactly one StockCountBadge entity, got {}",
+            vs.len()
+        );
+        vs.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn stock_badge_shows_count_after_startup() {
+        // Fresh Klondike (DrawOne) deals 24 face-down cards into stock — the
+        // canonical starting count. After the first `app.update()` the badge
+        // must exist and read "·24".
+        let mut app = app();
+        // First update inside `app()` runs the spawn path; run one more to
+        // confirm the in-place update path is also stable.
+        app.update();
+        assert_eq!(stock_badge_text(&mut app), "·24");
+        assert!(matches!(stock_badge_visibility(&mut app), Visibility::Inherited));
+    }
+
+    #[test]
+    fn stock_badge_hides_when_stock_empty() {
+        // Drain the stock pile to zero cards and assert the badge becomes
+        // hidden, leaving the existing `↺` `StockEmptyLabel` overlay as the
+        // sole indicator (the two never render simultaneously).
+        let mut app = app();
+        {
+            let mut game = app.world_mut().resource_mut::<GameStateResource>();
+            if let Some(stock) = game.0.piles.get_mut(&PileType::Stock) {
+                stock.cards.clear();
+            }
+        }
+        app.update();
+        assert!(matches!(stock_badge_visibility(&mut app), Visibility::Hidden));
+    }
+
+    #[test]
+    fn stock_badge_updates_when_stock_count_changes() {
+        // Mutate the stock pile so it holds 23 cards (one fewer than the
+        // initial 24) and assert the badge text follows.
+        let mut app = app();
+        // Sanity-check the starting count.
+        assert_eq!(stock_badge_text(&mut app), "·24");
+        {
+            let mut game = app.world_mut().resource_mut::<GameStateResource>();
+            if let Some(stock) = game.0.piles.get_mut(&PileType::Stock) {
+                let _ = stock.cards.pop();
+            }
+        }
+        app.update();
+        assert_eq!(stock_badge_text(&mut app), "·23");
+        assert!(matches!(stock_badge_visibility(&mut app), Visibility::Inherited));
+    }
+
+    #[test]
+    fn stock_card_count_helper_reads_zero_when_pile_missing() {
+        // If the stock pile entry is somehow absent (defensive path), the
+        // helper must return 0 rather than panicking — the badge then
+        // renders as hidden via the count-zero branch in the update system.
+        let g = GameState::new(42, solitaire_core::game_state::DrawMode::DrawOne);
+        let mut g_no_stock = g.clone();
+        g_no_stock.piles.remove(&PileType::Stock);
+        assert_eq!(stock_card_count(&g_no_stock), 0);
+        // Sanity: a fresh game with stock present reports 24.
+        assert_eq!(stock_card_count(&g), 24);
     }
 }
