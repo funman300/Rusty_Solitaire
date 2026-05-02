@@ -41,13 +41,17 @@
 //! here no-ops so [`crate::selection_plugin`]'s Tab/Enter
 //! card-selection still works.
 
+use std::f32::consts::TAU;
+
 use bevy::ecs::query::Has;
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
+use solitaire_data::AnimSpeed;
 
+use crate::settings_plugin::SettingsResource;
 use crate::ui_modal::{ButtonVariant, ModalButton, ModalScrim};
-use crate::ui_theme::{FOCUS_RING, RADIUS_MD, Z_FOCUS_RING};
+use crate::ui_theme::{FOCUS_RING, MOTION_FOCUS_PULSE_SECS, RADIUS_MD, Z_FOCUS_RING};
 
 // ---------------------------------------------------------------------------
 // Public component / resource API
@@ -126,10 +130,55 @@ impl Plugin for UiFocusPlugin {
                     clear_hud_focus_on_unhover,
                     handle_focus_keys,
                     update_focus_overlay,
+                    pulse_focus_overlay,
                 )
                     .chain(),
             );
     }
+}
+
+/// Computes the focus-ring breathing factor for a given elapsed time.
+///
+/// Returns a value in `[0.65, 1.0]` following a sin curve over
+/// [`MOTION_FOCUS_PULSE_SECS`]. Multiply [`FOCUS_RING`]'s native alpha by
+/// this factor each frame to produce the breathing effect.
+///
+/// Pure helper so the curve can be unit-tested without a Bevy app.
+pub fn focus_ring_pulse_factor(elapsed_secs: f32) -> f32 {
+    let phase = (elapsed_secs * TAU / MOTION_FOCUS_PULSE_SECS).sin();
+    // 0.825 mid-point ± 0.175 amplitude → range [0.65, 1.0]. Multiplicative
+    // factor against FOCUS_RING's static alpha so the brightest tick is
+    // exactly the original colour, not a brighter one.
+    0.825 + 0.175 * phase
+}
+
+/// Modulates the focus overlay's border alpha with a slow sin-curve
+/// breathing pulse so the indicator catches the eye without competing
+/// with gameplay motion. Skipped under `AnimSpeed::Instant` — the static
+/// border colour is restored so reduced-motion users see no animation.
+fn pulse_focus_overlay(
+    time: Res<Time>,
+    settings: Option<Res<SettingsResource>>,
+    focused: Res<FocusedButton>,
+    mut overlay: Query<&mut BorderColor, With<FocusOverlay>>,
+) {
+    let Ok(mut border) = overlay.single_mut() else {
+        return;
+    };
+
+    let instant = settings
+        .as_deref()
+        .is_some_and(|s| matches!(s.0.animation_speed, AnimSpeed::Instant));
+
+    let factor = if instant || focused.0.is_none() {
+        1.0
+    } else {
+        focus_ring_pulse_factor(time.elapsed_secs())
+    };
+
+    let mut colour = FOCUS_RING;
+    colour.set_alpha(FOCUS_RING.alpha() * factor);
+    *border = BorderColor::all(colour);
 }
 
 // ---------------------------------------------------------------------------
@@ -587,6 +636,40 @@ mod tests {
     use crate::ui_modal::{
         spawn_modal, spawn_modal_actions, spawn_modal_button, ButtonVariant, UiModalPlugin,
     };
+
+    #[test]
+    fn focus_ring_pulse_factor_at_zero_is_mid_point() {
+        // sin(0) = 0 → factor = 0.825 (mid of [0.65, 1.0]).
+        let f = focus_ring_pulse_factor(0.0);
+        assert!((f - 0.825).abs() < 1e-5, "factor at t=0 should be 0.825, got {f}");
+    }
+
+    #[test]
+    fn focus_ring_pulse_factor_peaks_at_quarter_period() {
+        // sin(τ/4) = 1 → factor = 1.0.
+        let f = focus_ring_pulse_factor(MOTION_FOCUS_PULSE_SECS / 4.0);
+        assert!((f - 1.0).abs() < 1e-4, "factor at peak should be 1.0, got {f}");
+    }
+
+    #[test]
+    fn focus_ring_pulse_factor_troughs_at_three_quarter_period() {
+        // sin(3τ/4) = -1 → factor = 0.65.
+        let f = focus_ring_pulse_factor(MOTION_FOCUS_PULSE_SECS * 3.0 / 4.0);
+        assert!((f - 0.65).abs() < 1e-4, "factor at trough should be 0.65, got {f}");
+    }
+
+    #[test]
+    fn focus_ring_pulse_factor_stays_in_brightness_range() {
+        // Sweep across two full periods; factor must stay within [0.65, 1.0].
+        for i in 0..200 {
+            let t = i as f32 * MOTION_FOCUS_PULSE_SECS * 0.01;
+            let f = focus_ring_pulse_factor(t);
+            assert!(
+                (0.649..=1.001).contains(&f),
+                "factor at t={t} out of range: {f}"
+            );
+        }
+    }
 
     /// Plugin-marker for the synthetic test modal — `spawn_modal`
     /// requires a `Component` on the scrim.

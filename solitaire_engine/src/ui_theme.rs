@@ -399,6 +399,19 @@ pub const FOUNDATION_FLOURISH_PEAK_SCALE: f32 = 1.15;
 /// 400 ms.
 pub const MOTION_LOADING_TICK_SECS: f32 = 0.40;
 
+/// Period of the focus-ring breathing pulse, in seconds.
+///
+/// The keyboard focus ring's alpha is modulated by a sin-curve over this
+/// interval so the indicator gently "breathes" instead of presenting as
+/// a flat outline. 1.4 s reads as a calm heartbeat — slow enough that
+/// the motion is in the player's peripheral vision rather than competing
+/// for attention, fast enough that a focus change still draws the eye.
+/// Not run through [`scaled_duration`]: the pulse is an accessibility
+/// affordance, not gameplay motion. `AnimSpeed::Instant` is honoured at
+/// the system level by skipping the pulse entirely (see
+/// `pulse_focus_overlay` in `ui_focus`).
+pub const MOTION_FOCUS_PULSE_SECS: f32 = 1.4;
+
 /// Hover delay before a tooltip appears, in seconds. Long enough that
 /// players gliding the cursor across the HUD don't see flicker; short
 /// enough that "stop and read" feels responsive. Not run through
