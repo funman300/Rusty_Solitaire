@@ -8,6 +8,68 @@ project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.12.0] — 2026-05-02
+
+UX feel polish round on top of v0.11.0. Six small-but-tangible
+improvements that make the play surface feel more responsive,
+forgiving, and discoverable, plus the doc refresh that should have
+ridden along with v0.11.0.
+
+### Added
+
+- **Foundation completion flourish.** When a King lands on a
+  foundation (Ace-through-King for that suit), a brief celebration
+  fires: King card scale-pulses 1.0 → 1.15 → 1.0 over 0.4 s, the
+  foundation marker tints `STATE_SUCCESS` for the first half then
+  fades, and a synthesised C6→E6→G6 bell ping plays (~240 ms,
+  octave above `win_fanfare`'s root so the fourth completion + win
+  cascade layer cleanly). New `FoundationCompletedEvent { slot,
+  suit }` carries the trigger so future systems can hook in.
+- **Drag-cancel return tween.** Illegal drops glide each dragged
+  card back to its origin slot over 150 ms with a quintic ease-out
+  curve (`MotionCurve::Responsive`, zero overshoot — reads forgiving
+  rather than jittery). The audio cue (`card_invalid.wav`) still
+  fires for negative feedback. Right-click and double-click invalid
+  paths still use `ShakeAnim` since there's no motion to interpolate.
+- **Focus ring breathing.** The keyboard focus ring's alpha modulates
+  with a 1.4 s sin curve over [0.65, 1.0] of its native value so the
+  indicator catches the eye on focus changes without competing with
+  gameplay. Honours `AnimSpeed::Instant` by reverting to the static
+  outline for reduced-motion users.
+- **First-win achievement onboarding toast.** After the player's
+  very first win, a one-shot info toast surfaces "First win! Press
+  A to see your achievements." `Settings.shown_achievement_onboarding`
+  persists the seen state so the cue never re-fires (legacy
+  `settings.json` files load to `false` via `#[serde(default)]`).
+- **Mode Launcher digit shortcuts.** Pressing M opens the Home modal
+  (the Mode Launcher); inside it, pressing 1–5 launches each mode
+  directly without needing Tab + Enter. Locked modes (Zen, Challenge,
+  Time Attack at level < 5) are silent no-ops. Modal-scoped — digit
+  keys outside the launcher fire nothing.
+
+### Fixed
+
+- **Card aspect ratio matches hayeah SVGs.** `CARD_ASPECT` 1.4 →
+  1.4523 to match the bundled artwork's natural 167.087 × 242.667
+  dimensions. Cards previously rendered ~3.6 % vertically squashed.
+  The vertical-budget math in `compute_layout` uses `CARD_ASPECT`
+  algebraically so the worst-case-tableau-fits-on-screen guarantee
+  adapts automatically.
+
+### Documentation
+
+- **README refresh** with v0.11.0+ features (card themes, HUD
+  overhaul, drag feel, unlocked foundations) and a corrected controls
+  table — the previous table inverted Z/U for undo and listed H for
+  help when F1 is the binding.
+- **CHANGELOG.md** added (this file), covering v0.9.0–v0.12.0 with
+  Keep a Changelog 1.1.0 conventions.
+
+### Stats
+
+- 1007 passing tests (was 982 at v0.11.0).
+- Zero clippy warnings under `--workspace --all-targets -- -D warnings`.
+
 ## [0.11.0] — 2026-05-02
 
 The biggest release since 0.10.0. Headline threads: a runtime card-theme
@@ -162,7 +224,8 @@ with no PNG artwork yet.
   CREDITS.md, persistent window geometry, mode-launcher Home repurpose,
   client-side sync round-trip integration tests.
 
-[Unreleased]: https://github.com/funman300/Rusty_Solitaire/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/funman300/Rusty_Solitaire/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/funman300/Rusty_Solitaire/releases/tag/v0.9.0
