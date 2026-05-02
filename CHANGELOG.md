@@ -8,6 +8,94 @@ project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.13.0] — 2026-05-02
+
+Third UX iteration round on top of v0.12.0. Six handoff candidates
+shipped — three small polish items, three larger interaction
+features (theme-aware backs, full keyboard play, right-click power
+shortcut). Plus two code-review fixes (font handling unified,
+sccache wiring removed).
+
+### Added
+
+- **Tooltip-delay slider** in Settings → Gameplay. `tooltip_delay_secs`
+  ranges [0.0, 1.5] in 0.1 s steps; "Instant" label when zero.
+  `Settings.tooltip_delay_secs` round-trips through serialise/deserialise
+  with `#[serde(default)]`. The hover-delay comparison in
+  `ui_tooltip` reads from `SettingsResource` with the existing
+  `MOTION_TOOLTIP_DELAY_SECS` as the test-fixture fallback.
+- **Win-streak fire animation.** New `WinStreakMilestoneEvent` fires
+  from `stats_plugin` when `win_streak_current` crosses any of
+  [3, 5, 10] (only the threshold crossing — not every subsequent
+  win). The HUD streak readout scale-pulses 1.0 → 1.20 → 1.0 over
+  `MOTION_STREAK_FLOURISH_SECS` (0.6 s).
+- **Score-breakdown reveal on the win modal.** Replaces the single
+  "Score: N" line with a per-component reveal (Base / Time bonus /
+  No-undo bonus / Mode multiplier / Total). Rows fade in over
+  `MOTION_SCORE_BREAKDOWN_FADE_SECS` (0.12 s) staggered by
+  `MOTION_SCORE_BREAKDOWN_STAGGER_SECS` (0.15 s). Honours
+  `AnimSpeed::Instant` by spawning all rows fully visible.
+- **Card backs follow the active theme.** `theme.ron`'s `back` slot
+  now actually drives the face-down sprite. Active-theme back
+  rasterises alongside the faces and supersedes the legacy
+  `back_N.png` picker. The picker remains as a fallback for themes
+  that don't ship a back, and the Settings UI surfaces a caption
+  ("Active theme provides its own back") + dimmed swatches when
+  the override is in effect.
+- **Keyboard-only drag-and-drop.** Tab cycles draggable card stacks,
+  Enter "lifts" the focused stack, arrow keys (or Tab) cycle the
+  legal-destination targets only, Enter confirms, Esc cancels. A
+  new `KeyboardDragState` resource models the two-mode flow without
+  changing the existing `SelectionState` contract. Mutual exclusion
+  with mouse drag uses a sentinel `DragState.active_touch_id =
+  KEYBOARD_DRAG_TOUCH_ID` (u64::MAX) so neither pipeline can
+  trample the other.
+- **Right-click radial menu.** Hold right-click on a face-up card →
+  a small ring of icons appears at the cursor with one entry per
+  legal destination. Release over an icon → fires
+  `MoveRequestEvent`; release in dead space, Esc, or left-click
+  cancels. Skips the drag motion entirely. New `RadialMenuPlugin`
+  owns the flow; co-exists with the existing `RightClickHighlight`
+  pile-marker tint.
+
+### Fixed
+
+- **Font handling consolidated to bundled-only.** Code-review
+  feedback: the SVG rasteriser previously mixed
+  `load_system_fonts` + bundled FiraMono + a lenient resolver,
+  which made card text rendering depend on host fontconfig. Picked
+  option (a) and applied it across both layers — `font_plugin` now
+  embeds `assets/fonts/main.ttf` via `include_bytes!()` and
+  registers it with `Assets<Font>`; `svg_loader::shared_fontdb`
+  loads only the bundled bytes; the new `bundled_font_resolver`
+  ignores the SVG's `font-family` request and always returns the
+  single bundled face. A parse failure aborts with a clear error
+  ("bundled FiraMono failed to parse — binary is corrupt").
+
+### Removed
+
+- **Project-level sccache wiring.** Code-review feedback: sccache
+  shouldn't be a per-project build dependency. Cargo's incremental
+  cache already covers the single-project case, and forcing
+  `rustc-wrapper = "sccache"` workspace-wide meant every contributor
+  had to install it. `.cargo/config.toml` deleted entirely; plain
+  `cargo build` now works without setup.
+
+### Documentation
+
+- `help_plugin` controls reference gains a "Mouse" section covering
+  double-click auto-move, right-click highlight, and the new
+  hold-RMB radial.
+- `help_plugin` also gains a "Keyboard drag" section for the new
+  Tab/Enter/Arrows/Esc flow.
+- Onboarding slide 3 picks up a `Tab → Enter` row referencing the
+  full keyboard drag path.
+
+### Stats
+
+- 1053 passing tests (was 1031 at v0.12.0 close).
+- Zero clippy warnings under `--workspace --all-targets -- -D warnings`.
+
 ## [0.12.0] — 2026-05-02
 
 UX feel polish round on top of v0.11.0. Six small-but-tangible
@@ -224,7 +312,8 @@ with no PNG artwork yet.
   CREDITS.md, persistent window geometry, mode-launcher Home repurpose,
   client-side sync round-trip integration tests.
 
-[Unreleased]: https://github.com/funman300/Rusty_Solitaire/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/funman300/Rusty_Solitaire/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.9.0...v0.10.0
