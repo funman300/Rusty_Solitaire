@@ -48,13 +48,18 @@ use solitaire_data::AnimSpeed;
 use crate::animation_plugin::CardAnim;
 use crate::card_plugin::CardEntity;
 use crate::events::{
-    DrawRequestEvent, MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent,
+    DrawRequestEvent, FoundationCompletedEvent, MoveRejectedEvent, MoveRequestEvent,
+    NewGameRequestEvent,
 };
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
 use crate::pause_plugin::PausedResource;
 use crate::resources::GameStateResource;
 use crate::settings_plugin::SettingsResource;
+use crate::table_plugin::PileMarker;
+use crate::ui_theme::{
+    FOUNDATION_FLOURISH_PEAK_SCALE, MOTION_FOUNDATION_FLOURISH_SECS, STATE_SUCCESS,
+};
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -185,7 +190,8 @@ pub fn deal_stagger_jitter(card_id: u32) -> f32 {
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// Registers the shake, settle, and deal animation systems.
+/// Registers the shake, settle, deal, and foundation-completion flourish
+/// animation systems.
 pub struct FeedbackAnimPlugin;
 
 impl Plugin for FeedbackAnimPlugin {
@@ -197,6 +203,7 @@ impl Plugin for FeedbackAnimPlugin {
             .add_message::<DrawRequestEvent>()
             .add_message::<MoveRejectedEvent>()
             .add_message::<NewGameRequestEvent>()
+            .add_message::<FoundationCompletedEvent>()
             .add_systems(
                 Update,
                 (
@@ -205,6 +212,8 @@ impl Plugin for FeedbackAnimPlugin {
                     start_settle_anim.after(GameMutation),
                     tick_settle_anim,
                     start_deal_anim.after(GameMutation),
+                    start_foundation_flourish.after(GameMutation),
+                    tick_foundation_flourish,
                 ),
             );
     }
@@ -402,6 +411,204 @@ fn start_deal_anim(
 }
 
 // ---------------------------------------------------------------------------
+// Foundation-completion flourish
+// ---------------------------------------------------------------------------
+
+/// Drives the per-foundation completion flourish on the King card that
+/// just landed on a foundation pile (Ace → King, 13 cards).
+///
+/// Inserted on the King's `CardEntity` when `FoundationCompletedEvent`
+/// fires; removed once `elapsed >= duration`. Decorative only — does
+/// not block input or interfere with the win cascade, settle, or hint
+/// systems (those operate on different markers and read the same
+/// `Transform.scale` coordinate non-conflictingly because the flourish
+/// finishes in well under a second).
+#[derive(Component, Debug, Clone, Copy)]
+pub struct FoundationFlourish {
+    /// Foundation slot (0..=3) this flourish is celebrating.
+    pub foundation_slot: u8,
+    /// Seconds elapsed since the flourish began.
+    pub elapsed: f32,
+    /// Total animation length in seconds.
+    pub duration: f32,
+}
+
+/// Drives a brief golden tint on the foundation `PileMarker` whose
+/// foundation just completed. Stores the marker's original colour so
+/// it can be restored when the timer expires.
+///
+/// Inserted alongside (and concurrent with) `FoundationFlourish` on the
+/// matching `PileMarker` entity. The system runs independently of the
+/// existing `HintPileHighlight` so the two never share state — a hint
+/// landing during a completion flourish (highly unlikely in practice
+/// since the foundation just completed) won't corrupt either party's
+/// `original_color` snapshot.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct FoundationMarkerFlourish {
+    /// Seconds elapsed since the tint was applied.
+    pub elapsed: f32,
+    /// Total animation length in seconds.
+    pub duration: f32,
+    /// The pile marker's sprite colour before the tint was applied —
+    /// restored when the timer expires.
+    pub original_color: Color,
+}
+
+/// Pure helper for unit tests — returns the per-frame scale factor for
+/// the foundation flourish at `elapsed_secs` over `duration_secs`.
+///
+/// Triangular curve, mirroring `score_pulse_scale` in `hud_plugin`:
+/// at `t = 0.0` returns `1.0`, at `t = 0.5` returns
+/// [`FOUNDATION_FLOURISH_PEAK_SCALE`] (1.15), at `t = 1.0` returns
+/// `1.0`. Out-of-range values are clamped so the King never freezes
+/// at a non-1.0 scale on the frame after the flourish ends.
+///
+/// Returns `1.0` whenever `duration_secs <= 0.0` so callers running
+/// under `AnimSpeed::Instant` (zeroed durations) skip the flourish
+/// without dividing by zero.
+pub fn foundation_flourish_scale(elapsed_secs: f32, duration_secs: f32) -> f32 {
+    if duration_secs <= 0.0 {
+        return 1.0;
+    }
+    let t = (elapsed_secs / duration_secs).clamp(0.0, 1.0);
+    let peak = FOUNDATION_FLOURISH_PEAK_SCALE;
+    if t < 0.5 {
+        // Climb from 1.0 at t=0 to peak at t=0.5.
+        1.0 + (peak - 1.0) * (t / 0.5)
+    } else {
+        // Descend from peak at t=0.5 back to 1.0 at t=1.0.
+        peak - (peak - 1.0) * ((t - 0.5) / 0.5)
+    }
+}
+
+/// Inserts `FoundationFlourish` on the King card entity at the
+/// completed foundation and `FoundationMarkerFlourish` on its
+/// `PileMarker`. The King is identified as the *top* card of the
+/// foundation pile after the move — by definition the 13th card,
+/// always rank King by foundation rules.
+fn start_foundation_flourish(
+    mut events: MessageReader<FoundationCompletedEvent>,
+    game: Res<GameStateResource>,
+    card_entities: Query<(Entity, &CardEntity)>,
+    mut pile_markers: Query<(Entity, &PileMarker, &Sprite, Option<&FoundationMarkerFlourish>)>,
+    mut commands: Commands,
+) {
+    for ev in events.read() {
+        let pile_type = PileType::Foundation(ev.slot);
+        // Top card of the completed foundation is the King.
+        let Some(king_id) = game
+            .0
+            .piles
+            .get(&pile_type)
+            .and_then(|p| p.cards.last())
+            .map(|c| c.id)
+        else {
+            continue;
+        };
+
+        // Tag the King's card entity.
+        for (entity, card_marker) in card_entities.iter() {
+            if card_marker.card_id == king_id {
+                commands.entity(entity).insert(FoundationFlourish {
+                    foundation_slot: ev.slot,
+                    elapsed: 0.0,
+                    duration: MOTION_FOUNDATION_FLOURISH_SECS,
+                });
+            }
+        }
+
+        // Tint the matching PileMarker. Snapshot the current colour so
+        // tick_foundation_flourish can restore it; if a stale flourish
+        // is somehow still active, reuse its `original_color` so we
+        // don't capture the gold tint as the new "original".
+        for (entity, pile_marker, sprite, existing) in pile_markers.iter_mut() {
+            if pile_marker.0 != pile_type {
+                continue;
+            }
+            let original_color = existing.map_or(sprite.color, |f| f.original_color);
+            commands.entity(entity).insert(FoundationMarkerFlourish {
+                elapsed: 0.0,
+                duration: MOTION_FOUNDATION_FLOURISH_SECS,
+                original_color,
+            });
+        }
+    }
+}
+
+/// Advances both the King's scale pulse and the foundation marker's
+/// gold tint each frame. Removes both components once their timers
+/// expire, restoring the King's `Transform.scale` to `Vec3::ONE` and
+/// the marker's sprite colour to its captured original.
+///
+/// Skipped while paused so a player who hits Esc mid-flourish doesn't
+/// see frozen scaled state (the next unpause tick resumes from the
+/// stored `elapsed`).
+#[allow(clippy::type_complexity)]
+fn tick_foundation_flourish(
+    mut commands: Commands,
+    time: Res<Time>,
+    paused: Option<Res<PausedResource>>,
+    mut card_anims: Query<(Entity, &mut Transform, &mut FoundationFlourish)>,
+    mut marker_anims: Query<
+        (Entity, &mut Sprite, &mut FoundationMarkerFlourish),
+        Without<FoundationFlourish>,
+    >,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+    let dt = time.delta_secs();
+
+    // Advance the King's scale pulse.
+    for (entity, mut transform, mut anim) in &mut card_anims {
+        anim.elapsed += dt;
+        if anim.elapsed >= anim.duration {
+            // Restore identity scale so the card sits at its normal size
+            // for the next frame's transform sync.
+            transform.scale = Vec3::ONE;
+            commands.entity(entity).remove::<FoundationFlourish>();
+        } else {
+            let s = foundation_flourish_scale(anim.elapsed, anim.duration);
+            transform.scale = Vec3::new(s, s, 1.0);
+        }
+    }
+
+    // Advance the foundation marker's gold tint. Held flat for the
+    // first half of the duration and faded back to the original colour
+    // over the second half — feels celebratory without bleeding into
+    // the next move's drop-target highlights.
+    for (entity, mut sprite, mut anim) in &mut marker_anims {
+        anim.elapsed += dt;
+        if anim.elapsed >= anim.duration {
+            sprite.color = anim.original_color;
+            commands.entity(entity).remove::<FoundationMarkerFlourish>();
+        } else {
+            let t = (anim.elapsed / anim.duration).clamp(0.0, 1.0);
+            // Lerp factor: 1.0 (full tint) for the first half, then
+            // ramps down linearly to 0.0 (original colour) by the end.
+            let mix = if t < 0.5 { 1.0 } else { 1.0 - (t - 0.5) / 0.5 };
+            sprite.color = lerp_color(anim.original_color, STATE_SUCCESS, mix);
+        }
+    }
+}
+
+/// Linear interpolation between two `Color`s in sRGB space. Pulled out
+/// as a small helper so the `tick_foundation_flourish` body stays
+/// readable; sRGB-space lerping is fine for a brief decorative tint
+/// (a perceptually-uniform space would be overkill).
+fn lerp_color(from: Color, to: Color, t: f32) -> Color {
+    let from = from.to_srgba();
+    let to = to.to_srgba();
+    let t = t.clamp(0.0, 1.0);
+    Color::srgba(
+        from.red + (to.red - from.red) * t,
+        from.green + (to.green - from.green) * t,
+        from.blue + (to.blue - from.blue) * t,
+        from.alpha + (to.alpha - from.alpha) * t,
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests (pure functions only — no Bevy world required)
 // ---------------------------------------------------------------------------
 
@@ -532,6 +739,47 @@ mod tests {
                 "deal_stagger_jitter({card_id}) is not deterministic"
             );
         }
+    }
+
+    // Foundation-flourish curve tests
+
+    /// Triangular curve must be 1.0 at t=0, peak at t=0.5, and 1.0 at t=1.
+    #[test]
+    fn foundation_flourish_scale_curves_through_one_one_one() {
+        let dur = MOTION_FOUNDATION_FLOURISH_SECS;
+        assert!(
+            (foundation_flourish_scale(0.0, dur) - 1.0).abs() < 1e-5,
+            "flourish scale at t=0 must be 1.0"
+        );
+        assert!(
+            (foundation_flourish_scale(dur / 2.0, dur) - FOUNDATION_FLOURISH_PEAK_SCALE).abs() < 1e-5,
+            "flourish scale at midpoint must be FOUNDATION_FLOURISH_PEAK_SCALE"
+        );
+        assert!(
+            (foundation_flourish_scale(dur, dur) - 1.0).abs() < 1e-5,
+            "flourish scale at t=duration must return to 1.0"
+        );
+    }
+
+    /// Out-of-range values are clamped, not extrapolated. Important so the
+    /// King never ends up at a non-1.0 scale on the frame after the
+    /// flourish ends (which would race against the despawn / restore step
+    /// in `tick_foundation_flourish`).
+    #[test]
+    fn foundation_flourish_scale_clamps_out_of_range() {
+        let dur = MOTION_FOUNDATION_FLOURISH_SECS;
+        // Negative elapsed clamps to 0 → scale 1.0.
+        assert!((foundation_flourish_scale(-1.0, dur) - 1.0).abs() < 1e-5);
+        // Past-end clamps to t=1 → scale 1.0.
+        assert!((foundation_flourish_scale(dur * 5.0, dur) - 1.0).abs() < 1e-5);
+    }
+
+    /// Zero duration (e.g. `AnimSpeed::Instant`) returns identity, never
+    /// divides by zero.
+    #[test]
+    fn foundation_flourish_scale_zero_duration_is_one() {
+        assert!((foundation_flourish_scale(0.0, 0.0) - 1.0).abs() < 1e-5);
+        assert!((foundation_flourish_scale(0.5, 0.0) - 1.0).abs() < 1e-5);
     }
 
     #[test]

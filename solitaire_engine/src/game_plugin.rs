@@ -15,8 +15,8 @@ use solitaire_data::{delete_game_state_at, game_state_file_path, load_game_state
     save_game_state_to};
 
 use crate::events::{
-    CardFlippedEvent, DrawRequestEvent, GameWonEvent, InfoToastEvent, MoveRequestEvent,
-    NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
+    CardFlippedEvent, DrawRequestEvent, FoundationCompletedEvent, GameWonEvent, InfoToastEvent,
+    MoveRequestEvent, NewGameRequestEvent, StateChangedEvent, UndoRequestEvent,
 };
 use crate::font_plugin::FontResource;
 use crate::resources::{DragState, GameStateResource, SyncStatusResource};
@@ -86,6 +86,7 @@ impl Plugin for GamePlugin {
             .add_message::<GameWonEvent>()
             .add_message::<crate::events::CardFlippedEvent>()
             .add_message::<crate::events::AchievementUnlockedEvent>()
+            .add_message::<FoundationCompletedEvent>()
             .add_message::<InfoToastEvent>()
             .add_systems(
                 Update,
@@ -398,14 +399,18 @@ fn handle_draw(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_move(
     mut moves: MessageReader<MoveRequestEvent>,
     mut game: ResMut<GameStateResource>,
     mut changed: MessageWriter<StateChangedEvent>,
     mut won: MessageWriter<GameWonEvent>,
     mut flipped: MessageWriter<crate::events::CardFlippedEvent>,
+    mut foundation_done: MessageWriter<FoundationCompletedEvent>,
     path: Option<Res<GameStatePath>>,
 ) {
+    use solitaire_core::pile::PileType;
+
     for ev in moves.read() {
         let was_won = game.0.is_won;
         // Identify the card that will be exposed (and may flip face-up) by the move.
@@ -429,6 +434,19 @@ fn handle_move(
                     {
                         flipped.write(crate::events::CardFlippedEvent(fid));
                     }
+                // If this move landed on a foundation pile and that pile is
+                // now complete (Ace → King, 13 cards), fire the per-suit
+                // flourish event. Drives a brief decorative scale-pulse on
+                // the King + a golden tint on the foundation marker plus a
+                // short audio ping. Purely a UI / audio cue — does not
+                // cross `solitaire_sync` and is not persisted.
+                if let PileType::Foundation(slot) = ev.to
+                    && let Some(pile) = game.0.piles.get(&ev.to)
+                    && pile.cards.len() == 13
+                    && let Some(suit) = pile.claimed_suit()
+                {
+                    foundation_done.write(FoundationCompletedEvent { slot, suit });
+                }
                 changed.write(StateChangedEvent);
                 if !was_won && game.0.is_won {
                     won.write(GameWonEvent {
@@ -1404,6 +1422,196 @@ mod tests {
             fired[0].0,
             "Nothing to undo",
             "toast message must be 'Nothing to undo'"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Foundation-completion flourish — FoundationCompletedEvent firing logic
+    // -----------------------------------------------------------------------
+
+    /// Helper: prefill `Foundation(slot)` with Ace through Queen of `suit`
+    /// (12 cards, all face-up) and place the King of `suit` on
+    /// `Tableau(0)` so a single `MoveRequestEvent` can complete the
+    /// foundation.
+    fn seed_foundation_with_ace_through_queen(
+        app: &mut App,
+        slot: u8,
+        suit: solitaire_core::card::Suit,
+    ) {
+        use solitaire_core::card::{Card, Rank};
+
+        let ranks = [
+            Rank::Ace, Rank::Two, Rank::Three, Rank::Four, Rank::Five, Rank::Six,
+            Rank::Seven, Rank::Eight, Rank::Nine, Rank::Ten, Rank::Jack, Rank::Queen,
+        ];
+        let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+        let foundation = gs
+            .0
+            .piles
+            .get_mut(&PileType::Foundation(slot))
+            .expect("foundation slot must exist");
+        foundation.cards.clear();
+        for (i, &rank) in ranks.iter().enumerate() {
+            foundation.cards.push(Card {
+                id: 5_000 + i as u32 + (slot as u32) * 100,
+                suit,
+                rank,
+                face_up: true,
+            });
+        }
+        // Put the King on Tableau(0) so a single move can complete it.
+        let t0 = gs.0.piles.get_mut(&PileType::Tableau(0)).unwrap();
+        t0.cards.clear();
+        t0.cards.push(Card {
+            id: 6_000 + (slot as u32),
+            suit,
+            rank: Rank::King,
+            face_up: true,
+        });
+    }
+
+    /// Reading helper: collect every `FoundationCompletedEvent` written
+    /// during the most recent `update()` so the test body can assert
+    /// against count, slot, and suit.
+    fn drain_foundation_events(app: &App) -> Vec<FoundationCompletedEvent> {
+        let events = app
+            .world()
+            .resource::<Messages<FoundationCompletedEvent>>();
+        let mut cursor = events.get_cursor();
+        cursor.read(events).copied().collect()
+    }
+
+    /// When a King lands on a foundation that already holds Ace through
+    /// Queen, exactly one `FoundationCompletedEvent` must fire and carry
+    /// the matching slot + suit.
+    #[test]
+    fn foundation_completed_event_fires_when_king_lands() {
+        use solitaire_core::card::Suit;
+
+        let mut app = test_app(1);
+        seed_foundation_with_ace_through_queen(&mut app, 2, Suit::Hearts);
+
+        app.world_mut().write_message(MoveRequestEvent {
+            from: PileType::Tableau(0),
+            to: PileType::Foundation(2),
+            count: 1,
+        });
+        app.update();
+
+        let fired = drain_foundation_events(&app);
+        assert_eq!(
+            fired.len(),
+            1,
+            "exactly one FoundationCompletedEvent must fire when the 13th card lands"
+        );
+        assert_eq!(fired[0].slot, 2, "event slot must match the destination slot");
+        assert_eq!(fired[0].suit, Suit::Hearts, "event suit must match the foundation suit");
+    }
+
+    /// Moving a card to a tableau pile must never produce a
+    /// `FoundationCompletedEvent`, even if the source tableau happened
+    /// to have been a King.
+    #[test]
+    fn foundation_completed_event_does_not_fire_for_non_foundation_moves() {
+        use solitaire_core::card::{Card, Rank, Suit};
+
+        let mut app = test_app(1);
+        // Reset the world: clear stock + waste so a draw isn't possible,
+        // empty all tableaux + foundations, then place a face-up King of
+        // Spades on Tableau(0). Tableau(1) is empty, so the King can move
+        // there legally.
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            gs.0.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
+            gs.0.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+            for slot in 0..4_u8 {
+                gs.0.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
+            }
+            for i in 0..7_usize {
+                gs.0.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+            }
+            gs.0.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.push(Card {
+                id: 7_000,
+                suit: Suit::Spades,
+                rank: Rank::King,
+                face_up: true,
+            });
+        }
+
+        app.world_mut().write_message(MoveRequestEvent {
+            from: PileType::Tableau(0),
+            to: PileType::Tableau(1),
+            count: 1,
+        });
+        app.update();
+
+        let fired = drain_foundation_events(&app);
+        assert!(
+            fired.is_empty(),
+            "FoundationCompletedEvent must not fire for non-foundation moves; got {fired:?}"
+        );
+    }
+
+    /// At 12 cards on a foundation (Ace–Jack on the pile, Queen in
+    /// flight), the event must NOT fire — the flourish is only for the
+    /// final 13th completion.
+    #[test]
+    fn foundation_completed_event_does_not_fire_at_12_cards() {
+        use solitaire_core::card::{Card, Rank, Suit};
+
+        let mut app = test_app(1);
+        let suit = Suit::Diamonds;
+        let slot: u8 = 1;
+        // Pre-fill foundation with Ace through Jack (11 cards).
+        let pre_ranks = [
+            Rank::Ace, Rank::Two, Rank::Three, Rank::Four, Rank::Five, Rank::Six,
+            Rank::Seven, Rank::Eight, Rank::Nine, Rank::Ten, Rank::Jack,
+        ];
+        {
+            let mut gs = app.world_mut().resource_mut::<GameStateResource>();
+            let foundation = gs.0.piles.get_mut(&PileType::Foundation(slot)).unwrap();
+            foundation.cards.clear();
+            for (i, &rank) in pre_ranks.iter().enumerate() {
+                foundation.cards.push(Card {
+                    id: 8_000 + i as u32,
+                    suit,
+                    rank,
+                    face_up: true,
+                });
+            }
+            // Queen on Tableau(0) so a single move pushes the foundation
+            // count to exactly 12 (still below the completion threshold).
+            let t0 = gs.0.piles.get_mut(&PileType::Tableau(0)).unwrap();
+            t0.cards.clear();
+            t0.cards.push(Card {
+                id: 8_900,
+                suit,
+                rank: Rank::Queen,
+                face_up: true,
+            });
+        }
+
+        app.world_mut().write_message(MoveRequestEvent {
+            from: PileType::Tableau(0),
+            to: PileType::Foundation(slot),
+            count: 1,
+        });
+        app.update();
+
+        // Sanity: the move actually landed (foundation has 12 cards now).
+        let foundation_len = app
+            .world()
+            .resource::<GameStateResource>()
+            .0
+            .piles[&PileType::Foundation(slot)]
+            .cards
+            .len();
+        assert_eq!(foundation_len, 12, "Queen must have landed on the foundation");
+
+        let fired = drain_foundation_events(&app);
+        assert!(
+            fired.is_empty(),
+            "FoundationCompletedEvent must not fire at 12 cards; got {fired:?}"
         );
     }
 

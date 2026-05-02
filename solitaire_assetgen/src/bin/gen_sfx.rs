@@ -16,13 +16,14 @@ fn main() -> io::Result<()> {
     let out_dir = workspace_root().join("assets").join("audio");
     fs::create_dir_all(&out_dir)?;
 
-    let effects: [(&str, Generator); 6] = [
+    let effects: [(&str, Generator); 7] = [
         ("card_flip.wav", card_flip),
         ("card_place.wav", card_place),
         ("card_deal.wav", card_deal),
         ("card_invalid.wav", card_invalid),
         ("win_fanfare.wav", win_fanfare),
         ("ambient_loop.wav", ambient_loop),
+        ("foundation_complete.wav", foundation_complete),
     ];
 
     for (name, make) in &effects {
@@ -166,6 +167,44 @@ fn win_fanfare() -> Vec<i16> {
             sample += s * env;
         }
         out.push(quantize(sample * 0.22));
+    }
+    out
+}
+
+/// Per-suit foundation-completion ping (~240 ms): a rising three-note
+/// chime — C6, E6, G6 — with a soft 2nd-harmonic warm layer on each
+/// note. Shorter and brighter than `win_fanfare` so it can fire up to
+/// four times per game (once per suit) without drowning out subsequent
+/// move sounds. The fourth firing co-occurs with the win cascade and
+/// `win_fanfare`; the C-major triad sits an octave above the
+/// fanfare's root so the two layer cleanly instead of fighting for the
+/// same frequency band.
+fn foundation_complete() -> Vec<i16> {
+    // C major triad, one octave up from win_fanfare's root.
+    let notes = [1046.50_f32, 1318.51, 1567.98]; // C6, E6, G6
+    let note_dur = 0.07_f32; // brisk, ascending
+    let total = note_dur * notes.len() as f32 + 0.05;
+    let n = duration_samples(total);
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let mut sample = 0.0f32;
+        for (idx, freq) in notes.iter().enumerate() {
+            let start = idx as f32 * note_dur;
+            let local = t - start;
+            // Each note rings out for 0.18 s — overlapping notes form a
+            // brief chord at the tail.
+            if !(0.0..=0.18).contains(&local) {
+                continue;
+            }
+            // Sine + soft 2nd harmonic for warmth, ar_envelope decays
+            // sharply so each note is bell-like rather than sustained.
+            let s = (2.0 * std::f32::consts::PI * freq * local).sin()
+                + 0.25 * (2.0 * std::f32::consts::PI * freq * 2.0 * local).sin();
+            let env = ar_envelope(local, 0.005, 0.18, 14.0);
+            sample += s * env;
+        }
+        out.push(quantize(sample * 0.20));
     }
     out
 }

@@ -69,8 +69,9 @@ pub use card_animation::{
     FrameTimeDiagnostics, DIAG_WINDOW_SIZE,
 };
 pub use feedback_anim_plugin::{
-    deal_stagger_delay, deal_stagger_secs_for_speed, shake_offset, settle_scale,
-    FeedbackAnimPlugin, SettleAnim, ShakeAnim,
+    deal_stagger_delay, deal_stagger_secs_for_speed, foundation_flourish_scale, shake_offset,
+    settle_scale, FeedbackAnimPlugin, FoundationFlourish, FoundationMarkerFlourish, SettleAnim,
+    ShakeAnim,
 };
 pub use auto_complete_plugin::AutoCompletePlugin;
 pub use audio_plugin::{AudioPlugin, AudioState, SoundLibrary};
@@ -82,8 +83,8 @@ pub use font_plugin::{FontPlugin, FontResource};
 pub use cursor_plugin::CursorPlugin;
 pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,
-    ForfeitEvent, ForfeitRequestEvent, GameWonEvent, HelpRequestEvent, HintVisualEvent,
-    InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
+    ForfeitEvent, ForfeitRequestEvent, FoundationCompletedEvent, GameWonEvent, HelpRequestEvent,
+    HintVisualEvent, InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
     NewGameConfirmEvent, NewGameRequestEvent, PauseRequestEvent, StartChallengeRequestEvent,
     StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent, StartZenRequestEvent,
     StateChangedEvent, SyncCompleteEvent, ToggleAchievementsRequestEvent,

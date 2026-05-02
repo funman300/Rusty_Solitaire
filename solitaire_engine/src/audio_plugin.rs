@@ -28,8 +28,8 @@ use kira::track::{TrackBuilder, TrackHandle};
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Tween, Value};
 
 use crate::events::{
-    CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent, GameWonEvent, MoveRejectedEvent,
-    MoveRequestEvent, NewGameRequestEvent, UndoRequestEvent,
+    CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent, FoundationCompletedEvent,
+    GameWonEvent, MoveRejectedEvent, MoveRequestEvent, NewGameRequestEvent, UndoRequestEvent,
 };
 use crate::pause_plugin::PausedResource;
 use crate::resources::GameStateResource;
@@ -70,6 +70,12 @@ pub struct SoundLibrary {
     pub place: StaticSoundData,
     pub invalid: StaticSoundData,
     pub fanfare: StaticSoundData,
+    /// Per-suit foundation-completion ping. Played whenever a King
+    /// lands on a foundation pile (Ace → King, 13 cards). ~240 ms,
+    /// rising C-major triad an octave above `fanfare`'s root so the
+    /// two layer cleanly when the fourth completion co-occurs with
+    /// the win cascade.
+    pub foundation_complete: StaticSoundData,
 }
 
 /// Wraps the audio backend. `NonSend` because cpal streams are `!Send` on
@@ -145,6 +151,7 @@ impl Plugin for AudioPlugin {
             .add_message::<CardFlippedEvent>()
             .add_message::<CardFaceRevealedEvent>()
             .add_message::<UndoRequestEvent>()
+            .add_message::<FoundationCompletedEvent>()
             .add_message::<SettingsChangedEvent>()
             .add_systems(Startup, apply_initial_volume)
             .add_systems(
@@ -157,6 +164,7 @@ impl Plugin for AudioPlugin {
                     play_on_win,
                     play_on_face_revealed,
                     play_on_undo,
+                    play_on_foundation_complete,
                     apply_volume_on_change,
                     handle_mute_keys,
                 ),
@@ -170,12 +178,15 @@ fn build_library() -> Option<SoundLibrary> {
     let place = decode(include_bytes!("../../assets/audio/card_place.wav"))?;
     let invalid = decode(include_bytes!("../../assets/audio/card_invalid.wav"))?;
     let fanfare = decode(include_bytes!("../../assets/audio/win_fanfare.wav"))?;
+    let foundation_complete =
+        decode(include_bytes!("../../assets/audio/foundation_complete.wav"))?;
     Some(SoundLibrary {
         deal,
         flip,
         place,
         invalid,
         fanfare,
+        foundation_complete,
     })
 }
 
@@ -448,6 +459,25 @@ fn play_on_face_revealed(
     };
     for _ in events.read() {
         play(&mut audio, &lib.flip);
+    }
+}
+
+/// Plays the per-suit completion ping whenever a `FoundationCompletedEvent`
+/// fires (a King lands on a foundation pile that now holds Ace → King).
+///
+/// The fourth firing co-occurs with `GameWonEvent` and the win fanfare;
+/// the two layer cleanly because the ping sits an octave above the
+/// fanfare's root and is much shorter (~240 ms vs ~970 ms).
+fn play_on_foundation_complete(
+    mut events: MessageReader<FoundationCompletedEvent>,
+    mut audio: NonSendMut<AudioState>,
+    lib: Option<Res<SoundLibrary>>,
+) {
+    let Some(lib) = lib else {
+        return;
+    };
+    for _ in events.read() {
+        play(&mut audio, &lib.foundation_complete);
     }
 }
 

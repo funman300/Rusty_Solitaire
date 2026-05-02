@@ -379,6 +379,17 @@ pub const MOTION_BUTTON_BLEND_SECS: f32 = 0.10;
 /// readout 1.0 → 1.1 → 1.0. 250 ms.
 pub const MOTION_SCORE_PULSE_SECS: f32 = 0.25;
 
+/// Foundation-completion flourish — when a King lands on a foundation
+/// pile (Ace → King, 13 cards), briefly scale the King card 1.0 →
+/// [`FOUNDATION_FLOURISH_PEAK_SCALE`] → 1.0 and tint the matching
+/// `PileMarker` gold. 400 ms.
+pub const MOTION_FOUNDATION_FLOURISH_SECS: f32 = 0.4;
+
+/// Peak scale magnification reached at the midpoint of the
+/// foundation-completion flourish. The triangular curve climbs from
+/// 1.0 at `t=0` to this value at `t=0.5` and back to 1.0 at `t=1.0`.
+pub const FOUNDATION_FLOURISH_PEAK_SCALE: f32 = 1.15;
+
 /// Loading-ellipsis cycle — `.`/`..`/`...` toggles every step.
 /// 400 ms.
 pub const MOTION_LOADING_TICK_SECS: f32 = 0.40;

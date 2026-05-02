@@ -1,6 +1,7 @@
 //! Cross-system events used by the engine's plugins.
 
 use bevy::prelude::Message;
+use solitaire_core::card::Suit;
 use solitaire_core::game_state::GameMode;
 use solitaire_core::pile::PileType;
 use solitaire_data::AchievementRecord;
@@ -58,6 +59,28 @@ pub struct MoveRejectedEvent {
 pub struct GameWonEvent {
     pub score: i32,
     pub time_seconds: u64,
+}
+
+/// Fired by `GamePlugin` whenever a successful move lands a card on a
+/// foundation pile that, after the move, contains all 13 cards of its
+/// suit (Ace → King). Drives the per-suit completion flourish — a brief
+/// scale pulse on the King card and a golden tint on the foundation
+/// pile marker — plus a short audio ping.
+///
+/// Fired once per per-suit completion. The fourth completion will
+/// co-occur with `GameWonEvent` and the win cascade — they layer
+/// cleanly because the flourish is purely decorative and lives on a
+/// dedicated marker component.
+///
+/// This event is a UI/audio cue only. It does **not** cross
+/// `solitaire_sync` and is not persisted.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct FoundationCompletedEvent {
+    /// Foundation pile slot (0..=3) that just reached 13 cards.
+    pub slot: u8,
+    /// The suit of the completed foundation, taken from the bottom card
+    /// (always an Ace by construction).
+    pub suit: Suit,
 }
 
 /// Fired when a card's face-up state changes during gameplay.
