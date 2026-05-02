@@ -93,6 +93,7 @@ struct HotkeyRow {
 const HOTKEYS: &[HotkeyRow] = &[
     HotkeyRow { keys: "D / Space", description: "Draw from stock" },
     HotkeyRow { keys: "U", description: "Undo last move" },
+    HotkeyRow { keys: "Tab → Enter", description: "Pick a card; arrows pick where; Enter to drop" },
     HotkeyRow { keys: "N", description: "New Classic game" },
     HotkeyRow { keys: "M", description: "Open Mode Launcher (then 1–5 to pick)" },
     HotkeyRow { keys: "S", description: "Stats & progression" },

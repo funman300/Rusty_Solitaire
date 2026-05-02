@@ -110,7 +110,9 @@ pub use settings_plugin::{
 };
 pub use layout::{compute_layout, Layout, LayoutResource};
 pub use resources::{DragState, GameStateResource, HintCycleIndex, SettingsScrollPos, SyncStatus, SyncStatusResource};
-pub use selection_plugin::{SelectionHighlight, SelectionPlugin, SelectionState};
+pub use selection_plugin::{
+    KeyboardDragState, SelectionHighlight, SelectionPlugin, SelectionState,
+};
 pub use splash_plugin::{SplashAge, SplashPlugin, SplashRoot};
 pub use stats_plugin::{StatsPlugin, StatsResource, StatsScreen, StatsUpdate};
 pub use sync_plugin::{SyncPlugin, SyncProviderResource};

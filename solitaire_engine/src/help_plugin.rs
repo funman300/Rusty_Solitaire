@@ -95,6 +95,17 @@ const CONTROL_SECTIONS: &[ControlSection] = &[
         ],
     },
     ControlSection {
+        title: "Keyboard drag",
+        rows: &[
+            ControlRow { keys: "Tab", description: "Focus next draggable card" },
+            ControlRow { keys: "Enter", description: "Lift focused card (then arrows pick where)" },
+            ControlRow { keys: "Arrows / Tab", description: "Cycle legal destinations while lifted" },
+            ControlRow { keys: "Enter", description: "Drop the lifted cards on the focused pile" },
+            ControlRow { keys: "Esc", description: "Cancel lift (Esc again clears focus)" },
+            ControlRow { keys: "Space", description: "Auto-move focused card (foundation first)" },
+        ],
+    },
+    ControlSection {
         title: "New Game",
         rows: &[
             ControlRow { keys: "N", description: "New Classic game (N twice if in progress)" },
