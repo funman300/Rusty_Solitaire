@@ -8,6 +8,66 @@ project follows [Semantic Versioning](https://semver.org/).
 
 _Nothing yet._
 
+## [0.15.0] — 2026-05-02
+
+In-engine replay playback, the Klondike solver + "Winnable deals
+only" toggle, a 19th achievement, rolling replay history, and a
+significant build-time / binary-size win from disabling Bevy's
+default audio stack.
+
+### Added
+
+- **In-engine replay playback** for the Stats overlay's Watch Replay
+  button. New `ReplayPlaybackPlugin` runs a state machine
+  (Inactive / Playing / Completed) that resets the live game to the
+  recorded deal and ticks through `replay.moves` at
+  `REPLAY_MOVE_INTERVAL_SECS` (0.45 s) firing the canonical
+  `MoveRequestEvent` / `DrawRequestEvent` per recorded move.
+  Recording is suppressed during playback so replays don't re-record
+  themselves.
+- **Replay overlay banner** (`ReplayOverlayPlugin`) anchored to the
+  top of the window during playback. Shows "Replay" label, "Move N
+  of M" progress, and a Stop button. Z-order leaves modals
+  (Settings, Pause, Help) free to render on top so the player can
+  adjust audio mid-replay.
+- **Rolling replay history** at `<data_dir>/replays.json` capped at
+  8 entries. Replaces the single-slot `latest_replay.json` (legacy
+  file is migrated forward on first launch via
+  `migrate_legacy_latest_replay`). Stats overlay gains a Prev / Next
+  selector and a "Replay N / M" caption so the player can revisit
+  older wins.
+- **"Cinephile" achievement** (#19). Unlocks the first time
+  `ReplayPlaybackState` transitions Playing → Completed (i.e. the
+  replay played out to its end without the player pressing Stop).
+  Stop transitions Playing → Inactive directly so it doesn't count.
+- **Klondike solver** in `solitaire_core::solver`. Iterative-DFS
+  with memoisation on a 64-bit canonical state hash, two budget
+  knobs (move_budget + state_budget) for pathological cases, and a
+  three-state `SolverResult` (Winnable / Unwinnable / Inconclusive).
+  Median solve time 2 ms; pathological inconclusives cap near
+  120 ms. Pure logic — `solitaire_core` keeps no Bevy or I/O.
+- **"Winnable deals only" toggle** in Settings → Gameplay (default
+  off). When on, `handle_new_game` walks seed N, N+1, N+2, …
+  through `try_solve` until it finds Winnable or Inconclusive,
+  capped at `SOLVER_DEAL_RETRY_CAP` (50) attempts. Daily
+  challenges, replays, and explicit-seed requests bypass the
+  solver — only random Classic deals are gated.
+
+### Changed
+
+- **Bevy default-feature trim** (`bevy = { default-features = false,
+  features = [...] }` in workspace Cargo.toml) drops 51 transitive
+  crates including the `bevy_audio` → rodio → cpal 0.15 + symphonia
+  chain that the project doesn't use (kira handles audio directly).
+  The retained feature list is curated to exactly what the engine
+  uses; `solitaire_wasm` is unaffected because it doesn't depend on
+  bevy.
+
+### Stats
+
+- 1178 passing tests (was 1134 at v0.14.0 close).
+- Zero clippy warnings under `--workspace --all-targets -- -D warnings`.
+
 ## [0.14.0] — 2026-05-02
 
 Two threads land in v0.14.0: the second half of the post-v0.12.0 UX
@@ -405,7 +465,8 @@ with no PNG artwork yet.
   CREDITS.md, persistent window geometry, mode-launcher Home repurpose,
   client-side sync round-trip integration tests.
 
-[Unreleased]: https://github.com/funman300/Rusty_Solitaire/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/funman300/Rusty_Solitaire/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/funman300/Rusty_Solitaire/compare/v0.11.0...v0.12.0
