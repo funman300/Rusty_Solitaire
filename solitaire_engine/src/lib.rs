@@ -122,7 +122,10 @@ pub use selection_plugin::{
     KeyboardDragState, SelectionHighlight, SelectionPlugin, SelectionState,
 };
 pub use splash_plugin::{SplashAge, SplashPlugin, SplashRoot};
-pub use stats_plugin::{StatsPlugin, StatsResource, StatsScreen, StatsUpdate};
+pub use stats_plugin::{
+    format_replay_caption, LatestReplayPath, LatestReplayResource, StatsPlugin, StatsResource,
+    StatsScreen, StatsUpdate, WatchReplayButton,
+};
 pub use sync_plugin::{SyncPlugin, SyncProviderResource};
 pub use ui_focus::{Disabled, FocusGroup, Focusable, FocusedButton, UiFocusPlugin};
 pub use ui_modal::{

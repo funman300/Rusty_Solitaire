@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use solitaire_data::{
-    load_stats_from, save_stats_to, stats_file_path, PlayerProgress, StatsExt, StatsSnapshot,
-    WEEKLY_GOALS,
+    latest_replay_path, load_latest_replay_from, load_stats_from, save_stats_to, stats_file_path,
+    PlayerProgress, Replay, StatsExt, StatsSnapshot, WEEKLY_GOALS,
 };
 
 use crate::auto_complete_plugin::AutoCompleteState;
@@ -58,6 +58,30 @@ pub struct StatsScreen;
 #[derive(Component, Debug)]
 pub struct StatsCell;
 
+/// Resource holding the most recently loaded winning [`Replay`], if any.
+///
+/// Populated from `<data_dir>/solitaire_quest/latest_replay.json` at
+/// startup and refreshed in-place whenever the engine writes a new
+/// winning replay (the path the Stats UI calls into is unchanged so a
+/// re-open of the modal sees the latest record).
+///
+/// The Stats overlay reads this to decide whether to render the
+/// "Watch replay" call-to-action or the "No replay recorded yet"
+/// caption.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct LatestReplayResource(pub Option<Replay>);
+
+/// Persistence path for the latest winning replay file. `None` disables
+/// I/O — used by tests and by `StatsPlugin::headless`.
+#[derive(Resource, Debug, Clone)]
+pub struct LatestReplayPath(pub Option<PathBuf>);
+
+/// Marker on the "Watch replay" button inside the Stats modal. Clicking
+/// it currently fires an [`InfoToastEvent`] indicating playback ships
+/// in a future build — see [`handle_watch_replay_button`].
+#[derive(Component, Debug)]
+pub struct WatchReplayButton;
+
 /// Registers stats resources, update systems, and the UI toggle.
 pub struct StatsPlugin {
     /// Where to persist stats. `None` disables all file I/O (for tests).
@@ -87,8 +111,18 @@ impl Plugin for StatsPlugin {
             Some(path) => load_stats_from(path),
             None => StatsSnapshot::default(),
         };
+        // Replay file lives next to stats.json — when the StatsPlugin
+        // is in headless mode (storage_path = None), we mirror that
+        // policy and disable replay I/O too. Otherwise resolve the
+        // platform-default path via `latest_replay_path()`.
+        let replay_path = self.storage_path.as_ref().and(latest_replay_path());
+        let initial_replay = replay_path
+            .as_deref()
+            .and_then(load_latest_replay_from);
         app.insert_resource(StatsResource(loaded))
             .insert_resource(StatsStoragePath(self.storage_path.clone()))
+            .insert_resource(LatestReplayResource(initial_replay))
+            .insert_resource(LatestReplayPath(replay_path))
             .add_message::<GameWonEvent>()
             .add_message::<NewGameRequestEvent>()
             .add_message::<ForfeitEvent>()
@@ -114,8 +148,70 @@ impl Plugin for StatsPlugin {
                 handle_forfeit.before(GameMutation),
             )
             .add_systems(Update, toggle_stats_screen.after(GameMutation))
-            .add_systems(Update, handle_stats_close_button);
+            .add_systems(Update, handle_stats_close_button)
+            .add_systems(
+                Update,
+                refresh_latest_replay_on_win.after(GameMutation),
+            )
+            .add_systems(Update, handle_watch_replay_button);
     }
+}
+
+/// After a win, the engine has just persisted a fresh winning replay.
+/// Re-load it so the next time the player opens the Stats overlay, the
+/// "Watch replay" call-to-action reflects the most recent victory
+/// rather than an older session.
+fn refresh_latest_replay_on_win(
+    mut wins: MessageReader<GameWonEvent>,
+    mut latest: ResMut<LatestReplayResource>,
+    path: Res<LatestReplayPath>,
+) {
+    // Only re-load when at least one win actually fired.
+    if wins.read().next().is_none() {
+        return;
+    }
+    let Some(p) = path.0.as_deref() else {
+        return;
+    };
+    latest.0 = load_latest_replay_from(p);
+}
+
+/// Click handler for the "Watch replay" button.
+///
+/// Replay playback lives on the sync server's web UI rather than in
+/// the desktop client. This handler currently surfaces a clear toast
+/// pointing the player there once the upload + URL is wired; until
+/// then it acknowledges the click and signals that the feature is on
+/// the way.
+fn handle_watch_replay_button(
+    buttons: Query<&Interaction, (With<WatchReplayButton>, Changed<Interaction>)>,
+    latest: Res<LatestReplayResource>,
+    mut toast: MessageWriter<InfoToastEvent>,
+) {
+    if !buttons.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    let message = match &latest.0 {
+        Some(replay) => format!(
+            "Replay ready ({}) \u{2014} web playback coming in a future build",
+            format_replay_caption(replay),
+        ),
+        None => "No replay recorded yet \u{2014} win a game first.".to_string(),
+    };
+    toast.write(InfoToastEvent(message));
+}
+
+/// Pure helper: render a one-line caption for a [`Replay`] suitable
+/// for the Stats overlay button label and the "Replay loaded" toast.
+///
+/// Format: `"M:SS win on YYYY-MM-DD"`. For a 134-second win recorded
+/// on 2026-05-02, returns `"2:14 win on 2026-05-02"`.
+pub fn format_replay_caption(replay: &Replay) -> String {
+    format!(
+        "{} win on {}",
+        format_duration(replay.time_seconds),
+        replay.recorded_at,
+    )
 }
 
 fn persist(path: &StatsStoragePath, stats: &StatsSnapshot, context: &str) {
@@ -247,6 +343,7 @@ fn toggle_stats_screen(
     progress: Option<Res<ProgressResource>>,
     time_attack: Option<Res<TimeAttackResource>>,
     font_res: Option<Res<FontResource>>,
+    latest_replay: Res<LatestReplayResource>,
     screens: Query<Entity, With<StatsScreen>>,
 ) {
     let button_clicked = requests.read().count() > 0;
@@ -262,6 +359,7 @@ fn toggle_stats_screen(
             progress.as_deref().map(|p| &p.0),
             time_attack.as_deref(),
             font_res.as_deref(),
+            latest_replay.0.as_ref(),
         );
     }
 }
@@ -287,6 +385,7 @@ fn spawn_stats_screen(
     progress: Option<&PlayerProgress>,
     time_attack: Option<&TimeAttackResource>,
     font_res: Option<&FontResource>,
+    latest_replay: Option<&Replay>,
 ) {
     // --- primary stat cells ---
     // First-launch zero-state: when no games have been played yet, render
@@ -435,7 +534,34 @@ fn spawn_stats_screen(
                 ));
             }
 
+        // --- Latest replay caption ---
+        // Surfaces the most recent winning game so the player can spot
+        // whether their last victory has been recorded. The Watch
+        // Replay action below is what the player clicks to revisit it.
+        let replay_caption = match latest_replay {
+            Some(r) => format!("Latest win: {}", format_replay_caption(r)),
+            None => "No replay recorded yet \u{2014} win a game first.".to_string(),
+        };
+        card.spawn((
+            Text::new(replay_caption),
+            font_row.clone(),
+            TextColor(TEXT_SECONDARY),
+        ));
+
         spawn_modal_actions(card, |actions| {
+            // The Watch Replay button is always rendered so the
+            // affordance is discoverable from a fresh install. When no
+            // replay exists, the click handler surfaces a clear
+            // "No replay recorded yet" toast rather than silently
+            // doing nothing.
+            spawn_modal_button(
+                actions,
+                WatchReplayButton,
+                "Watch replay",
+                None,
+                ButtonVariant::Secondary,
+                font_res,
+            );
             spawn_modal_button(
                 actions,
                 StatsCloseButton,
