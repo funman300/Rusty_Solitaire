@@ -1,0 +1,29 @@
+[package]
+name    = "solitaire_wasm"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+solitaire_core = { path = "../solitaire_core" }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+chrono         = { workspace = true }
+wasm-bindgen   = "0.2"
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = { version = "0.1", optional = true }
+
+# `getrandom` is pulled in transitively via `rand` (used by
+# `solitaire_core::Deck::shuffle`). On `wasm32-unknown-unknown` it
+# needs an explicit JS-backend feature, otherwise the build aborts
+# with a "wasm32-unknown-unknown is not a supported target" error.
+# Pinning here forces the feature on without us having to pollute
+# `solitaire_core`'s deps with wasm-only flags.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[features]
+default = ["console_error_panic_hook"]

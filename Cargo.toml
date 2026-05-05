@@ -7,6 +7,7 @@ members = [
     "solitaire_server",
     "solitaire_app",
     "solitaire_assetgen",
+    "solitaire_wasm",
 ]
 resolver = "2"
 
