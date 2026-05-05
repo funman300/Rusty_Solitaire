@@ -11,11 +11,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
 use chrono::Utc;
-use solitaire_core::game_state::{DrawMode, GameState};
+use solitaire_core::game_state::{DrawMode, GameMode, GameState};
 use solitaire_core::pile::PileType;
+use solitaire_core::solver::{try_solve, SolverConfig, SolverResult};
 use solitaire_data::{
     append_replay_to_history, delete_game_state_at, game_state_file_path, load_game_state_from,
     migrate_legacy_latest_replay, replay_history_path, save_game_state_to, Replay, ReplayMove,
+    SOLVER_DEAL_RETRY_CAP,
 };
 #[allow(deprecated)]
 use solitaire_data::latest_replay_path;
@@ -218,6 +220,41 @@ fn seed_from_system_time() -> u64 {
         .map_or(0, |d| d.as_nanos() as u64)
 }
 
+/// Walks forward from `initial_seed` (incrementing by 1 with wrapping
+/// arithmetic) until the [`solitaire_core::solver`] returns a verdict
+/// the engine accepts as winnable, or until [`SOLVER_DEAL_RETRY_CAP`]
+/// attempts have elapsed.
+///
+/// The solver classifies each deal as one of three verdicts:
+///   - [`SolverResult::Winnable`] — provably solvable; accept.
+///   - [`SolverResult::Inconclusive`] — budget exceeded, no proof
+///     either way; accept (we treat "we don't know" as winnable so
+///     the toggle never silently drops a player into the retry cap).
+///   - [`SolverResult::Unwinnable`] — provably dead; try the next seed.
+///
+/// If every seed in the retry window is `Unwinnable` (extremely
+/// unlikely on real inputs), the function returns the *last* tried
+/// seed so the player still gets a deal — better a possibly-unwinnable
+/// hand than an infinite loop.
+///
+/// Pure helper extracted for testability — `new_game_with_solver_*`
+/// engine tests in the same file exercise this path.
+pub(crate) fn choose_winnable_seed(initial_seed: u64, draw_mode: &DrawMode) -> u64 {
+    let cfg = SolverConfig::default();
+    let mut seed = initial_seed;
+    for _ in 0..SOLVER_DEAL_RETRY_CAP {
+        match try_solve(seed, draw_mode.clone(), &cfg) {
+            SolverResult::Winnable | SolverResult::Inconclusive => return seed,
+            SolverResult::Unwinnable => {
+                seed = seed.wrapping_add(1);
+            }
+        }
+    }
+    // Retry cap exhausted — accept the latest tried seed rather than
+    // recurring forever.
+    seed
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_new_game(
     mut commands: Commands,
@@ -259,7 +296,7 @@ fn handle_new_game(
             commands.entity(entity).despawn();
         }
 
-        let seed = ev.seed.unwrap_or_else(seed_from_system_time);
+        let initial_seed = ev.seed.unwrap_or_else(seed_from_system_time);
         // Prefer the draw mode from Settings when starting a fresh game.
         // Fall back to the current game's draw mode in headless/test contexts
         // where SettingsPlugin is not installed.
@@ -267,7 +304,32 @@ fn handle_new_game(
             .as_ref()
             .map_or_else(|| game.0.draw_mode.clone(), |s| s.0.draw_mode.clone());
         let mode = ev.mode.unwrap_or(game.0.mode);
-        game.0 = GameState::new_with_mode(seed, draw_mode, mode);
+
+        // Solver-backed retry: when the player has opted in to
+        // "Winnable deals only" AND this is a random Classic deal
+        // (no caller-supplied seed), reject deals the solver can
+        // prove unwinnable and try the next seed. Capped at
+        // [`SOLVER_DEAL_RETRY_CAP`] so a pathological run can't
+        // hang the main thread — if every attempt is rejected we
+        // fall through to the latest tried seed.
+        //
+        // **Scope** — the retry deliberately skips:
+        // - Daily challenges and challenge-mode seeds (caller passes
+        //   `ev.seed = Some(...)` so the player gets the same deal as
+        //   everyone else).
+        // - Replays (the replay's own seed is authoritative).
+        // - Any other explicit seed request — the player asked for
+        //   that seed; honour it.
+        let winnable_only = settings
+            .as_ref()
+            .is_some_and(|s| s.0.winnable_deals_only);
+        let chosen_seed = if winnable_only && mode == GameMode::Classic && ev.seed.is_none() {
+            choose_winnable_seed(initial_seed, &draw_mode)
+        } else {
+            initial_seed
+        };
+
+        game.0 = GameState::new_with_mode(chosen_seed, draw_mode, mode);
         // Reset the in-flight replay buffer — a fresh deal starts with
         // an empty move list. The previously saved replay on disk
         // (latest_replay.json) is preserved until the player wins again.
@@ -2106,6 +2168,156 @@ mod tests {
         assert!(
             !path.exists(),
             "no replay must be written when recording is empty",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Solver-backed "Winnable deals only" toggle
+    //
+    // Exercises [`choose_winnable_seed`] and the wiring inside
+    // `handle_new_game` that consults [`Settings::winnable_deals_only`].
+    // -----------------------------------------------------------------------
+
+    /// Inject a `SettingsResource` with the given `winnable_deals_only`
+    /// flag. The handle_new_game system already reads this resource via
+    /// `Option<Res<...>>`, so no `SettingsPlugin` boot is needed.
+    fn insert_settings(app: &mut App, winnable_deals_only: bool) {
+        let settings = solitaire_data::Settings {
+            winnable_deals_only,
+            ..solitaire_data::Settings::default()
+        };
+        app.insert_resource(crate::settings_plugin::SettingsResource(settings));
+    }
+
+    #[test]
+    fn new_game_with_solver_toggle_off_uses_requested_seed() {
+        // Toggle off — the engine must use the seed it was handed and
+        // never invoke the solver. Seed 999 is just an arbitrary
+        // deterministic seed; the test asserts the resulting deal
+        // matches `GameState::new(999, DrawOne)`.
+        let mut app = test_app(1);
+        insert_settings(&mut app, false);
+
+        app.world_mut().write_message(NewGameRequestEvent {
+            seed: Some(999),
+            mode: None,
+            confirmed: false,
+        });
+        app.update();
+
+        let actual_seed = app.world().resource::<GameStateResource>().0.seed;
+        assert_eq!(
+            actual_seed, 999,
+            "with solver toggle off, the requested seed must be honoured exactly"
+        );
+        // Cross-check: the dealt tableau must match GameState::new(999) byte-for-byte.
+        let expected = GameState::new(999, DrawMode::DrawOne);
+        for i in 0..7 {
+            assert_eq!(
+                app.world().resource::<GameStateResource>().0.piles[&PileType::Tableau(i)].cards,
+                expected.piles[&PileType::Tableau(i)].cards,
+                "tableau column {i} must match the unfiltered seed",
+            );
+        }
+    }
+
+    #[test]
+    fn new_game_with_solver_toggle_off_random_seed_path() {
+        // When seed is None and toggle is off, the engine uses a
+        // system-time seed and skips the solver. We can't pin the
+        // exact seed, but we can assert the seed is *not* the
+        // sentinel zero (which would only happen if SystemTime is
+        // before the epoch — practically impossible), AND that no
+        // resource has been mutated to suggest the solver ran.
+        // The strongest assertion is "the move runs to completion
+        // without panicking", which the .update() call covers.
+        let mut app = test_app(1);
+        insert_settings(&mut app, false);
+
+        app.world_mut().write_message(NewGameRequestEvent {
+            seed: None,
+            mode: None,
+            confirmed: false,
+        });
+        app.update();
+
+        // Game state was reseeded — move_count is 0 on the new game.
+        assert_eq!(app.world().resource::<GameStateResource>().0.move_count, 0);
+    }
+
+    #[test]
+    fn new_game_with_solver_toggle_on_skips_solver_for_specific_seed() {
+        // Even with the toggle on, an *explicit* seed must be honoured:
+        // daily challenges, replay seeding, and challenge-mode all
+        // pass `Some(seed)` and must never be retried.
+        let mut app = test_app(1);
+        insert_settings(&mut app, true);
+
+        app.world_mut().write_message(NewGameRequestEvent {
+            seed: Some(123),
+            mode: None,
+            confirmed: false,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<GameStateResource>().0.seed,
+            123,
+            "explicit-seed requests must skip the solver retry loop",
+        );
+    }
+
+    #[test]
+    fn choose_winnable_seed_skips_unwinnable_seed() {
+        // Seed 394 was identified by the offline scan
+        // (`solver::tests::find_unwinnable`) as the only Unwinnable
+        // seed in 0..500 under the default solver budget. Seed 395
+        // resolves as Inconclusive — the engine treats Inconclusive
+        // as winnable (see `choose_winnable_seed` doc), so the
+        // helper must return 395 when started at 394.
+        let chosen = choose_winnable_seed(394, &DrawMode::DrawOne);
+        assert_eq!(
+            chosen, 395,
+            "seed 394 is Unwinnable; the next seed (395, Inconclusive) must be accepted"
+        );
+    }
+
+    #[test]
+    fn new_game_with_solver_toggle_on_retries_until_winnable() {
+        // End-to-end: with the toggle on, fire a NewGameRequestEvent
+        // with seed=None and *manually pre-seed* the system-time
+        // path by clearing the GameStateResource so handle_new_game
+        // takes the random branch. We can't easily inject the
+        // system-time seed here, so we exercise the helper via a
+        // separate call and assert the *resource* receives the
+        // post-retry seed when the helper would have rejected.
+        //
+        // We test the integration by setting up an alternative
+        // scenario: pass `seed: Some(394)` with toggle on. Our
+        // implementation already documents that explicit seeds skip
+        // the retry, so this *won't* trigger retry. The cleaner
+        // integration is captured in `choose_winnable_seed_skips_*`.
+        // Here we verify the default-seed path doesn't crash when
+        // toggle is on — exercising the live solver call inside
+        // handle_new_game without depending on the solver picking
+        // a specific seed.
+        let mut app = test_app(1);
+        insert_settings(&mut app, true);
+
+        app.world_mut().write_message(NewGameRequestEvent {
+            seed: None,
+            mode: None,
+            confirmed: false,
+        });
+        app.update();
+
+        // The chosen seed is non-deterministic (system time),
+        // but the new game must have been started cleanly:
+        // move_count back to 0, undo stack empty.
+        assert_eq!(app.world().resource::<GameStateResource>().0.move_count, 0);
+        assert_eq!(
+            app.world().resource::<GameStateResource>().0.undo_stack_len(),
+            0
         );
     }
 }

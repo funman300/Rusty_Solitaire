@@ -6,3 +6,4 @@ pub mod game_state;
 pub mod pile;
 pub mod rules;
 pub mod scoring;
+pub mod solver;

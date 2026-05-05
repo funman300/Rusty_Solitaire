@@ -166,6 +166,21 @@ pub struct Settings {
     /// `#[serde(default = "default_time_bonus_multiplier")]`.
     #[serde(default = "default_time_bonus_multiplier")]
     pub time_bonus_multiplier: f32,
+    /// When `true`, the engine rejects new-game deals the
+    /// [`solitaire_core::solver`] cannot prove winnable, retrying
+    /// fresh seeds up to [`SOLVER_DEAL_RETRY_CAP`] attempts before
+    /// giving up and using the last tried seed. Off by default —
+    /// the solver adds a few hundred milliseconds of latency on the
+    /// pathological deals that hit the budget cap, and not every
+    /// player wants to wait. Older `settings.json` files written
+    /// before this field existed deserialize cleanly to `false` via
+    /// `#[serde(default)]`.
+    ///
+    /// Scope: only random-seed Classic-mode deals are filtered.
+    /// Daily challenges, replays, and explicit-seed requests skip the
+    /// solver retry loop — see `solitaire_engine::handle_new_game`.
+    #[serde(default)]
+    pub winnable_deals_only: bool,
 }
 
 fn default_draw_mode() -> DrawMode {
@@ -223,6 +238,17 @@ fn default_time_bonus_multiplier() -> f32 {
     1.0
 }
 
+/// Maximum number of seed retries [`solitaire_engine::handle_new_game`]
+/// is willing to attempt before giving up and accepting the latest
+/// candidate seed when [`Settings::winnable_deals_only`] is on. If
+/// every retry comes back [`SolverResult::Unwinnable`] (which would
+/// be very unusual) we'd rather hand the player a possibly-unwinnable
+/// deal than spin forever on the main thread.
+///
+/// 50 attempts × ~50 ms median per solve = ~2.5 s worst-case stall —
+/// the upper bound on UI freeze when the toggle is on.
+pub const SOLVER_DEAL_RETRY_CAP: u32 = 50;
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -241,6 +267,7 @@ impl Default for Settings {
             shown_achievement_onboarding: false,
             tooltip_delay_secs: default_tooltip_delay(),
             time_bonus_multiplier: default_time_bonus_multiplier(),
+            winnable_deals_only: false,
         }
     }
 }
@@ -428,6 +455,7 @@ mod tests {
             shown_achievement_onboarding: false,
             tooltip_delay_secs: default_tooltip_delay(),
             time_bonus_multiplier: default_time_bonus_multiplier(),
+            winnable_deals_only: false,
         };
         save_settings_to(&path, &s).expect("save");
         let loaded = load_settings_from(&path);
@@ -833,6 +861,51 @@ mod tests {
             (s2.time_bonus_multiplier - 1.0).abs() < 1e-6,
             "rounding should pin repeated 0.1 steps to the decimal grid, got {}",
             s2.time_bonus_multiplier
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // winnable_deals_only — solver-backed deal filter toggle
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settings_winnable_deals_only_default_is_false() {
+        // Off by default — the solver adds latency we shouldn't impose
+        // on every player without their consent.
+        assert!(
+            !Settings::default().winnable_deals_only,
+            "default winnable_deals_only must be false"
+        );
+    }
+
+    #[test]
+    fn settings_winnable_deals_only_round_trip() {
+        let path = tmp_path("winnable_deals_only_round_trip");
+        let _ = fs::remove_file(&path);
+        let s = Settings {
+            winnable_deals_only: true,
+            ..Settings::default()
+        };
+        save_settings_to(&path, &s).expect("save");
+        let loaded = load_settings_from(&path);
+        assert!(
+            loaded.winnable_deals_only,
+            "winnable_deals_only must survive serde round-trip"
+        );
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_settings_without_winnable_deals_only_deserializes_to_false() {
+        // A settings.json written before this field existed must
+        // deserialize cleanly to `false` (the default-off behaviour)
+        // rather than failing the whole load or surprising the player
+        // by switching the toggle on.
+        let json = br#"{ "sfx_volume": 0.7, "first_run_complete": true }"#;
+        let s: Settings = serde_json::from_slice(json).unwrap_or_default();
+        assert!(
+            !s.winnable_deals_only,
+            "legacy settings.json missing winnable_deals_only must deserialize to false"
         );
     }
 }

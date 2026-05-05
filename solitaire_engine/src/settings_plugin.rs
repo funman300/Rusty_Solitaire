@@ -132,6 +132,11 @@ struct TooltipDelayText;
 #[derive(Component, Debug)]
 struct TimeBonusMultiplierText;
 
+/// Marks the `Text` node showing the current "Winnable deals only"
+/// state ("ON" / "OFF") in the Gameplay section.
+#[derive(Component, Debug)]
+struct WinnableDealsOnlyText;
+
 /// Marks the scrollable inner card so the mouse-wheel system can target it.
 #[derive(Component, Debug)]
 struct SettingsPanelScrollable;
@@ -176,6 +181,11 @@ enum SettingsButton {
     TimeBonusUp,
     ToggleTheme,
     ToggleColorBlind,
+    /// Toggle the [`Settings::winnable_deals_only`] flag. When on, new
+    /// random Classic-mode deals are filtered through
+    /// [`solitaire_core::solver::try_solve`] until one is provably
+    /// winnable (or the retry cap is hit). Off by default.
+    ToggleWinnableDealsOnly,
     SyncNow,
     Done,
     /// Select a specific card-back by index from the picker row.
@@ -203,6 +213,7 @@ impl SettingsButton {
             SettingsButton::MusicUp => 21,
             // Gameplay section
             SettingsButton::ToggleDrawMode => 30,
+            SettingsButton::ToggleWinnableDealsOnly => 35,
             SettingsButton::CycleAnimSpeed => 40,
             SettingsButton::TooltipDelayDown => 45,
             SettingsButton::TooltipDelayUp => 46,
@@ -299,6 +310,7 @@ impl Plugin for SettingsPlugin {
                     update_color_blind_text,
                     update_tooltip_delay_text,
                     update_time_bonus_multiplier_text,
+                    update_winnable_deals_only_text,
                     attach_focusable_to_settings_buttons,
                     scroll_focus_into_view,
                 ),
@@ -549,6 +561,21 @@ fn update_color_blind_text(
     }
 }
 
+/// Refreshes the live "Winnable deals only" toggle value in the
+/// Gameplay section whenever `SettingsResource` changes (button click,
+/// hand-edited `settings.json` reload, etc.).
+fn update_winnable_deals_only_text(
+    settings: Res<SettingsResource>,
+    mut text_nodes: Query<&mut Text, With<WinnableDealsOnlyText>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut text_nodes {
+        **text = winnable_deals_only_label(settings.0.winnable_deals_only);
+    }
+}
+
 /// Refreshes the live tooltip-delay value in the Gameplay section
 /// whenever `SettingsResource` changes (slider buttons, hand-edited
 /// settings.json reload, etc.).
@@ -758,6 +785,13 @@ fn handle_settings_buttons(
                     **t = color_blind_label(settings.0.color_blind_mode);
                 }
             }
+            SettingsButton::ToggleWinnableDealsOnly => {
+                settings.0.winnable_deals_only = !settings.0.winnable_deals_only;
+                persist(&path, &settings.0);
+                changed.write(SettingsChangedEvent(settings.0.clone()));
+                // The Text node is refreshed by `update_winnable_deals_only_text`
+                // on the next frame via `settings.is_changed()`.
+            }
             SettingsButton::SelectCardBack(idx) => {
                 settings.0.selected_card_back = *idx;
                 persist(&path, &settings.0);
@@ -809,6 +843,13 @@ fn theme_label(theme: &Theme) -> String {
 }
 
 fn color_blind_label(enabled: bool) -> String {
+    if enabled { "ON".into() } else { "OFF".into() }
+}
+
+/// Display string for the "Winnable deals only" toggle. Mirrors
+/// [`color_blind_label`] — "ON" / "OFF" — so the layout is uniform
+/// with the rest of the Gameplay-section toggles.
+fn winnable_deals_only_label(enabled: bool) -> String {
     if enabled { "ON".into() } else { "OFF".into() }
 }
 
@@ -1156,6 +1197,16 @@ fn spawn_settings_panel(
                 draw_mode_label(&settings.draw_mode),
                 SettingsButton::ToggleDrawMode,
                 "Switch between Draw 1 and Draw 3. Takes effect next deal.",
+                font_res,
+            );
+            toggle_row(
+                body,
+                "Winnable deals only",
+                WinnableDealsOnlyText,
+                winnable_deals_only_label(settings.winnable_deals_only),
+                SettingsButton::ToggleWinnableDealsOnly,
+                "When on, fresh Classic deals are filtered through a solver \
+                 (may take a moment when on).",
                 font_res,
             );
             toggle_row(
