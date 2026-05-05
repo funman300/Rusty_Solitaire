@@ -510,58 +510,57 @@ fn handle_undo(
 // Task #29 — No-moves detection
 // ---------------------------------------------------------------------------
 
-/// Returns `true` if the current game state has at least one legal move.
+/// Returns `true` if the current game state has at least one legal move
+/// that could ever lead to progress.
 ///
-/// Considers:
-/// - Any non-empty Stock or Waste pile (draw / recycle is always available).
-/// - Any face-up card on Waste or Tableau piles that can legally move to any
-///   Foundation or Tableau destination.
+/// Considers a card "playable" if it's currently face-up on the top of
+/// the Waste or any Tableau, OR if it lives in the Stock or Waste pile
+/// at all (every card in those piles eventually rotates through the
+/// Waste's top in both Draw-One and Draw-Three over the course of
+/// recycling). For each such candidate, checks whether it can land on
+/// any Foundation or any Tableau in the current state.
+///
+/// Returns `false` only when *no* card anywhere can land anywhere —
+/// the player can keep drawing through the stock forever and nothing
+/// will ever come of it. This treats "draw cycle with no useful drop"
+/// as a softlock rather than as "legal moves remain", which the
+/// previous heuristic incorrectly did (Quat hit this with 4 cards
+/// remaining and the game just sat there).
 pub fn has_legal_moves(game: &GameState) -> bool {
+    use solitaire_core::card::Card;
     use solitaire_core::pile::PileType;
     use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 
-    // If stock or waste is non-empty, the player can always draw.
-    if !game.piles.get(&PileType::Stock).is_some_and(|p| p.cards.is_empty())
-        || !game.piles.get(&PileType::Waste).is_some_and(|p| p.cards.is_empty())
-    {
-        return true;
+    let mut sources: Vec<Card> = Vec::new();
+    for ty in [PileType::Stock, PileType::Waste] {
+        if let Some(p) = game.piles.get(&ty) {
+            sources.extend(p.cards.iter().cloned());
+        }
+    }
+    for i in 0..7_usize {
+        if let Some(t) = game.piles.get(&PileType::Tableau(i))
+            && let Some(top) = t.cards.last().filter(|c| c.face_up)
+        {
+            sources.push(top.clone());
+        }
     }
 
-    // Check each playable source pile.
-    let sources: Vec<PileType> = {
-        let mut v = vec![PileType::Waste];
-        for i in 0..7_usize {
-            v.push(PileType::Tableau(i));
-        }
-        v
-    };
-
-    for from in &sources {
-        let Some(from_pile) = game.piles.get(from) else { continue };
-        let Some(card) = from_pile.cards.last().filter(|c| c.face_up) else { continue };
-
-        // Check foundation slots.
+    for card in &sources {
         for slot in 0..4_u8 {
-            let dest = PileType::Foundation(slot);
-            if let Some(dest_pile) = game.piles.get(&dest)
-                && can_place_on_foundation(card, dest_pile) {
-                    return true;
-                }
-        }
-
-        // Check tableau piles.
-        for i in 0..7_usize {
-            let dest = PileType::Tableau(i);
-            if dest == *from {
-                continue;
+            if let Some(dest) = game.piles.get(&PileType::Foundation(slot))
+                && can_place_on_foundation(card, dest)
+            {
+                return true;
             }
-            if let Some(dest_pile) = game.piles.get(&dest)
-                && can_place_on_tableau(card, dest_pile) {
-                    return true;
-                }
+        }
+        for i in 0..7_usize {
+            if let Some(dest) = game.piles.get(&PileType::Tableau(i))
+                && can_place_on_tableau(card, dest)
+            {
+                return true;
+            }
         }
     }
-
     false
 }
 
@@ -1135,10 +1134,49 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn has_legal_moves_returns_true_when_stock_nonempty() {
-        // A fresh game has 24 cards in stock — draw is always available.
+    fn has_legal_moves_returns_true_for_fresh_game() {
+        // A fresh deal always contains at least one playable card —
+        // typically several tableau→tableau opportunities plus any Aces
+        // that surface as a tableau column's bottom card.
         let game = GameState::new(42, DrawMode::DrawOne);
-        assert!(has_legal_moves(&game), "draw is always available when stock is non-empty");
+        assert!(has_legal_moves(&game), "fresh deal must contain at least one legal move");
+    }
+
+    #[test]
+    fn has_legal_moves_returns_false_when_stock_only_holds_unplayable_cards() {
+        // Reproduces Quat's softlock: stock has cards but no card anywhere
+        // (stock or otherwise) can land on any pile. The previous heuristic
+        // returned `true` here because stock was non-empty, so the game
+        // sat there forever instead of declaring softlock.
+        use solitaire_core::card::{Card, Rank, Suit};
+        let mut game = GameState::new(1, DrawMode::DrawOne);
+        for slot in 0..4_u8 {
+            game.piles.get_mut(&PileType::Foundation(slot)).unwrap().cards.clear();
+        }
+        for i in 0..7_usize {
+            game.piles.get_mut(&PileType::Tableau(i)).unwrap().cards.clear();
+        }
+        game.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
+        // Fill foundation 0 with Clubs A–10, leaving only J/Q/K of Clubs
+        // as plausible foundation moves; load the stock with cards that
+        // can't land on the empty tableau (anything but a King) and can't
+        // extend foundation 0 (anything but Jack of Clubs).
+        let stock = game.piles.get_mut(&PileType::Stock).unwrap();
+        stock.cards.clear();
+        for r in [Rank::Two, Rank::Three, Rank::Four, Rank::Five] {
+            stock.cards.push(Card { id: 100 + r as u32, suit: Suit::Hearts, rank: r, face_up: false });
+        }
+        let foundation_zero = game.piles.get_mut(&PileType::Foundation(0)).unwrap();
+        for r in [
+            Rank::Ace, Rank::Two, Rank::Three, Rank::Four, Rank::Five,
+            Rank::Six, Rank::Seven, Rank::Eight, Rank::Nine, Rank::Ten,
+        ] {
+            foundation_zero.cards.push(Card { id: r as u32, suit: Suit::Clubs, rank: r, face_up: true });
+        }
+        assert!(
+            !has_legal_moves(&game),
+            "stock cards with no legal landing should count as softlock",
+        );
     }
 
     #[test]
