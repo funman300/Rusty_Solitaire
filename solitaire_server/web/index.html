@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solitaire Quest — Replay</title>
+    <link rel="stylesheet" href="/web/replay.css">
+</head>
+<body>
+    <header>
+        <h1>Solitaire Quest <span class="muted">— Replay</span></h1>
+        <div id="caption" class="muted">Loading…</div>
+    </header>
+
+    <main>
+        <section id="board"></section>
+
+        <section id="controls">
+            <button id="btn-prev" disabled>⏮ Restart</button>
+            <button id="btn-play">▶ Play</button>
+            <button id="btn-step">⏭ Step</button>
+            <span id="progress" class="muted">step 0 / 0</span>
+        </section>
+
+        <section id="status" class="muted">
+            <span id="score">Score 0</span>
+            <span id="moves">Moves 0</span>
+            <span id="result"></span>
+        </section>
+    </main>
+
+    <script type="module" src="/web/replay.js"></script>
+</body>
+</html>

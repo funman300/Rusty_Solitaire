@@ -15,6 +15,7 @@ pub mod sync;
 use axum::{
     extract::DefaultBodyLimit,
     middleware as axum_middleware,
+    response::Html,
     routing::{delete, get, post},
     Router,
 };
@@ -25,6 +26,7 @@ use tower_governor::{
     key_extractor::SmartIpKeyExtractor,
     GovernorLayer,
 };
+use tower_http::services::ServeDir;
 
 /// Shared application state injected into every Axum handler via [`axum::extract::State`].
 ///
@@ -104,10 +106,23 @@ fn build_router_inner(state: AppState, rate_limit: bool) -> Router {
         .route("/api/replays/{id}", get(replays::get_by_id))
         .route("/health", get(health));
 
+    // Replay web UI: a single HTML page served at `/replays/:id` plus a
+    // ServeDir for the static assets (`web/index.html`, `web/replay.css`,
+    // and the wasm-bindgen-generated `web/pkg/`). The HTML page is the
+    // same regardless of `:id` — it reads the path from `location` in JS
+    // and fetches the replay JSON from `/api/replays/:id`.
+    let web = Router::new()
+        .route(
+            "/replays/{id}",
+            get(|| async { Html(include_str!("../web/index.html")) }),
+        )
+        .nest_service("/web", ServeDir::new("solitaire_server/web"));
+
     Router::new()
         .merge(protected)
         .merge(auth_routes)
         .merge(public)
+        .merge(web)
         // Reject request bodies larger than 1 MB.
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .with_state(state)
