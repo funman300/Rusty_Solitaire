@@ -298,4 +298,70 @@ mod tests {
         assert!(!recorded_again, "same-day completion must report no-op");
         assert_eq!(p.daily_challenge_streak, 1);
     }
+
+    // --- Daily challenge history & longest streak ---
+
+    #[test]
+    fn record_daily_completion_appends_to_history() {
+        // Recording a completion adds the date to history, preserving the
+        // pre-call length + 1, and the new entry is the chronological tail.
+        let mut p = PlayerProgress::default();
+        let prev_len = p.daily_challenge_history.len();
+        let today = NaiveDate::from_ymd_opt(2026, 5, 5).unwrap();
+        let recorded = p.record_daily_completion(today);
+        assert!(recorded);
+        assert_eq!(p.daily_challenge_history.len(), prev_len + 1);
+        assert_eq!(p.daily_challenge_history.last().copied(), Some(today));
+    }
+
+    #[test]
+    fn record_daily_completion_updates_longest_streak() {
+        // A streak of 4 must lift `daily_challenge_longest_streak` from 2 to 4
+        // (we seed the previous best at 2 and watch it get overtaken).
+        let mut p = PlayerProgress {
+            daily_challenge_longest_streak: 2,
+            ..Default::default()
+        };
+        let d = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+        p.record_daily_completion(d);
+        p.record_daily_completion(d + Duration::days(1));
+        p.record_daily_completion(d + Duration::days(2));
+        // 3rd consecutive day equals the previous best; longest should match.
+        assert_eq!(p.daily_challenge_streak, 3);
+        assert_eq!(p.daily_challenge_longest_streak, 3);
+        // 4th consecutive day overtakes the previous best.
+        p.record_daily_completion(d + Duration::days(3));
+        assert_eq!(p.daily_challenge_streak, 4);
+        assert_eq!(p.daily_challenge_longest_streak, 4);
+    }
+
+    #[test]
+    fn legacy_progress_without_history_deserializes_to_empty() {
+        // A progress.json file produced before the history fields existed
+        // must still round-trip through serde::from_slice without error,
+        // with the new fields landing on their `#[serde(default)]` values.
+        let path = tmp_path("legacy_no_history");
+        let _ = fs::remove_file(&path);
+        let legacy_json = br#"{
+            "total_xp": 1500,
+            "level": 3,
+            "daily_challenge_last_completed": null,
+            "daily_challenge_streak": 0,
+            "weekly_goal_progress": {},
+            "unlocked_card_backs": [0],
+            "unlocked_backgrounds": [0],
+            "last_modified": "2026-04-29T12:00:00Z"
+        }"#;
+        fs::write(&path, legacy_json).expect("write");
+        let p = load_progress_from(&path);
+        assert_eq!(p.total_xp, 1500);
+        assert!(
+            p.daily_challenge_history.is_empty(),
+            "legacy file lacking daily_challenge_history must default to empty"
+        );
+        assert_eq!(
+            p.daily_challenge_longest_streak, 0,
+            "legacy file lacking daily_challenge_longest_streak must default to 0"
+        );
+    }
 }

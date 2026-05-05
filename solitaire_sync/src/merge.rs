@@ -3,10 +3,10 @@
 //! All functions are free of I/O and side effects — safe to call from any
 //! context including unit tests and the Bevy main thread.
 
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 
 use crate::{AchievementRecord, ConflictReport, PlayerProgress, StatsSnapshot, SyncPayload};
-use crate::progress::level_for_xp;
+use crate::progress::{level_for_xp, DAILY_CHALLENGE_HISTORY_CAP};
 
 /// Merge two [`SyncPayload`]s into a single authoritative result.
 ///
@@ -240,6 +240,22 @@ fn merge_progress(
     // Challenge index: take the higher (further ahead in challenge progression).
     let challenge_index = local.challenge_index.max(remote.challenge_index);
 
+    // Daily-challenge history: union the two ordered lists into a sorted,
+    // deduplicated, capped Vec so completions made on either device survive.
+    let daily_challenge_history = union_naive_dates(
+        &local.daily_challenge_history,
+        &remote.daily_challenge_history,
+    );
+
+    // Longest streak ever: simple max — never regresses.
+    let daily_challenge_longest_streak = local
+        .daily_challenge_longest_streak
+        .max(remote.daily_challenge_longest_streak)
+        // Also defend against an old payload whose `longest_streak` was
+        // never written but whose current `daily_challenge_streak` exceeds
+        // the recorded longest — keep them coherent post-merge.
+        .max(daily_challenge_streak);
+
     PlayerProgress {
         total_xp,
         level: level_for_xp(total_xp),
@@ -250,6 +266,8 @@ fn merge_progress(
         unlocked_card_backs,
         unlocked_backgrounds,
         challenge_index,
+        daily_challenge_history,
+        daily_challenge_longest_streak,
         last_modified: Utc::now(),
     }
 }
@@ -259,6 +277,20 @@ fn union_usize_vecs(a: &[usize], b: &[usize]) -> Vec<usize> {
     use std::collections::BTreeSet;
     let set: BTreeSet<usize> = a.iter().chain(b.iter()).copied().collect();
     set.into_iter().collect()
+}
+
+/// Returns the sorted union of two `NaiveDate` slices with duplicates
+/// removed and the result capped at [`DAILY_CHALLENGE_HISTORY_CAP`]
+/// entries (oldest dates trimmed first).
+fn union_naive_dates(a: &[NaiveDate], b: &[NaiveDate]) -> Vec<NaiveDate> {
+    use std::collections::BTreeSet;
+    let set: BTreeSet<NaiveDate> = a.iter().chain(b.iter()).copied().collect();
+    let mut v: Vec<NaiveDate> = set.into_iter().collect();
+    if v.len() > DAILY_CHALLENGE_HISTORY_CAP {
+        let excess = v.len() - DAILY_CHALLENGE_HISTORY_CAP;
+        v.drain(0..excess);
+    }
+    v
 }
 
 // ---------------------------------------------------------------------------
@@ -752,5 +784,111 @@ mod tests {
         remote.stats.fastest_win_seconds = 300;
         let (merged, _) = merge(&local, &remote);
         assert_eq!(merged.stats.fastest_win_seconds, 300);
+    }
+
+    // -----------------------------------------------------------------------
+    // Daily-challenge history + longest-streak merge
+    // -----------------------------------------------------------------------
+
+    fn nd(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn merge_unions_daily_challenge_history() {
+        // Local and remote have disjoint completion dates; the merged
+        // history must contain all of them, sorted ascending, with no
+        // duplicates and within the cap.
+        let mut local = default_payload();
+        local.progress.daily_challenge_history =
+            vec![nd(2026, 4, 20), nd(2026, 4, 22), nd(2026, 4, 24)];
+        let mut remote = default_payload();
+        remote.progress.daily_challenge_history =
+            vec![nd(2026, 4, 21), nd(2026, 4, 22), nd(2026, 4, 25)];
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(
+            merged.progress.daily_challenge_history,
+            vec![
+                nd(2026, 4, 20),
+                nd(2026, 4, 21),
+                nd(2026, 4, 22),
+                nd(2026, 4, 24),
+                nd(2026, 4, 25),
+            ],
+            "history union must be sorted, deduplicated, and contain every date from either side"
+        );
+        assert!(
+            merged.progress.daily_challenge_history.len() <= DAILY_CHALLENGE_HISTORY_CAP,
+            "merged history must respect the 365-entry cap"
+        );
+    }
+
+    #[test]
+    fn merge_caps_daily_challenge_history_at_max() {
+        // Construct a local history that already has CAP entries and a
+        // remote history that adds 50 fresher entries — the merge must
+        // drop the oldest 50 so the cap is preserved.
+        let start = nd(2024, 1, 1);
+        let local_dates: Vec<NaiveDate> = (0..DAILY_CHALLENGE_HISTORY_CAP as i64)
+            .map(|i| start + chrono::Duration::days(i))
+            .collect();
+        let remote_dates: Vec<NaiveDate> = (DAILY_CHALLENGE_HISTORY_CAP as i64
+            ..DAILY_CHALLENGE_HISTORY_CAP as i64 + 50)
+            .map(|i| start + chrono::Duration::days(i))
+            .collect();
+
+        let mut local = default_payload();
+        local.progress.daily_challenge_history = local_dates.clone();
+        let mut remote = default_payload();
+        remote.progress.daily_challenge_history = remote_dates.clone();
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(
+            merged.progress.daily_challenge_history.len(),
+            DAILY_CHALLENGE_HISTORY_CAP,
+            "merged history must be capped at DAILY_CHALLENGE_HISTORY_CAP"
+        );
+        // The oldest 50 entries should have been evicted; oldest retained
+        // is therefore start + 50 days.
+        assert_eq!(
+            merged.progress.daily_challenge_history.first().copied(),
+            Some(start + chrono::Duration::days(50))
+        );
+        // Most recent retained is the last remote date.
+        assert_eq!(
+            merged.progress.daily_challenge_history.last().copied(),
+            remote_dates.last().copied()
+        );
+    }
+
+    #[test]
+    fn merge_takes_max_longest_streak() {
+        let mut local = default_payload();
+        local.progress.daily_challenge_longest_streak = 4;
+        let mut remote = default_payload();
+        remote.progress.daily_challenge_longest_streak = 9;
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(
+            merged.progress.daily_challenge_longest_streak, 9,
+            "longest streak must be the max across both sides"
+        );
+    }
+
+    #[test]
+    fn merge_longest_streak_never_below_current_streak() {
+        // If a payload's `daily_challenge_longest_streak` was never written
+        // (legacy file) but its `daily_challenge_streak` is non-zero, the
+        // merged longest must reflect at least the current streak so the
+        // two values stay coherent.
+        let mut local = default_payload();
+        local.progress.daily_challenge_streak = 7;
+        local.progress.daily_challenge_longest_streak = 0; // legacy
+        let remote = default_payload();
+        let (merged, _) = merge(&local, &remote);
+        assert!(
+            merged.progress.daily_challenge_longest_streak >= 7,
+            "longest streak must be at least as large as the merged current streak"
+        );
     }
 }

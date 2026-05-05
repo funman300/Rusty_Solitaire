@@ -18,6 +18,13 @@ pub fn level_for_xp(xp: u64) -> u32 {
     }
 }
 
+/// Maximum number of dates retained in [`PlayerProgress::daily_challenge_history`].
+///
+/// Bounds the per-player file size across years of play. ~365 entries is
+/// roughly a year of daily completions, far more than the 14-day window the
+/// in-game calendar surfaces.
+pub const DAILY_CHALLENGE_HISTORY_CAP: usize = 365;
+
 /// Persisted player progression state.
 ///
 /// Mutation helpers such as `add_xp`, `record_daily_completion`, etc. are
@@ -45,6 +52,14 @@ pub struct PlayerProgress {
     /// Index of the next Challenge-mode seed to serve to this player.
     #[serde(default)]
     pub challenge_index: u32,
+    /// All dates the player has completed the daily challenge, in
+    /// chronological ascending order. Bounded to the most recent 365
+    /// entries so file size stays bounded across years of play.
+    #[serde(default)]
+    pub daily_challenge_history: Vec<NaiveDate>,
+    /// Longest daily-challenge streak ever achieved on this profile.
+    #[serde(default)]
+    pub daily_challenge_longest_streak: u32,
     /// Wall-clock time of the last modification (used for conflict detection).
     pub last_modified: DateTime<Utc>,
 }
@@ -61,6 +76,8 @@ impl Default for PlayerProgress {
             unlocked_card_backs: vec![0],
             unlocked_backgrounds: vec![0],
             challenge_index: 0,
+            daily_challenge_history: Vec::new(),
+            daily_challenge_longest_streak: 0,
             last_modified: DateTime::UNIX_EPOCH,
         }
     }
@@ -114,6 +131,12 @@ impl PlayerProgress {
     /// - Completion the day after the previous: streak increments.
     /// - Same day as the previous: no-op (idempotent).
     ///
+    /// On every fresh completion, `date` is appended to
+    /// `daily_challenge_history` (kept sorted ascending and capped at
+    /// [`DAILY_CHALLENGE_HISTORY_CAP`] entries) and
+    /// `daily_challenge_longest_streak` is bumped if the current streak
+    /// exceeds it.
+    ///
     /// Returns `true` if this call recorded a fresh completion.
     pub fn record_daily_completion(&mut self, date: NaiveDate) -> bool {
         match self.daily_challenge_last_completed {
@@ -126,6 +149,19 @@ impl PlayerProgress {
             }
         }
         self.daily_challenge_last_completed = Some(date);
+        // Append to history (defensive against duplicates and out-of-order
+        // dates so a hand-edited or merged file can't corrupt the order).
+        if !self.daily_challenge_history.contains(&date) {
+            self.daily_challenge_history.push(date);
+            self.daily_challenge_history.sort();
+            if self.daily_challenge_history.len() > DAILY_CHALLENGE_HISTORY_CAP {
+                let excess = self.daily_challenge_history.len() - DAILY_CHALLENGE_HISTORY_CAP;
+                self.daily_challenge_history.drain(0..excess);
+            }
+        }
+        if self.daily_challenge_streak > self.daily_challenge_longest_streak {
+            self.daily_challenge_longest_streak = self.daily_challenge_streak;
+        }
         self.last_modified = Utc::now();
         true
     }
@@ -319,5 +355,86 @@ mod tests {
         p.record_daily_completion(date(2026, 4, 20));
         p.record_daily_completion(date(2026, 4, 22)); // skip the 21st
         assert_eq!(p.daily_challenge_streak, 1, "gap must reset streak");
+    }
+
+    // -----------------------------------------------------------------------
+    // record_daily_completion — history + longest-streak side effects
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn record_daily_completion_appends_to_history_in_chronological_order() {
+        let mut p = PlayerProgress::default();
+        assert!(p.daily_challenge_history.is_empty());
+        p.record_daily_completion(date(2026, 4, 20));
+        p.record_daily_completion(date(2026, 4, 21));
+        p.record_daily_completion(date(2026, 4, 22));
+        assert_eq!(
+            p.daily_challenge_history,
+            vec![
+                date(2026, 4, 20),
+                date(2026, 4, 21),
+                date(2026, 4, 22),
+            ],
+            "history should hold all three completions in ascending order"
+        );
+    }
+
+    #[test]
+    fn record_daily_completion_same_day_does_not_duplicate_history() {
+        let mut p = PlayerProgress::default();
+        p.record_daily_completion(date(2026, 4, 20));
+        p.record_daily_completion(date(2026, 4, 20));
+        assert_eq!(
+            p.daily_challenge_history,
+            vec![date(2026, 4, 20)],
+            "same-day completion is a no-op and must not duplicate history"
+        );
+    }
+
+    #[test]
+    fn record_daily_completion_updates_longest_streak() {
+        let mut p = PlayerProgress::default();
+        // Three-day streak: longest jumps from 0 → 3.
+        p.record_daily_completion(date(2026, 4, 20));
+        p.record_daily_completion(date(2026, 4, 21));
+        p.record_daily_completion(date(2026, 4, 22));
+        assert_eq!(p.daily_challenge_streak, 3);
+        assert_eq!(p.daily_challenge_longest_streak, 3);
+
+        // Gap resets the current streak — longest must NOT regress.
+        p.record_daily_completion(date(2026, 4, 25));
+        assert_eq!(p.daily_challenge_streak, 1);
+        assert_eq!(
+            p.daily_challenge_longest_streak, 3,
+            "longest_streak must never regress after a gap"
+        );
+
+        // Two-day streak — still below longest, so longest stays at 3.
+        p.record_daily_completion(date(2026, 4, 26));
+        assert_eq!(p.daily_challenge_streak, 2);
+        assert_eq!(p.daily_challenge_longest_streak, 3);
+    }
+
+    #[test]
+    fn daily_challenge_history_is_capped_at_max() {
+        // Push DAILY_CHALLENGE_HISTORY_CAP + 5 consecutive days; the
+        // earliest five must be evicted and the most recent CAP retained.
+        let mut p = PlayerProgress::default();
+        let start = date(2024, 1, 1);
+        let total = DAILY_CHALLENGE_HISTORY_CAP + 5;
+        for offset in 0..total {
+            p.record_daily_completion(start + Duration::days(offset as i64));
+        }
+        assert_eq!(p.daily_challenge_history.len(), DAILY_CHALLENGE_HISTORY_CAP);
+        // Oldest retained is `start + 5` (we dropped the first 5).
+        assert_eq!(
+            p.daily_challenge_history.first().copied(),
+            Some(start + Duration::days(5))
+        );
+        // Newest retained is the last date pushed.
+        assert_eq!(
+            p.daily_challenge_history.last().copied(),
+            Some(start + Duration::days(total as i64 - 1))
+        );
     }
 }

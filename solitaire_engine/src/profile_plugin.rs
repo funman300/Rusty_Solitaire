@@ -6,6 +6,7 @@
 
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
+use chrono::{Duration, Local, NaiveDate};
 use solitaire_core::achievement::achievement_by_id;
 use solitaire_data::SyncBackend;
 
@@ -20,13 +21,37 @@ use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
 };
 use crate::ui_theme::{
-    ACCENT_PRIMARY, STATE_INFO, STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
-    TYPE_BODY_LG, VAL_SPACE_2, Z_MODAL_PANEL,
+    ACCENT_PRIMARY, BG_ELEVATED, BORDER_STRONG, SPACE_1, STATE_INFO, STATE_SUCCESS, TEXT_PRIMARY,
+    TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_1, VAL_SPACE_2, Z_MODAL_PANEL,
 };
+
+/// Number of days surfaced in the daily-challenge calendar row.
+///
+/// 14 = trailing two weeks ending today. At ~12 px per dot with a 6 px gap
+/// the row is ~246 px wide — well inside the 360 px minimum modal width on
+/// the smallest supported window (800 px).
+const CALENDAR_DAYS: usize = 14;
+
+/// Diameter of each calendar dot, in pixels.
+const CALENDAR_DOT_SIZE_PX: f32 = 12.0;
 
 /// Marker component on the profile overlay root node.
 #[derive(Component, Debug)]
 pub struct ProfileScreen;
+
+/// Marker on each daily-challenge calendar dot inside the Profile modal.
+///
+/// One entity per day in the trailing 14-day window — tests can query
+/// for this component to assert the row was rendered.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct DailyCalendarDot {
+    /// The calendar date this dot represents.
+    pub date: NaiveDate,
+    /// Whether the player completed the daily challenge on `date`.
+    pub completed: bool,
+    /// `true` if `date == today` (the rightmost dot).
+    pub is_today: bool,
+}
 
 /// Registers the `P` key toggle for the profile overlay.
 pub struct ProfilePlugin;
@@ -195,6 +220,16 @@ fn spawn_profile_screen(
                 font_row.clone(),
                 TextColor(TEXT_PRIMARY),
             ));
+
+            // 14-day daily-challenge calendar row.
+            spawn_daily_calendar(
+                card,
+                &prog.daily_challenge_history,
+                prog.daily_challenge_streak,
+                prog.daily_challenge_longest_streak,
+                Local::now().date_naive(),
+                font_res,
+            );
         }
 
         // ── Achievements section ────────────────────────────────────
@@ -298,6 +333,98 @@ fn spawn_spacer(parent: &mut ChildSpawnerCommands, height: Val) {
         height,
         ..default()
     });
+}
+
+/// Spawn the daily-challenge calendar row: a caption + 14 dots.
+///
+/// `history` is the player's full chronological completion history.
+/// `current_streak` and `longest_streak` are surfaced in the caption.
+/// `today` is passed in (rather than read directly) so the function is
+/// trivially testable with a fixed reference date.
+///
+/// Layout: caption row → row of 14 dots (~12 px each, 6 px gap). The
+/// rightmost dot represents today; past dots fill from oldest (left) to
+/// most recent (right). Each dot carries a [`DailyCalendarDot`] marker.
+fn spawn_daily_calendar(
+    parent: &mut ChildSpawnerCommands,
+    history: &[NaiveDate],
+    current_streak: u32,
+    longest_streak: u32,
+    today: NaiveDate,
+    font_res: Option<&FontResource>,
+) {
+    use std::collections::HashSet;
+    let history_set: HashSet<NaiveDate> = history.iter().copied().collect();
+
+    let font_caption = TextFont {
+        font: font_res.map(|f| f.0.clone()).unwrap_or_default(),
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
+
+    parent.spawn((
+        Text::new(format!(
+            "Current streak: {current_streak}  \u{00B7}  Longest: {longest_streak}"
+        )),
+        font_caption,
+        TextColor(TEXT_SECONDARY),
+        Node {
+            margin: UiRect {
+                top: VAL_SPACE_1,
+                bottom: VAL_SPACE_1,
+                ..default()
+            },
+            ..default()
+        },
+    ));
+
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(SPACE_1 + 2.0), // 6 px between dots
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            // Iterate from oldest (today − 13) to today (rightmost).
+            for offset in (0..CALENDAR_DAYS as i64).rev() {
+                let date = today - Duration::days(offset);
+                let is_today = offset == 0;
+                let completed = history_set.contains(&date);
+                // Today's dot keeps the outlined-ring look (Balatro-yellow
+                // accent border) regardless of completion; past days use a
+                // subtle border so the row reads as a row of pills, not a
+                // strip of bare squares.
+                let border_color = if is_today { ACCENT_PRIMARY } else { BORDER_STRONG };
+                let border_width = if is_today { 2.0 } else { 0.0 };
+                row.spawn((
+                    DailyCalendarDot {
+                        date,
+                        completed,
+                        is_today,
+                    },
+                    Node {
+                        width: Val::Px(CALENDAR_DOT_SIZE_PX),
+                        height: Val::Px(CALENDAR_DOT_SIZE_PX),
+                        border: UiRect::all(Val::Px(border_width)),
+                        border_radius: BorderRadius::all(Val::Px(CALENDAR_DOT_SIZE_PX / 2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(calendar_dot_color(completed)),
+                    BorderColor::all(border_color),
+                ));
+            }
+        });
+}
+
+/// Background colour for a calendar dot. `STATE_SUCCESS` for completed
+/// days, `BG_ELEVATED` for missed/pending days.
+fn calendar_dot_color(completed: bool) -> Color {
+    if completed {
+        STATE_SUCCESS
+    } else {
+        BG_ELEVATED
+    }
 }
 
 /// Return `(backend_name, username_display)` for the given sync backend.
@@ -416,5 +543,44 @@ mod tests {
     fn xp_progress_at_level_10() {
         // Level 10 is the first post-table level (span = 1000, starts at 5000).
         assert_eq!(xp_progress(5_000, 10), (1_000, 0));
+    }
+
+    #[test]
+    fn profile_modal_renders_14_calendar_dots() {
+        // Open the Profile modal and assert the 14-day calendar row was
+        // populated with one DailyCalendarDot entity per day.
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyP);
+        app.update();
+
+        let dot_count = app
+            .world_mut()
+            .query::<&DailyCalendarDot>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            dot_count, CALENDAR_DAYS,
+            "Profile modal must render exactly {CALENDAR_DAYS} calendar dots"
+        );
+    }
+
+    #[test]
+    fn calendar_dot_today_marker_is_set_on_rightmost_dot_only() {
+        // Exactly one of the 14 dots is the "today" dot (the rightmost).
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyP);
+        app.update();
+
+        let today_count = app
+            .world_mut()
+            .query::<&DailyCalendarDot>()
+            .iter(app.world())
+            .filter(|d| d.is_today)
+            .count();
+        assert_eq!(today_count, 1, "exactly one dot must be marked is_today");
     }
 }
