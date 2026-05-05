@@ -31,7 +31,10 @@ use solitaire_core::card::{Rank, Suit};
 pub use importer::{import_theme, import_theme_into, ImportError, ThemeId};
 pub use loader::{CardThemeLoader, CardThemeLoaderError};
 pub use manifest::ThemeManifest;
-pub use plugin::{set_theme, ActiveTheme, ThemePlugin};
+pub use plugin::{
+    ensure_theme_thumbnails, set_theme, ActiveTheme, ThemePlugin, ThemeThumbnailCache,
+    ThemeThumbnailPair, THEME_THUMBNAIL_HEIGHT_PX, THEME_THUMBNAIL_WIDTH_PX,
+};
 pub use registry::{
     build_registry, refresh_registry, ThemeEntry, ThemeRegistry, ThemeRegistryPlugin,
 };

@@ -25,6 +25,7 @@ use crate::events::{ManualSyncRequestEvent, ToggleSettingsRequestEvent};
 use crate::font_plugin::FontResource;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::{SettingsScrollPos, SyncStatus, SyncStatusResource};
+use crate::theme::{ThemeThumbnailCache, ThemeThumbnailPair};
 use crate::ui_focus::{FocusGroup, FocusRow, Focusable, FocusedButton};
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
@@ -32,8 +33,9 @@ use crate::ui_modal::{
 };
 use crate::ui_tooltip::Tooltip;
 use crate::ui_theme::{
-    BG_BASE, BG_ELEVATED_HI, BORDER_SUBTLE, RADIUS_SM, SPACE_2, STATE_SUCCESS, TEXT_PRIMARY,
-    TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
+    BG_BASE, BG_ELEVATED, BG_ELEVATED_HI, BORDER_SUBTLE, RADIUS_SM, SPACE_2, STATE_SUCCESS,
+    TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3,
+    Z_MODAL_PANEL,
 };
 
 /// Side length of a swatch button in the card-back / background pickers.
@@ -133,6 +135,23 @@ struct SettingsPanelScrollable;
 /// Marks the scrollable inner card so its `ScrollPosition` can be read before despawn.
 #[derive(Component, Debug)]
 struct SettingsScrollNode;
+
+/// Snapshot row used by [`spawn_settings_panel`] to render the card-art
+/// theme picker. Carries the `ThemeRegistry` entry's display fields plus
+/// the (optional) thumbnail pair from [`ThemeThumbnailCache`]. A `None`
+/// thumbnail means the picker should render a placeholder swatch — used
+/// when the cache hasn't generated handles yet, or when a user theme
+/// is missing one of the required preview SVGs.
+#[derive(Debug, Clone)]
+struct ThemePickerEntry {
+    /// Stable theme id (matches `ThemeMeta::id`).
+    id: String,
+    /// Player-facing label.
+    display_name: String,
+    /// Pre-generated picker preview pair, when ready. `None` collapses
+    /// the chip to its plain-text fallback.
+    thumbnails: Option<ThemeThumbnailPair>,
+}
 
 /// Tags interactive buttons inside the Settings panel.
 #[derive(Component, Debug)]
@@ -370,6 +389,7 @@ fn sync_settings_panel_visibility(
     progress: Option<Res<ProgressResource>>,
     font_res: Option<Res<FontResource>>,
     theme_registry: Option<Res<crate::theme::ThemeRegistry>>,
+    theme_thumbs: Option<Res<ThemeThumbnailCache>>,
     card_images: Option<Res<crate::card_plugin::CardImageSet>>,
 ) {
     if !screen.is_changed() {
@@ -385,15 +405,27 @@ fn sync_settings_panel_visibility(
             let unlocked_bgs = progress
                 .as_ref()
                 .map_or(&[0][..], |p| p.0.unlocked_backgrounds.as_slice());
-            // Snapshot themes by id+display_name so spawn_settings_panel
-            // doesn't have to know about the registry shape. Empty when
+            // Snapshot themes by id, display_name and (optional)
+            // thumbnail pair so spawn_settings_panel doesn't have to
+            // know about the registry / cache shapes. Empty when
             // ThemeRegistryPlugin isn't installed (tests under
             // MinimalPlugins) — the picker row simply won't render.
-            let themes: Vec<(String, String)> = theme_registry
+            // Missing thumbnails (cache not ready, or partial user
+            // theme) leave `thumbnails: None` so the chip renders its
+            // plain-text fallback instead of a broken sprite.
+            let themes: Vec<ThemePickerEntry> = theme_registry
                 .as_deref()
                 .map(|r| {
                     r.iter()
-                        .map(|e| (e.id.clone(), e.display_name.clone()))
+                        .map(|e| ThemePickerEntry {
+                            id: e.id.clone(),
+                            display_name: e.display_name.clone(),
+                            thumbnails: theme_thumbs
+                                .as_deref()
+                                .and_then(|c| c.get(&e.id))
+                                .filter(|p| p.is_fully_populated())
+                                .cloned(),
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -1010,7 +1042,7 @@ fn spawn_settings_panel(
     sync_status: &str,
     unlocked_card_backs: &[usize],
     unlocked_backgrounds: &[usize],
-    themes: &[(String, String)],
+    themes: &[ThemePickerEntry],
     scroll_offset: f32,
     font_res: Option<&FontResource>,
     theme_overrides_back: bool,
@@ -1384,6 +1416,13 @@ fn picker_row(
 #[derive(Component, Debug)]
 pub(crate) struct CardBackPickerOverriddenByTheme;
 
+/// Marker placed on every preview-thumbnail [`ImageNode`] inside a
+/// theme picker chip. Lets tests assert that a chip's children include
+/// the rasterised preview pair, and lets a future system update or
+/// hot-swap thumbnails without scanning the whole UI tree.
+#[derive(Component, Debug)]
+pub(crate) struct ThemeThumbnailMarker;
+
 /// Renders the "Card Back" row in its overridden-by-theme state: a
 /// labelled caption explaining why the swatches are hidden, with no
 /// interactive children. This is what the player sees when the active
@@ -1426,14 +1465,25 @@ fn picker_row_overridden_by_theme(
         });
 }
 
+/// Logical width (px) of one preview thumbnail inside a picker chip.
+/// Mirrors [`crate::theme::THEME_THUMBNAIL_WIDTH_PX`] but at the UI
+/// scale used by Bevy's flex layout. The rasterised image itself is
+/// 100×140 px; the chip displays it at the same logical size so
+/// scaling artifacts stay minimal.
+const THUMBNAIL_LOGICAL_WIDTH_PX: f32 = 50.0;
+/// Logical height counterpart to [`THUMBNAIL_LOGICAL_WIDTH_PX`] —
+/// preserves the 2:3 card aspect.
+const THUMBNAIL_LOGICAL_HEIGHT_PX: f32 = 70.0;
+
 /// Picker row for card-art themes. Distinct from [`picker_row`]
 /// because themes are identified by `String` ids (matching
 /// `ThemeMeta::id`) instead of dense indices, and each chip carries
-/// the theme's display name rather than a numeric label.
+/// the theme's display name plus a small Ace + back preview pair
+/// (when available in [`ThemeThumbnailCache`]).
 fn theme_picker_row(
     parent: &mut ChildSpawnerCommands,
     label: &str,
-    themes: &[(String, String)],
+    themes: &[ThemePickerEntry],
     selected_id: &str,
     tooltip: &'static str,
     font_res: Option<&FontResource>,
@@ -1461,19 +1511,25 @@ fn theme_picker_row(
                 label_font,
                 TextColor(TEXT_SECONDARY),
             ));
-            for (id, display_name) in themes {
-                let is_selected = id == selected_id;
+            for entry in themes {
+                let is_selected = entry.id == selected_id;
                 let bg = if is_selected { STATE_SUCCESS } else { BG_ELEVATED_HI };
                 row.spawn((
-                    SettingsButton::SelectTheme(id.clone()),
+                    SettingsButton::SelectTheme(entry.id.clone()),
                     Button,
                     Tooltip::new(tooltip),
                     Node {
+                        // Chips with thumbnails stack the preview pair
+                        // above the label so a glance reveals the
+                        // theme's art without hovering for the
+                        // tooltip.
+                        flex_direction: FlexDirection::Column,
                         // Theme names are wider than numeric chips —
                         // pad horizontally instead of using a fixed
                         // square swatch.
-                        padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_2),
+                        padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_2),
                         min_height: Val::Px(SWATCH_PX),
+                        row_gap: VAL_SPACE_2,
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(1.0)),
@@ -1484,15 +1540,80 @@ fn theme_picker_row(
                     BorderColor::all(BORDER_SUBTLE),
                 ))
                 .with_children(|b| {
+                    spawn_thumbnail_pair(b, entry.thumbnails.as_ref());
                     let text_color = if is_selected { BG_BASE } else { TEXT_PRIMARY };
                     b.spawn((
-                        Text::new(display_name.clone()),
+                        Text::new(entry.display_name.clone()),
                         chip_font.clone(),
                         TextColor(text_color),
                     ));
                 });
             }
         });
+}
+
+/// Spawns the Ace + back preview pair for a theme picker chip.
+///
+/// When `thumbnails` is `Some(_)` and both handles are non-default,
+/// renders two `ImageNode` siblings (Ace on the left, back on the
+/// right). When the thumbnails are missing or only partially loaded,
+/// renders two muted `BG_ELEVATED` placeholder rectangles at the same
+/// logical size — keeping the chip's overall footprint stable so the
+/// picker row layout doesn't reflow as the cache fills in.
+fn spawn_thumbnail_pair(
+    parent: &mut ChildSpawnerCommands,
+    thumbnails: Option<&ThemeThumbnailPair>,
+) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: VAL_SPACE_2,
+            align_items: AlignItems::Center,
+            ..default()
+        })
+        .with_children(|pair| {
+            match thumbnails {
+                Some(t) if t.is_fully_populated() => {
+                    spawn_thumbnail_image(pair, t.ace.clone());
+                    spawn_thumbnail_image(pair, t.back.clone());
+                }
+                _ => {
+                    spawn_thumbnail_placeholder(pair);
+                    spawn_thumbnail_placeholder(pair);
+                }
+            }
+        });
+}
+
+/// Spawns one `ImageNode` thumbnail at the canonical preview size.
+/// Tagged with [`ThemeThumbnailMarker`] so tests can scan a chip's
+/// children for the rendered preview without crawling the whole UI.
+fn spawn_thumbnail_image(parent: &mut ChildSpawnerCommands, image: Handle<Image>) {
+    parent.spawn((
+        ThemeThumbnailMarker,
+        ImageNode::new(image),
+        Node {
+            width: Val::Px(THUMBNAIL_LOGICAL_WIDTH_PX),
+            height: Val::Px(THUMBNAIL_LOGICAL_HEIGHT_PX),
+            ..default()
+        },
+    ));
+}
+
+/// Spawns a muted placeholder rectangle for the case where the cache
+/// has not yet generated thumbnails for a theme — or when a user theme
+/// is missing one of its preview SVGs. Same logical size as
+/// [`spawn_thumbnail_image`] so chip layout stays stable.
+fn spawn_thumbnail_placeholder(parent: &mut ChildSpawnerCommands) {
+    parent.spawn((
+        Node {
+            width: Val::Px(THUMBNAIL_LOGICAL_WIDTH_PX),
+            height: Val::Px(THUMBNAIL_LOGICAL_HEIGHT_PX),
+            border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
+            ..default()
+        },
+        BackgroundColor(BG_ELEVATED),
+    ));
 }
 
 /// Status text + manual "Sync Now" button.
@@ -1940,6 +2061,83 @@ mod tests {
         assert!(
             row_count >= 2,
             "expected at least two FocusRow containers (card-back + background); got {row_count}"
+        );
+    }
+
+    /// Test 3 of the thumbnail-picker spec: when [`ThemeRegistry`] has
+    /// at least one theme and the [`ThemeThumbnailCache`] holds a
+    /// fully-populated [`ThemeThumbnailPair`] for that theme's id, the
+    /// rendered chip carries a [`ThemeThumbnailMarker`]-tagged
+    /// `ImageNode` for each preview slot.
+    #[test]
+    fn theme_picker_chip_includes_thumbnail_sprite_when_thumbnails_loaded() {
+        use crate::theme::{ThemeEntry, ThemeRegistry, ThemeThumbnailCache, ThemeThumbnailPair};
+
+        let mut app = headless_app_with_focus();
+        // Prime an Assets<Image> resource so we can mint stable handles
+        // for the synthetic thumbnail pair.
+        app.init_resource::<Assets<Image>>();
+        let (ace_handle, back_handle) = {
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            let ace = images.add(Image::default());
+            let back = images.add(Image::default());
+            (ace, back)
+        };
+        // Inject one theme entry + a matching thumbnail pair.
+        app.insert_resource(ThemeRegistry {
+            entries: vec![ThemeEntry {
+                id: "test_theme".into(),
+                display_name: "Test Theme".into(),
+                manifest_url: "themes://test_theme/theme.ron".into(),
+                meta: crate::theme::ThemeMeta {
+                    id: "test_theme".into(),
+                    name: "Test Theme".into(),
+                    author: "x".into(),
+                    version: "x".into(),
+                    card_aspect: (2, 3),
+                },
+            }],
+        });
+        let mut cache = ThemeThumbnailCache::default();
+        cache.entries.insert(
+            "test_theme".into(),
+            ThemeThumbnailPair {
+                ace: ace_handle.clone(),
+                back: back_handle.clone(),
+            },
+        );
+        app.insert_resource(cache);
+
+        // Open the panel and let the spawn + child-flush systems run.
+        app.world_mut().resource_mut::<SettingsScreen>().0 = true;
+        app.update();
+        app.update();
+        app.update();
+
+        // Find every ImageNode tagged with ThemeThumbnailMarker — the
+        // theme picker chip for "test_theme" must contribute exactly
+        // two of them (ace + back).
+        let thumbnail_count = app
+            .world_mut()
+            .query_filtered::<&ImageNode, With<ThemeThumbnailMarker>>()
+            .iter(app.world())
+            .count();
+        assert!(
+            thumbnail_count >= 2,
+            "expected at least one ace + back thumbnail (2 sprites); got {thumbnail_count}"
+        );
+
+        // Spot-check: at least one thumbnail's image handle matches one
+        // of the ones we inserted into the cache. This guards against a
+        // future refactor that accidentally clones the wrong handle.
+        let any_matches = app
+            .world_mut()
+            .query_filtered::<&ImageNode, With<ThemeThumbnailMarker>>()
+            .iter(app.world())
+            .any(|node| node.image == ace_handle || node.image == back_handle);
+        assert!(
+            any_matches,
+            "at least one rendered thumbnail must reuse the cached handle"
         );
     }
 

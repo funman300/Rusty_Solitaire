@@ -194,6 +194,25 @@ impl Plugin for AssetSourcesPlugin {
     }
 }
 
+/// Returns the embedded SVG bytes for a single default-theme file
+/// (e.g. `"back.svg"` or `"spades_ace.svg"`), or `None` when the
+/// filename is not bundled.
+///
+/// The thumbnail generator in
+/// [`crate::theme::ThemeThumbnailCache`] uses this to rasterise
+/// preview-sized art for the picker UI without going through Bevy's
+/// async asset graph. Lookup is by the filename only — the
+/// `solitaire_engine/assets/themes/default/` prefix is stripped before
+/// comparison so callers don't need to know where the embedded files
+/// live in the binary.
+pub fn default_theme_svg_bytes(filename: &str) -> Option<&'static [u8]> {
+    let suffix = format!("/{filename}");
+    DEFAULT_THEME_SVGS
+        .iter()
+        .find(|(path, _)| path.ends_with(&suffix))
+        .map(|(_, bytes)| *bytes)
+}
+
 /// Pushes every bundled default-theme file into the
 /// [`EmbeddedAssetRegistry`] under its stable URL. Keeping this in a
 /// free function (and not inside the `Plugin::build` body) means the
@@ -289,6 +308,29 @@ mod tests {
             .validate()
             .expect("default manifest must list all 52 faces");
         assert_eq!(faces.len(), 52);
+    }
+
+    /// `default_theme_svg_bytes` resolves the canonical preview pair
+    /// the thumbnail cache rasterises: `back.svg` and `spades_ace.svg`.
+    /// Both must exist in the embedded table or the picker's preview
+    /// thumbnails would silently fall back to placeholders even for the
+    /// always-present default theme.
+    #[test]
+    fn default_theme_svg_bytes_finds_back_and_ace_of_spades() {
+        assert!(
+            default_theme_svg_bytes("back.svg").is_some(),
+            "default theme must bundle a back.svg"
+        );
+        assert!(
+            default_theme_svg_bytes("spades_ace.svg").is_some(),
+            "default theme must bundle a spades_ace.svg"
+        );
+    }
+
+    #[test]
+    fn default_theme_svg_bytes_returns_none_for_unknown_file() {
+        assert!(default_theme_svg_bytes("nope.svg").is_none());
+        assert!(default_theme_svg_bytes("").is_none());
     }
 
     /// Belt-and-braces: if anyone edits `DEFAULT_THEME_MANIFEST_PATH`

@@ -8,23 +8,81 @@
 //! exposed for tests and for any embedder that wants to load an
 //! alternative theme manually.
 
+use std::collections::HashMap;
+
 use bevy::asset::AssetEvent;
 use bevy::ecs::message::MessageReader;
+use bevy::math::UVec2;
 use bevy::prelude::*;
 use solitaire_core::card::{Rank, Suit};
 
-use crate::assets::DEFAULT_THEME_MANIFEST_URL;
+use crate::assets::{
+    default_theme_svg_bytes, rasterize_svg, user_theme_dir, DEFAULT_THEME_MANIFEST_URL,
+};
 use crate::card_plugin::CardImageSet;
 use crate::events::StateChangedEvent;
 
 use super::loader::CardThemeLoader;
+use super::registry::ThemeRegistry;
 use super::{CardKey, CardTheme};
+
+/// Width (logical px) of one Settings → Cosmetic theme-picker
+/// thumbnail. A 2:3 card aspect at 100×140 keeps each chip a small
+/// glanceable preview without bloating the picker row.
+pub const THEME_THUMBNAIL_WIDTH_PX: u32 = 100;
+/// Height counterpart to [`THEME_THUMBNAIL_WIDTH_PX`].
+pub const THEME_THUMBNAIL_HEIGHT_PX: u32 = 140;
 
 /// Resource pointing at the currently-active card theme. Populated on
 /// startup with the bundled default theme and replaced by [`set_theme`]
 /// when the player switches.
 #[derive(Resource, Debug)]
 pub struct ActiveTheme(pub Handle<CardTheme>);
+
+/// One pair of preview-sized `Handle<Image>` for the Settings picker:
+/// the theme's Ace of Spades and its card back.
+///
+/// Either handle may be [`Handle::default`] when the underlying SVG
+/// could not be located (e.g. a user theme that ships only a partial
+/// set of files). The picker UI treats the default-handle case as
+/// "render a placeholder swatch instead of an image" so a broken
+/// theme can never crash the panel.
+#[derive(Debug, Clone, Default)]
+pub struct ThemeThumbnailPair {
+    /// Rasterised `spades_ace.svg` of the theme.
+    pub ace: Handle<Image>,
+    /// Rasterised `back.svg` of the theme.
+    pub back: Handle<Image>,
+}
+
+impl ThemeThumbnailPair {
+    /// Returns `true` only when *both* preview slots resolve to a
+    /// non-default handle — a theme with at least one missing SVG is
+    /// considered incomplete and renders the placeholder for the
+    /// missing slot.
+    pub fn is_fully_populated(&self) -> bool {
+        self.ace != Handle::default() && self.back != Handle::default()
+    }
+}
+
+/// Resource caching one [`ThemeThumbnailPair`] per registered theme,
+/// keyed by `ThemeMeta::id`.
+///
+/// Populated lazily by [`ensure_theme_thumbnails`] whenever the
+/// [`ThemeRegistry`] grows or changes. The Settings panel reads from
+/// this cache by id and falls back to the placeholder rendering path
+/// when an entry is missing.
+#[derive(Resource, Debug, Default)]
+pub struct ThemeThumbnailCache {
+    pub entries: HashMap<String, ThemeThumbnailPair>,
+}
+
+impl ThemeThumbnailCache {
+    /// Returns the cached pair for `theme_id`, if any.
+    pub fn get(&self, theme_id: &str) -> Option<&ThemeThumbnailPair> {
+        self.entries.get(theme_id)
+    }
+}
 
 /// Bevy plugin that loads the default theme and keeps `CardImageSet`
 /// in sync with `Assets<CardTheme>`.
@@ -45,6 +103,7 @@ pub struct ThemePlugin;
 impl Plugin for ThemePlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<CardTheme>()
+            .init_resource::<ThemeThumbnailCache>()
             .register_asset_loader(crate::assets::SvgLoader)
             .register_asset_loader(CardThemeLoader)
             .add_systems(Startup, load_initial_theme)
@@ -53,6 +112,7 @@ impl Plugin for ThemePlugin {
                 (
                     sync_card_image_set_with_active_theme,
                     react_to_settings_theme_change,
+                    ensure_theme_thumbnails,
                 ),
             );
     }
@@ -231,6 +291,104 @@ pub fn set_theme(
     handle
 }
 
+// ---------------------------------------------------------------------------
+// Picker-thumbnail generation
+// ---------------------------------------------------------------------------
+
+/// Filename of the canonical "preview face" SVG inside a theme — the
+/// Ace of Spades. Matches `CardKey::manifest_name(Spades, Ace)` so the
+/// path resolves the same way whether we're reading from disk or from
+/// the bundled-default lookup table.
+const PREVIEW_FACE_FILENAME: &str = "spades_ace.svg";
+
+/// Filename of the back SVG inside a theme.
+const PREVIEW_BACK_FILENAME: &str = "back.svg";
+
+/// Resolves the SVG bytes for one preview file (`back.svg` or
+/// `spades_ace.svg`) belonging to the named theme.
+///
+/// - For the bundled `default` theme, reads from the embedded
+///   `DEFAULT_THEME_SVGS` table via [`default_theme_svg_bytes`]. No
+///   filesystem I/O.
+/// - For any user theme, reads from `<user_theme_dir>/<id>/<filename>`.
+///   Returns `None` for any I/O failure (file missing, permission
+///   denied, etc.) — the caller treats `None` as "render placeholder".
+fn read_theme_preview_svg_bytes(theme_id: &str, filename: &str) -> Option<Vec<u8>> {
+    if theme_id == "default" {
+        return default_theme_svg_bytes(filename).map(|b| b.to_vec());
+    }
+    let path = user_theme_dir().join(theme_id).join(filename);
+    std::fs::read(&path).ok()
+}
+
+/// Pure helper: rasterises one SVG preview byte slice at the picker's
+/// thumbnail dimensions, inserts the resulting `Image` into
+/// `Assets<Image>`, and returns the new handle. Returns
+/// [`Handle::default`] if rasterisation fails (malformed SVG, etc.) so
+/// the picker can render a placeholder for broken themes without
+/// crashing.
+fn rasterize_preview_to_handle(
+    svg_bytes: &[u8],
+    images: &mut Assets<Image>,
+) -> Handle<Image> {
+    let target = UVec2::new(THEME_THUMBNAIL_WIDTH_PX, THEME_THUMBNAIL_HEIGHT_PX);
+    match rasterize_svg(svg_bytes, target) {
+        Ok(image) => images.add(image),
+        Err(err) => {
+            warn!("theme thumbnail rasterise failed: {err}");
+            Handle::default()
+        }
+    }
+}
+
+/// Builds a [`ThemeThumbnailPair`] for a single theme. Either handle
+/// is [`Handle::default`] when the matching SVG could not be located
+/// or rasterised.
+fn generate_thumbnail_pair_for(
+    theme_id: &str,
+    images: &mut Assets<Image>,
+) -> ThemeThumbnailPair {
+    let ace = read_theme_preview_svg_bytes(theme_id, PREVIEW_FACE_FILENAME)
+        .map(|b| rasterize_preview_to_handle(&b, images))
+        .unwrap_or_default();
+    let back = read_theme_preview_svg_bytes(theme_id, PREVIEW_BACK_FILENAME)
+        .map(|b| rasterize_preview_to_handle(&b, images))
+        .unwrap_or_default();
+    ThemeThumbnailPair { ace, back }
+}
+
+/// System that generates a [`ThemeThumbnailPair`] for every registered
+/// theme that doesn't yet have one in [`ThemeThumbnailCache`].
+///
+/// Runs each frame but the early-exit check (`already cached?`) keeps
+/// the steady-state cost to a single hash lookup per theme. Generation
+/// itself only happens once per theme — the SVGs are rasterised and
+/// inserted into `Assets<Image>` and the handles cached forever.
+///
+/// Lazy-on-first-pass beats Startup-only for two reasons:
+///
+/// - The `ThemeRegistry` is built by a different `Startup` system, and
+///   Bevy doesn't guarantee inter-system Startup ordering without
+///   explicit `.after()` chaining. Polling each Update tick removes
+///   the dependency.
+/// - The future `refresh_registry` path (used after a successful
+///   theme import in Phase 7) adds entries mid-session — this system
+///   picks them up automatically without any extra wiring.
+pub fn ensure_theme_thumbnails(
+    registry: Option<Res<ThemeRegistry>>,
+    mut cache: ResMut<ThemeThumbnailCache>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(registry) = registry else { return };
+    for entry in registry.iter() {
+        if cache.entries.contains_key(&entry.id) {
+            continue;
+        }
+        let pair = generate_thumbnail_pair_for(&entry.id, &mut images);
+        cache.entries.insert(entry.id.clone(), pair);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +509,121 @@ mod tests {
         assert_eq!(url, "themes://default/theme.ron");
         let url2 = format!("themes://{}/theme.ron", "user_uploaded");
         assert_eq!(url2, "themes://user_uploaded/theme.ron");
+    }
+
+    /// Test 1: the bundled default theme always has embedded SVG bytes
+    /// available, so calling `generate_thumbnail_pair_for("default", …)`
+    /// must produce two non-default `Handle<Image>` slots.
+    #[test]
+    fn theme_thumbnails_generated_for_default_theme() {
+        let mut images = Assets::<Image>::default();
+        let pair = generate_thumbnail_pair_for("default", &mut images);
+        assert!(
+            pair.is_fully_populated(),
+            "default theme must yield both ace + back thumbnail handles"
+        );
+        // And the underlying images must actually exist in the assets
+        // collection — the handles are real, not dangling.
+        assert!(images.get(&pair.ace).is_some(), "ace image must be inserted");
+        assert!(images.get(&pair.back).is_some(), "back image must be inserted");
+    }
+
+    /// Test 2: when a theme is registered but its preview SVGs are not
+    /// available on disk (a broken user-supplied theme), thumbnail
+    /// generation must NOT panic and must leave the missing slots as
+    /// the default handle so the picker UI can render its placeholder.
+    #[test]
+    fn theme_thumbnails_handle_missing_svg_gracefully() {
+        let mut images = Assets::<Image>::default();
+        // A theme id that definitely has no files on disk under the
+        // user_theme_dir (the directory may not even exist on a
+        // fresh test machine). The function reads the filesystem
+        // lazily and silently returns None on I/O failures — no
+        // panic, no rasterise attempt.
+        let pair = generate_thumbnail_pair_for(
+            "this-theme-does-not-exist-on-disk-for-testing",
+            &mut images,
+        );
+        assert_eq!(
+            pair.ace,
+            Handle::default(),
+            "missing ace.svg must yield Handle::default placeholder"
+        );
+        assert_eq!(
+            pair.back,
+            Handle::default(),
+            "missing back.svg must yield Handle::default placeholder"
+        );
+        assert!(
+            !pair.is_fully_populated(),
+            "incomplete pair must report not-fully-populated"
+        );
+    }
+
+    /// `read_theme_preview_svg_bytes` for the default theme always
+    /// returns embedded bytes for the canonical preview pair —
+    /// covering the happy-path branch of the helper.
+    #[test]
+    fn read_default_theme_preview_returns_some_for_canonical_files() {
+        assert!(
+            read_theme_preview_svg_bytes("default", PREVIEW_BACK_FILENAME).is_some(),
+            "default theme back.svg must be embedded"
+        );
+        assert!(
+            read_theme_preview_svg_bytes("default", PREVIEW_FACE_FILENAME).is_some(),
+            "default theme spades_ace.svg must be embedded"
+        );
+    }
+
+    /// `ensure_theme_thumbnails` is idempotent: calling it twice with
+    /// the same registry must not regenerate or replace already-cached
+    /// entries. This guards against the per-frame Update tick churning
+    /// new `Handle<Image>` allocations and growing `Assets<Image>`
+    /// without bound.
+    #[test]
+    fn ensure_theme_thumbnails_caches_after_first_run() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Assets<Image>>();
+        app.init_resource::<ThemeThumbnailCache>();
+        app.insert_resource(ThemeRegistry {
+            entries: vec![crate::theme::ThemeEntry {
+                id: "default".into(),
+                display_name: "Default".into(),
+                manifest_url: crate::assets::DEFAULT_THEME_MANIFEST_URL.into(),
+                meta: ThemeMeta {
+                    id: "default".into(),
+                    name: "Default".into(),
+                    author: "x".into(),
+                    version: "x".into(),
+                    card_aspect: (2, 3),
+                },
+            }],
+        });
+        app.add_systems(Update, ensure_theme_thumbnails);
+
+        // First tick generates the entry.
+        app.update();
+        let first_ace = app
+            .world()
+            .resource::<ThemeThumbnailCache>()
+            .get("default")
+            .map(|p| p.ace.clone())
+            .expect("default theme thumbnail must exist after one tick");
+
+        // Second tick must NOT replace the cached handle.
+        app.update();
+        let second_ace = app
+            .world()
+            .resource::<ThemeThumbnailCache>()
+            .get("default")
+            .map(|p| p.ace.clone())
+            .expect("default theme thumbnail must still exist");
+
+        assert_eq!(
+            first_ace.id(),
+            second_ace.id(),
+            "cached thumbnail handle must be stable across ticks"
+        );
     }
 }
