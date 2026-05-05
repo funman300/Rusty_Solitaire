@@ -716,10 +716,13 @@ pub struct AchievementDef {
 | `speed_and_skill` | ??? | Win < 90s without undo | Yes | Card back #4 |
 | `comeback` | ??? | Win after 3+ stock recycles | Yes | Background #4 |
 | `zen_winner` | ??? | Win in Zen Mode | Yes | Badge |
+| `cinephile` | Cinephile | Watch a saved replay all the way through | No | — |
 
 ### Evaluation Timing
 
 Achievement conditions are evaluated by `AchievementPlugin` on every `GameWonEvent` and `StateChangedEvent`. The plugin calls `solitaire_core::check_achievements()` which returns a `Vec<AchievementDef>` of newly unlocked achievements. The plugin then fires `AchievementUnlockedEvent` for each, which the toast and persistence systems handle independently.
+
+A small number of achievements are *event-driven* rather than condition-driven: their `AchievementDef::condition` always returns `false` and their unlock is written from a dedicated observer system instead. `cinephile` is the canonical example — it unlocks when `ReplayPlaybackState` transitions from `Playing` to `Completed` (a saved replay watched to its natural end). The Stop button transitions `Playing → Inactive` directly without entering `Completed`, so manual aborts do not unlock the achievement.
 
 ---
 

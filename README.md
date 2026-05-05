@@ -22,7 +22,7 @@ optional self-hosted sync so your stats follow you across machines.
   move within picker rows, Enter activates; works across every modal and
   the HUD action bar
 - **Progression** — XP, levels, unlockable card backs and backgrounds
-- **18 Achievements** — including secret ones
+- **19 Achievements** — including secret ones
 - **Daily Challenge** — server-seeded so every player worldwide gets the
   same deal
 - **Leaderboard** — opt-in, powered by your own self-hosted server

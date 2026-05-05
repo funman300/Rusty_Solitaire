@@ -140,6 +140,16 @@ fn comeback(c: &AchievementContext) -> bool {
 fn zen_winner(c: &AchievementContext) -> bool {
     c.last_win_is_zen
 }
+/// Cinephile is event-driven: it unlocks when the engine observes a
+/// `ReplayPlaybackState` transition from `Playing` to `Completed`, not on
+/// any field of [`AchievementContext`]. The condition predicate therefore
+/// always returns false so [`check_achievements`] never unlocks it from a
+/// `GameWonEvent` / `StateChangedEvent` cycle — the unlock is driven by
+/// `AchievementUnlockedEvent` written directly from the engine's
+/// replay-playback observer.
+fn cinephile_never(_c: &AchievementContext) -> bool {
+    false
+}
 
 /// All currently-evaluable achievements. Order is stable so persistence files
 /// remain readable across versions (new achievements append).
@@ -287,6 +297,18 @@ pub const ALL_ACHIEVEMENTS: &[AchievementDef] = &[
         secret: true,
         reward: Some(Reward::Badge),
         condition: zen_winner,
+    },
+    AchievementDef {
+        id: "cinephile",
+        name: "Cinephile",
+        description: "Watch a saved replay all the way through",
+        secret: false,
+        reward: None,
+        // Event-driven unlock: the engine's replay-playback observer fires
+        // `AchievementUnlockedEvent("cinephile")` directly on a Playing →
+        // Completed transition. `cinephile_never` keeps the condition path
+        // a no-op so a `GameWonEvent` evaluation cycle cannot unlock it.
+        condition: cinephile_never,
     },
 ];
 
@@ -719,6 +741,31 @@ mod tests {
         let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
         assert!(ids.contains(&"perfectionist"), "perfectionist must unlock");
         assert!(ids.contains(&"no_undo"), "no_undo must also unlock when perfectionist does");
+    }
+
+    #[test]
+    fn cinephile_achievement_in_canonical_list() {
+        let def = achievement_by_id("cinephile").expect("cinephile must be registered");
+        assert_eq!(def.id, "cinephile");
+        assert_eq!(def.name, "Cinephile");
+        assert!(!def.secret, "cinephile is not a secret achievement");
+        // Event-driven: the predicate is a sentinel that always returns
+        // false. `check_achievements` must never unlock cinephile from a
+        // GameWonEvent context, even one that satisfies every other gate.
+        let mut c = ctx();
+        c.games_won = 1;
+        c.win_streak_current = 999;
+        c.last_win_time_seconds = 1;
+        c.last_win_used_undo = false;
+        c.best_single_score = 99_999;
+        c.lifetime_score = u64::MAX;
+        c.last_win_is_zen = true;
+        c.last_win_recycle_count = 99;
+        let ids: Vec<&str> = check_achievements(&c).iter().map(|d| d.id).collect();
+        assert!(
+            !ids.contains(&"cinephile"),
+            "cinephile must never unlock via condition evaluation; got {ids:?}",
+        );
     }
 
     #[test]

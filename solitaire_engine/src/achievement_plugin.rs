@@ -25,6 +25,7 @@ use crate::events::{
 use crate::font_plugin::FontResource;
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::{LevelUpEvent, ProgressResource, ProgressStoragePath, ProgressUpdate};
+use crate::replay_playback::ReplayPlaybackState;
 use crate::resources::GameStateResource;
 use crate::settings_plugin::{SettingsResource, SettingsStoragePath};
 use crate::stats_plugin::{StatsResource, StatsUpdate};
@@ -116,7 +117,12 @@ impl Plugin for AchievementPlugin {
                     .after(StatsUpdate),
             )
             .add_systems(Update, toggle_achievements_screen)
-            .add_systems(Update, handle_achievements_close_button);
+            .add_systems(Update, handle_achievements_close_button)
+            // Event-driven unlock: observe `ReplayPlaybackState` and unlock
+            // `cinephile` the first time playback runs to natural completion.
+            // Reads the resource via `Option<Res<_>>` so headless tests that
+            // omit `ReplayPlaybackPlugin` still build.
+            .add_systems(Update, evaluate_cinephile_on_replay_completion);
     }
 }
 
@@ -220,6 +226,66 @@ fn evaluate_on_win(
             && let Err(e) = save_progress_to(target, &progress.0) {
                 warn!("failed to save progress after reward: {e}");
             }
+}
+
+/// Cinephile unlock observer.
+///
+/// Watches [`ReplayPlaybackState`] and unlocks the `cinephile` achievement
+/// the first time the resource transitions from `Playing` to `Completed` —
+/// i.e. the player watched a saved replay all the way through. The Stop
+/// button transitions `Playing` → `Inactive` directly (never via
+/// `Completed`), so manual aborts do not trigger the unlock.
+///
+/// Idempotent: once the record is unlocked, subsequent Playing → Completed
+/// transitions are a no-op (no extra `AchievementUnlockedEvent`, no extra
+/// disk write). The transition itself is debounced by tracking the
+/// previous frame's `is_playing()` state in a `Local<bool>` — without
+/// this, a freshly-spawned `Completed` state would re-fire each frame
+/// during the linger window.
+///
+/// Reads `ReplayPlaybackState` via `Option<Res<_>>` so achievement tests
+/// that omit `ReplayPlaybackPlugin` still build cleanly.
+fn evaluate_cinephile_on_replay_completion(
+    state: Option<Res<ReplayPlaybackState>>,
+    // `Local` collides with `chrono::Local` imported at the top of this
+    // module — fully qualify so the Bevy system parameter resolves
+    // correctly.
+    mut last_was_playing: bevy::prelude::Local<bool>,
+    mut achievements: ResMut<AchievementsResource>,
+    mut unlocks: MessageWriter<AchievementUnlockedEvent>,
+    path: Res<AchievementsStoragePath>,
+) {
+    let Some(state) = state else {
+        return;
+    };
+
+    // Detect the Playing → Completed transition: was playing last frame,
+    // is now completed. Direct Playing → Inactive (Stop button) does not
+    // satisfy this guard because it never enters `Completed`.
+    let now_playing = state.is_playing();
+    let now_completed = state.is_completed();
+    let just_completed = *last_was_playing && now_completed;
+    *last_was_playing = now_playing;
+
+    if !just_completed {
+        return;
+    }
+
+    let Some(record) = achievements.0.iter_mut().find(|r| r.id == "cinephile") else {
+        return;
+    };
+    if record.unlocked {
+        return;
+    }
+    record.unlock(Utc::now());
+    record.reward_granted = true;
+    unlocks.write(AchievementUnlockedEvent(record.clone()));
+
+    if let Some(target) = &path.0
+        && let Err(e) = save_achievements_to(target, &achievements.0)
+    {
+        warn!("failed to save achievements after cinephile unlock: {e}");
+    }
 }
 
 /// Achievement-onboarding cue.
@@ -1149,9 +1215,215 @@ mod tests {
         );
     }
 
-    /// Without any `GameWonEvent` arriving the system must be a no-op:
-    /// no toast, no flag flip — even on update ticks where stats happen
-    /// to read `games_won == 1`.
+    // -----------------------------------------------------------------------
+    // Cinephile (event-driven via ReplayPlaybackState)
+    // -----------------------------------------------------------------------
+
+    use crate::replay_playback::ReplayPlaybackState;
+    use solitaire_data::{Replay, ReplayMove};
+    use chrono::NaiveDate;
+    use solitaire_core::game_state::{DrawMode, GameMode};
+
+    /// Headless app variant that injects a default `ReplayPlaybackState`
+    /// directly (no `ReplayPlaybackPlugin`) so we can drive the resource
+    /// by hand. The achievement plugin's cinephile observer reads it via
+    /// `Option<Res<_>>` so the absence of the playback plugin is safe.
+    fn cinephile_app() -> App {
+        let mut app = headless_app();
+        app.init_resource::<ReplayPlaybackState>();
+        app
+    }
+
+    fn dummy_replay() -> Replay {
+        Replay::new(
+            1,
+            DrawMode::DrawOne,
+            GameMode::Classic,
+            10,
+            100,
+            NaiveDate::from_ymd_opt(2026, 5, 5).expect("valid date"),
+            vec![ReplayMove::StockClick],
+        )
+    }
+
+    fn cinephile_unlocked(app: &App) -> bool {
+        app.world()
+            .resource::<AchievementsResource>()
+            .0
+            .iter()
+            .find(|r| r.id == "cinephile")
+            .map(|r| r.unlocked)
+            .unwrap_or(false)
+    }
+
+    fn cinephile_unlocks_emitted(app: &App) -> usize {
+        let events = app.world().resource::<Messages<AchievementUnlockedEvent>>();
+        let mut cursor = events.get_cursor();
+        cursor
+            .read(events)
+            .filter(|e| e.0.id == "cinephile")
+            .count()
+    }
+
+    /// The cinephile record must be seeded on plugin init like every other
+    /// achievement, so the observer can find and mutate it later.
+    #[test]
+    fn cinephile_record_seeded_by_plugin() {
+        let app = cinephile_app();
+        let records = &app.world().resource::<AchievementsResource>().0;
+        assert!(
+            records.iter().any(|r| r.id == "cinephile" && !r.unlocked),
+            "cinephile record must be seeded as locked",
+        );
+    }
+
+    /// Drive Inactive → Playing → Completed and assert the cinephile
+    /// achievement unlocks and exactly one `AchievementUnlockedEvent` is
+    /// emitted.
+    #[test]
+    fn cinephile_unlocks_on_replay_completion() {
+        let mut app = cinephile_app();
+
+        // Frame 1: enter Playing. The observer's first sample sees
+        // `last_was_playing = false` and `now_playing = true`.
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Playing {
+                replay: dummy_replay(),
+                cursor: 0,
+                secs_to_next: 0.0,
+            };
+        app.update();
+        assert!(
+            !cinephile_unlocked(&app),
+            "Playing alone must not unlock cinephile",
+        );
+
+        // Frame 2: transition to Completed. The observer must detect
+        // `last_was_playing = true && now_completed = true` and unlock.
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Completed;
+        app.update();
+
+        assert!(
+            cinephile_unlocked(&app),
+            "cinephile must unlock on Playing → Completed transition",
+        );
+        assert_eq!(
+            cinephile_unlocks_emitted(&app),
+            1,
+            "exactly one AchievementUnlockedEvent must fire for cinephile",
+        );
+    }
+
+    /// Stop button transitions Playing → Inactive directly (not via
+    /// Completed). Drive that path and assert no cinephile unlock.
+    #[test]
+    fn cinephile_does_not_unlock_on_stop_button_abort() {
+        let mut app = cinephile_app();
+
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Playing {
+                replay: dummy_replay(),
+                cursor: 0,
+                secs_to_next: 0.0,
+            };
+        app.update();
+
+        // Direct Playing → Inactive — the path the Stop button takes via
+        // `stop_replay_playback`. Must not unlock cinephile.
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Inactive;
+        app.update();
+
+        assert!(
+            !cinephile_unlocked(&app),
+            "Stop button (Playing → Inactive) must not unlock cinephile",
+        );
+        assert_eq!(
+            cinephile_unlocks_emitted(&app),
+            0,
+            "no AchievementUnlockedEvent for cinephile on a Stop transition",
+        );
+    }
+
+    /// A second Playing → Completed cycle on an already-unlocked record
+    /// must be idempotent: no additional `AchievementUnlockedEvent`.
+    #[test]
+    fn cinephile_does_not_double_fire() {
+        let mut app = cinephile_app();
+
+        // First completion cycle to unlock.
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Playing {
+                replay: dummy_replay(),
+                cursor: 0,
+                secs_to_next: 0.0,
+            };
+        app.update();
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Completed;
+        app.update();
+        assert!(cinephile_unlocked(&app), "precondition: first cycle must unlock");
+
+        // Drain the event queue so the next assertion doesn't double-count
+        // the legitimate first-time unlock event.
+        app.world_mut()
+            .resource_mut::<Messages<AchievementUnlockedEvent>>()
+            .clear();
+
+        // Second cycle: Inactive → Playing → Completed once more.
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Inactive;
+        app.update();
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Playing {
+                replay: dummy_replay(),
+                cursor: 0,
+                secs_to_next: 0.0,
+            };
+        app.update();
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Completed;
+        app.update();
+
+        assert_eq!(
+            cinephile_unlocks_emitted(&app),
+            0,
+            "cinephile must not re-fire on a second Playing → Completed cycle",
+        );
+    }
+
+    /// `Completed` lingers across multiple frames before the auto-clear
+    /// transitions back to `Inactive`. The observer must fire exactly
+    /// once during that linger window — not once per frame.
+    #[test]
+    fn cinephile_fires_once_across_completed_linger() {
+        let mut app = cinephile_app();
+
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Playing {
+                replay: dummy_replay(),
+                cursor: 0,
+                secs_to_next: 0.0,
+            };
+        app.update();
+        *app.world_mut().resource_mut::<ReplayPlaybackState>() =
+            ReplayPlaybackState::Completed;
+        app.update();
+        // Stay in Completed for a few more frames as the real auto-clear
+        // does. Each subsequent frame the resource is still `Completed`
+        // but the observer has already counted this transition.
+        app.update();
+        app.update();
+        app.update();
+
+        assert_eq!(
+            cinephile_unlocks_emitted(&app),
+            1,
+            "cinephile must fire exactly once across the Completed linger window",
+        );
+    }
+
     #[test]
     fn no_win_event_means_no_achievement_onboarding_toast() {
         let mut app = onboarding_test_app();
