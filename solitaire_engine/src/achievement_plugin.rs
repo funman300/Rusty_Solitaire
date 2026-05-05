@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use chrono::{Local, Timelike, Utc};
 use solitaire_core::achievement::{
@@ -47,6 +48,19 @@ pub struct AchievementsScreen;
 /// of its visible text.
 #[derive(Component, Debug)]
 pub struct AchievementRow;
+
+/// Marker on the scrollable body Node inside the Achievements modal.
+///
+/// The Achievements list can grow to ~19 rows which overflows the modal at
+/// the 800x600 minimum window. This marker tags the inner container that
+/// carries `Overflow::scroll_y()` plus a `max_height` constraint so the
+/// content scrolls instead of clipping. Mirrors the
+/// `SettingsPanelScrollable` pattern in `settings_plugin`.
+///
+/// `scroll_achievements_panel` reads this marker to route mouse-wheel
+/// events into the body's `ScrollPosition`.
+#[derive(Component, Debug)]
+pub struct AchievementsScrollable;
 
 /// All per-player achievement records (one per known achievement).
 #[derive(Resource, Debug, Clone)]
@@ -96,6 +110,11 @@ impl Plugin for AchievementPlugin {
             .add_message::<XpAwardedEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ToggleAchievementsRequestEvent>()
+            // `MouseWheel` is emitted by Bevy's input plugin under
+            // `DefaultPlugins`; register it explicitly so the
+            // achievements-scroll system also runs cleanly under
+            // `MinimalPlugins` in tests.
+            .add_message::<MouseWheel>()
             // Run after GameMutation (so GameWonEvent is available), after
             // StatsUpdate (so stats reflect this win), and after ProgressUpdate
             // (so daily_challenge_streak is up to date for daily_devotee).
@@ -118,6 +137,7 @@ impl Plugin for AchievementPlugin {
             )
             .add_systems(Update, toggle_achievements_screen)
             .add_systems(Update, handle_achievements_close_button)
+            .add_systems(Update, scroll_achievements_panel)
             // Event-driven unlock: observe `ReplayPlaybackState` and unlock
             // `cinephile` the first time playback runs to natural completion.
             // Reads the resource via `Option<Res<_>>` so headless tests that
@@ -395,6 +415,38 @@ fn handle_achievements_close_button(
     }
 }
 
+/// Routes mouse-wheel events into the Achievements modal's scrollable body
+/// while the panel is open.
+///
+/// `offset_y` increases downward (0 = top). Scrolling down (`ev.y < 0`) adds
+/// to the offset; scrolling up subtracts. Clamped to >= 0 so the viewport
+/// never scrolls past the top. Mirrors `scroll_settings_panel` in
+/// `settings_plugin`. The query is empty when no `AchievementsScrollable`
+/// is in the world (modal closed) so this is a no-op outside the open
+/// state without an explicit gate resource.
+fn scroll_achievements_panel(
+    mut scroll_evr: MessageReader<MouseWheel>,
+    mut scrollables: Query<&mut ScrollPosition, With<AchievementsScrollable>>,
+) {
+    if scrollables.is_empty() {
+        scroll_evr.clear();
+        return;
+    }
+    let delta_y: f32 = scroll_evr
+        .read()
+        .map(|ev| match ev.unit {
+            MouseScrollUnit::Line => ev.y * 50.0,
+            MouseScrollUnit::Pixel => ev.y,
+        })
+        .sum();
+    if delta_y == 0.0 {
+        return;
+    }
+    for mut sp in scrollables.iter_mut() {
+        sp.0.y = (sp.0.y - delta_y).max(0.0);
+    }
+}
+
 fn spawn_achievements_screen(
     commands: &mut Commands,
     records: &[AchievementRecord],
@@ -424,75 +476,95 @@ fn spawn_achievements_screen(
     spawn_modal(commands, AchievementsScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, header, font_res);
 
-        // Achievement rows — unlocked first, then locked alphabetical.
-        let mut sorted: Vec<_> = records.iter().collect();
-        sorted.sort_by_key(|r| (!r.unlocked, r.id.clone()));
+        // Scrollable body — the achievements list grows to ~19 rows which
+        // overflows the modal on the 800x600 minimum window. Wrapping the
+        // row list in an `Overflow::scroll_y()` Node with a constrained
+        // `max_height` keeps every row reachable. The Done button below
+        // sits outside the scroll so it's always one click away. Mirrors
+        // the `SettingsPanelScrollable` pattern.
+        card.spawn((
+            AchievementsScrollable,
+            ScrollPosition::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_1,
+                max_height: Val::Vh(70.0),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+        ))
+        .with_children(|body| {
+            // Achievement rows — unlocked first, then locked alphabetical.
+            let mut sorted: Vec<_> = records.iter().collect();
+            sorted.sort_by_key(|r| (!r.unlocked, r.id.clone()));
 
-        for record in &sorted {
-            let def = achievement_by_id(&record.id);
-            let (name, description) = def.map_or((record.id.as_str(), ""), |d| (d.name, d.description));
+            for record in &sorted {
+                let def = achievement_by_id(&record.id);
+                let (name, description) =
+                    def.map_or((record.id.as_str(), ""), |d| (d.name, d.description));
 
-            // Hide secret locked achievements so they remain a surprise.
-            let is_secret = def.is_some_and(|d| d.secret);
-            if is_secret && !record.unlocked {
-                continue;
-            }
+                // Hide secret locked achievements so they remain a surprise.
+                let is_secret = def.is_some_and(|d| d.secret);
+                if is_secret && !record.unlocked {
+                    continue;
+                }
 
-            let (name_color, desc_color, prefix) = if record.unlocked {
-                (ACCENT_PRIMARY, TEXT_PRIMARY, "\u{2713} ")
-            } else {
-                (TEXT_DISABLED, TEXT_DISABLED, "\u{25CB} ")
-            };
+                let (name_color, desc_color, prefix) = if record.unlocked {
+                    (ACCENT_PRIMARY, TEXT_PRIMARY, "\u{2713} ")
+                } else {
+                    (TEXT_DISABLED, TEXT_DISABLED, "\u{25CB} ")
+                };
 
-            let tooltip_text = tooltip_for_row(record.unlocked, def);
+                let tooltip_text = tooltip_for_row(record.unlocked, def);
 
-            card.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: VAL_SPACE_1,
-                    ..default()
-                },
-                AchievementRow,
-                Tooltip::new(tooltip_text),
-            ))
-            .with_children(|row| {
-                row.spawn((
-                    Text::new(format!("{prefix}{name}")),
-                    font_name.clone(),
-                    TextColor(name_color),
+                body.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: VAL_SPACE_1,
+                        ..default()
+                    },
+                    AchievementRow,
+                    Tooltip::new(tooltip_text),
+                ))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new(format!("{prefix}{name}")),
+                        font_name.clone(),
+                        TextColor(name_color),
+                    ));
+                    if !description.is_empty() {
+                        row.spawn((
+                            Text::new(format!("   {description}")),
+                            font_desc.clone(),
+                            TextColor(desc_color),
+                        ));
+                    }
+                    if let Some(reward_str) = def.and_then(|d| d.reward).map(format_reward) {
+                        row.spawn((
+                            Text::new(format!("   Reward: {reward_str}")),
+                            font_meta.clone(),
+                            TextColor(STATE_SUCCESS),
+                        ));
+                    }
+                    if let Some(date) = record.unlock_date {
+                        row.spawn((
+                            Text::new(format!("   Unlocked {}", date.format("%Y-%m-%d"))),
+                            font_meta.clone(),
+                            TextColor(TEXT_SECONDARY),
+                        ));
+                    }
+                });
+
+                // Subtle row separator — keeps the long list scannable.
+                body.spawn((
+                    Node {
+                        height: Val::Px(1.0),
+                        ..default()
+                    },
+                    BackgroundColor(BORDER_SUBTLE),
                 ));
-                if !description.is_empty() {
-                    row.spawn((
-                        Text::new(format!("   {description}")),
-                        font_desc.clone(),
-                        TextColor(desc_color),
-                    ));
-                }
-                if let Some(reward_str) = def.and_then(|d| d.reward).map(format_reward) {
-                    row.spawn((
-                        Text::new(format!("   Reward: {reward_str}")),
-                        font_meta.clone(),
-                        TextColor(STATE_SUCCESS),
-                    ));
-                }
-                if let Some(date) = record.unlock_date {
-                    row.spawn((
-                        Text::new(format!("   Unlocked {}", date.format("%Y-%m-%d"))),
-                        font_meta.clone(),
-                        TextColor(TEXT_SECONDARY),
-                    ));
-                }
-            });
-
-            // Subtle row separator — keeps the long list scannable.
-            card.spawn((
-                Node {
-                    height: Val::Px(1.0),
-                    ..default()
-                },
-                BackgroundColor(BORDER_SUBTLE),
-            ));
-        }
+            }
+        });
 
         spawn_modal_actions(card, |actions| {
             spawn_modal_button(
@@ -893,6 +965,64 @@ mod tests {
             .iter(app.world())
             .count();
         assert_eq!(count, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Scrollable body
+    // -----------------------------------------------------------------------
+
+    /// Spawning the modal must place exactly one `AchievementsScrollable`
+    /// marker in the world so the row list scrolls instead of clipping at
+    /// the 800x600 minimum window.
+    #[test]
+    fn achievements_modal_body_is_scrollable() {
+        let mut app = headless_app();
+        press(&mut app, KeyCode::KeyA);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&AchievementsScrollable>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count, 1,
+            "Achievements modal must spawn exactly one AchievementsScrollable body"
+        );
+    }
+
+    /// The scrollable body must constrain its `max_height` so the modal
+    /// actually engages scrolling on tall content. Without this the inner
+    /// flex column would expand to fit every row and `Overflow::scroll_y`
+    /// would have nothing to clip.
+    #[test]
+    fn achievements_modal_body_has_max_height() {
+        let mut app = headless_app();
+        press(&mut app, KeyCode::KeyA);
+        app.update();
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, With<AchievementsScrollable>>();
+        let nodes: Vec<&Node> = q.iter(app.world()).collect();
+        assert_eq!(nodes.len(), 1, "expected exactly one scrollable body");
+        let node = nodes[0];
+
+        // `Val::Auto` is the default; assert the body's `max_height` was
+        // explicitly set to something else so scroll engages.
+        assert_ne!(
+            node.max_height,
+            Val::Auto,
+            "scrollable body must set a non-default max_height; got {:?}",
+            node.max_height
+        );
+        // And the overflow axis must be y-scroll.
+        assert_eq!(
+            node.overflow,
+            Overflow::scroll_y(),
+            "scrollable body must use Overflow::scroll_y(); got {:?}",
+            node.overflow
+        );
     }
 
     // -----------------------------------------------------------------------

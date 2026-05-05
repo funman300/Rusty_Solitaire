@@ -4,6 +4,7 @@
 //! is an optional accelerator. Listed shortcuts are grouped by intent —
 //! gameplay, modes, and overlays.
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
 use crate::events::HelpRequestEvent;
@@ -24,6 +25,16 @@ pub struct HelpScreen;
 #[derive(Component, Debug)]
 pub struct HelpCloseButton;
 
+/// Marker on the scrollable body Node inside the Help modal.
+///
+/// The controls reference is six sections totalling ~28 rows, which
+/// overflows the modal on the 800x600 minimum window. This marker tags
+/// the inner container that carries `Overflow::scroll_y()` plus a
+/// `max_height` constraint so every row stays reachable. Mirrors the
+/// `SettingsPanelScrollable` pattern.
+#[derive(Component, Debug)]
+pub struct HelpScrollable;
+
 /// Spawns and despawns the help / controls overlay shown when the player
 /// clicks the "Help" HUD button or presses `F1`. All hotkeys and gesture
 /// guides live here.
@@ -32,7 +43,14 @@ pub struct HelpPlugin;
 impl Plugin for HelpPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<HelpRequestEvent>()
-            .add_systems(Update, (toggle_help_screen, handle_help_close_button));
+            // `MouseWheel` is emitted by Bevy's input plugin under
+            // `DefaultPlugins`; register it explicitly so the help-scroll
+            // system also runs cleanly under `MinimalPlugins` in tests.
+            .add_message::<MouseWheel>()
+            .add_systems(
+                Update,
+                (toggle_help_screen, handle_help_close_button, scroll_help_panel),
+            );
     }
 }
 
@@ -68,6 +86,32 @@ fn handle_help_close_button(
     }
     for entity in &screens {
         commands.entity(entity).despawn();
+    }
+}
+
+/// Routes mouse-wheel events into the Help modal's scrollable body while
+/// the panel is open. No-op when no `HelpScrollable` exists in the world
+/// (modal closed). Mirrors `scroll_settings_panel`.
+fn scroll_help_panel(
+    mut scroll_evr: MessageReader<MouseWheel>,
+    mut scrollables: Query<&mut ScrollPosition, With<HelpScrollable>>,
+) {
+    if scrollables.is_empty() {
+        scroll_evr.clear();
+        return;
+    }
+    let delta_y: f32 = scroll_evr
+        .read()
+        .map(|ev| match ev.unit {
+            MouseScrollUnit::Line => ev.y * 50.0,
+            MouseScrollUnit::Pixel => ev.y,
+        })
+        .sum();
+    if delta_y == 0.0 {
+        return;
+    }
+    for mut sp in scrollables.iter_mut() {
+        sp.0.y = (sp.0.y - delta_y).max(0.0);
     }
 }
 
@@ -168,59 +212,77 @@ fn spawn_help_screen(commands: &mut Commands, font_res: Option<&FontResource>) {
     spawn_modal(commands, HelpScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Controls", font_res);
 
-        for section in CONTROL_SECTIONS {
-            // Section title in muted text — distinguishes from row content.
-            card.spawn((
-                Text::new(section.title),
-                font_section.clone(),
-                TextColor(TEXT_SECONDARY),
-            ));
+        // Scrollable body — the controls reference is six sections totalling
+        // ~28 rows, which overflows the modal on the 800x600 minimum
+        // window. Wrapping in an `Overflow::scroll_y()` Node with a
+        // constrained `max_height` keeps every row reachable; the Done
+        // button below stays fixed outside the scroll.
+        card.spawn((
+            HelpScrollable,
+            ScrollPosition::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_2,
+                max_height: Val::Vh(70.0),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+        ))
+        .with_children(|body| {
+            for section in CONTROL_SECTIONS {
+                // Section title in muted text — distinguishes from row content.
+                body.spawn((
+                    Text::new(section.title),
+                    font_section.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
 
-            // Each row is a flex-row: kbd-style chip + description.
-            for row in section.rows {
-                card.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: VAL_SPACE_3,
-                    ..default()
-                })
-                .with_children(|line| {
-                    // The hotkey rendered as a small chip with a border —
-                    // visual cue that it's a key reference, not part of
-                    // the description text.
-                    line.spawn((
-                        Node {
-                            padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
-                            min_width: Val::Px(64.0),
-                            justify_content: JustifyContent::Center,
-                            border: UiRect::all(Val::Px(1.0)),
-                            border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
-                            ..default()
-                        },
-                        BorderColor::all(BORDER_SUBTLE),
-                    ))
-                    .with_children(|chip| {
-                        chip.spawn((
-                            Text::new(row.keys),
-                            font_kbd.clone(),
+                // Each row is a flex-row: kbd-style chip + description.
+                for row in section.rows {
+                    body.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: VAL_SPACE_3,
+                        ..default()
+                    })
+                    .with_children(|line| {
+                        // The hotkey rendered as a small chip with a border —
+                        // visual cue that it's a key reference, not part of
+                        // the description text.
+                        line.spawn((
+                            Node {
+                                padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
+                                min_width: Val::Px(64.0),
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
+                                ..default()
+                            },
+                            BorderColor::all(BORDER_SUBTLE),
+                        ))
+                        .with_children(|chip| {
+                            chip.spawn((
+                                Text::new(row.keys),
+                                font_kbd.clone(),
+                                TextColor(TEXT_PRIMARY),
+                            ));
+                        });
+                        line.spawn((
+                            Text::new(row.description),
+                            font_row.clone(),
                             TextColor(TEXT_PRIMARY),
                         ));
                     });
-                    line.spawn((
-                        Text::new(row.description),
-                        font_row.clone(),
-                        TextColor(TEXT_PRIMARY),
-                    ));
+                }
+
+                // Section spacer — small empty box. Keeps each section
+                // visually grouped.
+                body.spawn(Node {
+                    height: Val::Px(SPACE_2),
+                    ..default()
                 });
             }
-
-            // Section spacer — small empty box. Keeps each section
-            // visually grouped.
-            card.spawn(Node {
-                height: Val::Px(SPACE_2),
-                ..default()
-            });
-        }
+        });
 
         spawn_modal_actions(card, |actions| {
             spawn_modal_button(
@@ -262,6 +324,36 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn help_modal_body_is_scrollable() {
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::F1);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&HelpScrollable>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count, 1,
+            "Help modal must spawn exactly one HelpScrollable body"
+        );
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, With<HelpScrollable>>();
+        let nodes: Vec<&Node> = q.iter(app.world()).collect();
+        assert_ne!(
+            nodes[0].max_height,
+            Val::Auto,
+            "scrollable body must set a non-default max_height"
+        );
+        assert_eq!(nodes[0].overflow, Overflow::scroll_y());
     }
 
     #[test]

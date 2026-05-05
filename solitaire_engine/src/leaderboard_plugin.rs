@@ -9,6 +9,7 @@
 //! When the provider does not support leaderboards (e.g. `LocalOnlyProvider`)
 //! the panel shows "Not available" immediately.
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
 use solitaire_data::settings::SyncBackend;
@@ -23,7 +24,7 @@ use crate::ui_modal::{
 };
 use crate::ui_theme::{
     ACCENT_PRIMARY, BORDER_SUBTLE, STATE_INFO, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
-    TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_4, Z_MODAL_PANEL,
+    TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_4, Z_MODAL_PANEL,
 };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,18 @@ struct LeaderboardFetchTask(Option<Task<Result<Vec<LeaderboardEntry>, String>>>)
 #[derive(Component, Debug)]
 pub struct LeaderboardScreen;
 
+/// Marker on the scrollable body Node inside the Leaderboard modal.
+///
+/// The leaderboard caps at the top 10 entries today, but rendering the
+/// caption + opt-in/opt-out row + 10 data rows on the 800x600 minimum
+/// window is right at the edge of overflowing — long display names or
+/// future row-count expansion would cut off entries below the fold.
+/// Wrapping the data section in an `Overflow::scroll_y()` Node with a
+/// constrained `max_height` keeps every row reachable. Mirrors the
+/// `SettingsPanelScrollable` pattern.
+#[derive(Component, Debug)]
+pub struct LeaderboardScrollable;
+
 /// Marker on the "Opt In" button inside the leaderboard panel.
 #[derive(Component, Debug)]
 struct LeaderboardOptInButton;
@@ -98,6 +111,11 @@ impl Plugin for LeaderboardPlugin {
             .init_resource::<OptInTask>()
             .init_resource::<OptOutTask>()
             .add_message::<ToggleLeaderboardRequestEvent>()
+            // `MouseWheel` is emitted by Bevy's input plugin under
+            // `DefaultPlugins`; register it explicitly so the
+            // leaderboard-scroll system also runs cleanly under
+            // `MinimalPlugins` in tests.
+            .add_message::<MouseWheel>()
             .add_systems(
                 Update,
                 (
@@ -112,7 +130,8 @@ impl Plugin for LeaderboardPlugin {
                     poll_opt_out_task,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(Update, scroll_leaderboard_panel);
     }
 }
 
@@ -222,6 +241,33 @@ fn update_leaderboard_panel(
 }
 
 /// Click handler for the modal's "Done" button — despawns the overlay.
+/// Routes mouse-wheel events into the Leaderboard modal's scrollable
+/// data body while the panel is open. No-op when no
+/// `LeaderboardScrollable` exists in the world (modal closed). Mirrors
+/// `scroll_settings_panel`.
+fn scroll_leaderboard_panel(
+    mut scroll_evr: MessageReader<MouseWheel>,
+    mut scrollables: Query<&mut ScrollPosition, With<LeaderboardScrollable>>,
+) {
+    if scrollables.is_empty() {
+        scroll_evr.clear();
+        return;
+    }
+    let delta_y: f32 = scroll_evr
+        .read()
+        .map(|ev| match ev.unit {
+            MouseScrollUnit::Line => ev.y * 50.0,
+            MouseScrollUnit::Pixel => ev.y,
+        })
+        .sum();
+    if delta_y == 0.0 {
+        return;
+    }
+    for mut sp in scrollables.iter_mut() {
+        sp.0.y = (sp.0.y - delta_y).max(0.0);
+    }
+}
+
 fn handle_leaderboard_close_button(
     mut commands: Commands,
     close_buttons: Query<&Interaction, (With<LeaderboardCloseButton>, Changed<Interaction>)>,
@@ -420,76 +466,94 @@ fn spawn_leaderboard_screen(
             BackgroundColor(BORDER_SUBTLE),
         ));
 
-        match data {
-            LeaderboardResource::Idle => {
-                card.spawn((
-                    Text::new("Fetching\u{2026}"),
-                    font_status.clone(),
-                    TextColor(STATE_INFO),
-                ));
-            }
-            LeaderboardResource::Error(_) => {
-                card.spawn((
-                    Text::new("Couldn't reach the leaderboard. Try again later."),
-                    font_status.clone(),
-                    TextColor(TEXT_SECONDARY),
-                ));
-            }
-            LeaderboardResource::Loaded(rows) if rows.is_empty() => {
-                card.spawn((
-                    Text::new("No entries yet \u{2014} sync and opt in to appear here."),
-                    font_row.clone(),
-                    TextColor(TEXT_SECONDARY),
-                ));
-            }
-            LeaderboardResource::Loaded(rows) => {
-                // Column headers
-                card.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: VAL_SPACE_4,
-                    ..default()
-                })
-                .with_children(|row| {
-                    header_cell(row, "#", 30.0, &font_header);
-                    header_cell(row, "Player", 160.0, &font_header);
-                    header_cell(row, "Best Score", 100.0, &font_header);
-                    header_cell(row, "Fastest Win", 110.0, &font_header);
-                });
-
-                let mut sorted = rows.to_vec();
-                sorted.sort_by_key(|e| std::cmp::Reverse(e.best_score.unwrap_or(0)));
-
-                for (i, entry) in sorted.iter().take(10).enumerate() {
-                    // Top three get accent treatments to highlight the
-                    // podium without leaning on hand-picked metallic
-                    // colours that sit outside the token system.
-                    let rank_color = match i {
-                        0 => ACCENT_PRIMARY, // Balatro yellow for #1
-                        1 | 2 => TEXT_PRIMARY,
-                        _ => TEXT_SECONDARY,
-                    };
-
-                    let time_str = entry
-                        .best_time_secs
-                        .map_or_else(|| "-".to_string(), format_secs);
-                    let score_str = entry
-                        .best_score
-                        .map_or_else(|| "-".to_string(), |s| s.to_string());
-
-                    card.spawn(Node {
+        // Scrollable data section — caps at top 10 rows today, but on the
+        // 800x600 minimum window the header + caption + opt-in row + 10
+        // entries crowds the modal. Wrapping in `Overflow::scroll_y()`
+        // with a `max_height` keeps every entry reachable and survives
+        // any future expansion of the row cap.
+        card.spawn((
+            LeaderboardScrollable,
+            ScrollPosition::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_2,
+                max_height: Val::Vh(50.0),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+        ))
+        .with_children(|body| {
+            match data {
+                LeaderboardResource::Idle => {
+                    body.spawn((
+                        Text::new("Fetching\u{2026}"),
+                        font_status.clone(),
+                        TextColor(STATE_INFO),
+                    ));
+                }
+                LeaderboardResource::Error(_) => {
+                    body.spawn((
+                        Text::new("Couldn't reach the leaderboard. Try again later."),
+                        font_status.clone(),
+                        TextColor(TEXT_SECONDARY),
+                    ));
+                }
+                LeaderboardResource::Loaded(rows) if rows.is_empty() => {
+                    body.spawn((
+                        Text::new("No entries yet \u{2014} sync and opt in to appear here."),
+                        font_row.clone(),
+                        TextColor(TEXT_SECONDARY),
+                    ));
+                }
+                LeaderboardResource::Loaded(rows) => {
+                    // Column headers
+                    body.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         column_gap: VAL_SPACE_4,
                         ..default()
                     })
                     .with_children(|row| {
-                        data_cell(row, &format!("{}", i + 1), 30.0, rank_color, &font_row);
-                        data_cell(row, &entry.display_name, 160.0, TEXT_PRIMARY, &font_row);
-                        data_cell(row, &score_str, 100.0, TEXT_PRIMARY, &font_row);
-                        data_cell(row, &time_str, 110.0, TEXT_PRIMARY, &font_row);
+                        header_cell(row, "#", 30.0, &font_header);
+                        header_cell(row, "Player", 160.0, &font_header);
+                        header_cell(row, "Best Score", 100.0, &font_header);
+                        header_cell(row, "Fastest Win", 110.0, &font_header);
                     });
+
+                    let mut sorted = rows.to_vec();
+                    sorted.sort_by_key(|e| std::cmp::Reverse(e.best_score.unwrap_or(0)));
+
+                    for (i, entry) in sorted.iter().take(10).enumerate() {
+                        // Top three get accent treatments to highlight the
+                        // podium without leaning on hand-picked metallic
+                        // colours that sit outside the token system.
+                        let rank_color = match i {
+                            0 => ACCENT_PRIMARY, // Balatro yellow for #1
+                            1 | 2 => TEXT_PRIMARY,
+                            _ => TEXT_SECONDARY,
+                        };
+
+                        let time_str = entry
+                            .best_time_secs
+                            .map_or_else(|| "-".to_string(), format_secs);
+                        let score_str = entry
+                            .best_score
+                            .map_or_else(|| "-".to_string(), |s| s.to_string());
+
+                        body.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: VAL_SPACE_4,
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            data_cell(row, &format!("{}", i + 1), 30.0, rank_color, &font_row);
+                            data_cell(row, &entry.display_name, 160.0, TEXT_PRIMARY, &font_row);
+                            data_cell(row, &score_str, 100.0, TEXT_PRIMARY, &font_row);
+                            data_cell(row, &time_str, 110.0, TEXT_PRIMARY, &font_row);
+                        });
+                    }
                 }
             }
-        }
+        });
 
         spawn_modal_actions(card, |actions| {
             spawn_modal_button(
@@ -644,6 +708,34 @@ mod tests {
             .iter(app.world())
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn leaderboard_modal_body_is_scrollable() {
+        let mut app = headless_app();
+        press(&mut app, KeyCode::KeyL);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&LeaderboardScrollable>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count, 1,
+            "Leaderboard modal must spawn exactly one LeaderboardScrollable body"
+        );
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, With<LeaderboardScrollable>>();
+        let nodes: Vec<&Node> = q.iter(app.world()).collect();
+        assert_ne!(
+            nodes[0].max_height,
+            Val::Auto,
+            "scrollable body must set a non-default max_height"
+        );
+        assert_eq!(nodes[0].overflow, Overflow::scroll_y());
     }
 
     #[test]

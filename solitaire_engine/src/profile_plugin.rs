@@ -4,6 +4,7 @@
 //! summary in a single scrollable panel. Spawned on the first `P` keypress and
 //! despawned on the second.
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use chrono::{Duration, Local, NaiveDate};
@@ -60,10 +61,60 @@ pub struct ProfilePlugin;
 #[derive(Component, Debug)]
 pub struct ProfileCloseButton;
 
+/// Marker on the scrollable body Node inside the Profile modal.
+///
+/// The Profile panel renders sync info, progression (incl. 14-day
+/// calendar), every unlocked achievement (up to ~18), and a stats
+/// summary, which can overflow the modal on the 800x600 minimum window
+/// once a player has unlocked several achievements. This marker tags
+/// the inner container that carries `Overflow::scroll_y()` plus a
+/// `max_height` constraint. Mirrors the `SettingsPanelScrollable`
+/// pattern.
+#[derive(Component, Debug)]
+pub struct ProfileScrollable;
+
 impl Plugin for ProfilePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ToggleProfileRequestEvent>()
-            .add_systems(Update, (toggle_profile_screen, handle_profile_close_button));
+            // `MouseWheel` is emitted by Bevy's input plugin under
+            // `DefaultPlugins`; register it explicitly so the
+            // profile-scroll system also runs cleanly under
+            // `MinimalPlugins` in tests.
+            .add_message::<MouseWheel>()
+            .add_systems(
+                Update,
+                (
+                    toggle_profile_screen,
+                    handle_profile_close_button,
+                    scroll_profile_panel,
+                ),
+            );
+    }
+}
+
+/// Routes mouse-wheel events into the Profile modal's scrollable body
+/// while the panel is open. No-op when no `ProfileScrollable` exists in
+/// the world (modal closed). Mirrors `scroll_settings_panel`.
+fn scroll_profile_panel(
+    mut scroll_evr: MessageReader<MouseWheel>,
+    mut scrollables: Query<&mut ScrollPosition, With<ProfileScrollable>>,
+) {
+    if scrollables.is_empty() {
+        scroll_evr.clear();
+        return;
+    }
+    let delta_y: f32 = scroll_evr
+        .read()
+        .map(|ev| match ev.unit {
+            MouseScrollUnit::Line => ev.y * 50.0,
+            MouseScrollUnit::Pixel => ev.y,
+        })
+        .sum();
+    if delta_y == 0.0 {
+        return;
+    }
+    for mut sp in scrollables.iter_mut() {
+        sp.0.y = (sp.0.y - delta_y).max(0.0);
     }
 }
 
@@ -136,183 +187,202 @@ fn spawn_profile_screen(
     spawn_modal(commands, ProfileScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Profile", font_res);
 
-        // First-launch welcome — only when the player has zero XP and
-        // zero daily streak, so the profile doesn't read as a wall of
-        // zeros to a brand-new player.
-        if let Some(p) = progress
-            && p.0.total_xp == 0
-            && p.0.daily_challenge_streak == 0
-        {
-            card.spawn((
-                Text::new("Welcome! Play games to earn XP and unlock achievements."),
-                font_section.clone(),
-                TextColor(ACCENT_PRIMARY),
-                Node {
-                    margin: UiRect {
-                        bottom: VAL_SPACE_2,
+        // Scrollable body — the Profile panel renders sync info,
+        // progression (incl. a 14-day calendar), every unlocked
+        // achievement (up to ~18), and a stats summary, which can
+        // overflow the modal on the 800x600 minimum window once the
+        // player has unlocked several achievements. The Done action
+        // stays fixed outside the scroll.
+        card.spawn((
+            ProfileScrollable,
+            ScrollPosition::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_1,
+                max_height: Val::Vh(70.0),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+        ))
+        .with_children(|body| {
+            // First-launch welcome — only when the player has zero XP and
+            // zero daily streak, so the profile doesn't read as a wall of
+            // zeros to a brand-new player.
+            if let Some(p) = progress
+                && p.0.total_xp == 0
+                && p.0.daily_challenge_streak == 0
+            {
+                body.spawn((
+                    Text::new("Welcome! Play games to earn XP and unlock achievements."),
+                    font_section.clone(),
+                    TextColor(ACCENT_PRIMARY),
+                    Node {
+                        margin: UiRect {
+                            bottom: VAL_SPACE_2,
+                            ..default()
+                        },
                         ..default()
                     },
-                    ..default()
-                },
-            ));
-        }
-
-        // ── Sync section ────────────────────────────────────────────
-        card.spawn((
-            Text::new("Sync"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        if let Some(s) = settings {
-            let (backend_name, username) = sync_info(&s.0.sync_backend);
-            card.spawn((
-                Text::new(format!("Account: {username}  |  Backend: {backend_name}")),
-                font_row.clone(),
-                TextColor(TEXT_PRIMARY),
-            ));
-        }
-        if let Some(ss) = sync_status {
-            let status_text = match &ss.0 {
-                SyncStatus::Idle => "Sync: idle".to_string(),
-                SyncStatus::Syncing => "Sync: syncing\u{2026}".to_string(),
-                SyncStatus::LastSynced(dt) => {
-                    format!("Last synced: {}", dt.format("%Y-%m-%d %H:%M"))
-                }
-                SyncStatus::Error(e) => format!("Sync error: {e}"),
-            };
-            card.spawn((
-                Text::new(status_text),
-                font_row.clone(),
-                TextColor(TEXT_SECONDARY),
-            ));
-        }
-
-        // ── Progression section ─────────────────────────────────────
-        spawn_spacer(card, VAL_SPACE_2);
-        card.spawn((
-            Text::new("Progression"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        if let Some(p) = progress {
-            let prog = &p.0;
-            let (xp_span, xp_done) = xp_progress(prog.total_xp, prog.level);
-            let pct = if xp_span == 0 {
-                100u64
-            } else {
-                xp_done.saturating_mul(100).checked_div(xp_span).unwrap_or(100)
-            };
-            card.spawn((
-                Text::new(format!(
-                    "Level {}  \u{2014}  {} XP  ({}/{} to next, {}%)",
-                    prog.level, prog.total_xp, xp_done, xp_span, pct
-                )),
-                font_row.clone(),
-                TextColor(TEXT_PRIMARY),
-            ));
-            card.spawn((
-                Text::new(format!(
-                    "Daily streak: {}  |  Card backs: {}  |  Backgrounds: {}",
-                    prog.daily_challenge_streak,
-                    prog.unlocked_card_backs.len(),
-                    prog.unlocked_backgrounds.len(),
-                )),
-                font_row.clone(),
-                TextColor(TEXT_PRIMARY),
-            ));
-
-            // 14-day daily-challenge calendar row.
-            spawn_daily_calendar(
-                card,
-                &prog.daily_challenge_history,
-                prog.daily_challenge_streak,
-                prog.daily_challenge_longest_streak,
-                Local::now().date_naive(),
-                font_res,
-            );
-        }
-
-        // ── Achievements section ────────────────────────────────────
-        spawn_spacer(card, VAL_SPACE_2);
-        card.spawn((
-            Text::new("Achievements"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        if let Some(ar) = achievements {
-            let records = &ar.0;
-            let unlocked_count = records.iter().filter(|r| r.unlocked).count();
-            card.spawn((
-                Text::new(format!("{unlocked_count} / 18 unlocked")),
-                font_row.clone(),
-                TextColor(ACCENT_PRIMARY),
-            ));
-
-            let mut any_unlocked = false;
-            for record in records {
-                let def = achievement_by_id(record.id.as_str());
-                let is_secret = def.is_some_and(|d| d.secret);
-                if is_secret && !record.unlocked {
-                    continue;
-                }
-                if !record.unlocked {
-                    continue;
-                }
-                any_unlocked = true;
-                let name = def.map_or(record.id.as_str(), |d| d.name);
-                let date_str = match record.unlock_date {
-                    Some(dt) => format!("  ({})", dt.format("%Y-%m-%d")),
-                    None => String::new(),
-                };
-                card.spawn((
-                    Text::new(format!("  [x] {name}{date_str}")),
-                    font_row.clone(),
-                    TextColor(STATE_SUCCESS),
                 ));
             }
-            if !any_unlocked {
-                card.spawn((
-                    Text::new("  No achievements unlocked yet."),
+
+            // ── Sync section ────────────────────────────────────────────
+            body.spawn((
+                Text::new("Sync"),
+                font_section.clone(),
+                TextColor(STATE_INFO),
+            ));
+            if let Some(s) = settings {
+                let (backend_name, username) = sync_info(&s.0.sync_backend);
+                body.spawn((
+                    Text::new(format!("Account: {username}  |  Backend: {backend_name}")),
+                    font_row.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+            }
+            if let Some(ss) = sync_status {
+                let status_text = match &ss.0 {
+                    SyncStatus::Idle => "Sync: idle".to_string(),
+                    SyncStatus::Syncing => "Sync: syncing\u{2026}".to_string(),
+                    SyncStatus::LastSynced(dt) => {
+                        format!("Last synced: {}", dt.format("%Y-%m-%d %H:%M"))
+                    }
+                    SyncStatus::Error(e) => format!("Sync error: {e}"),
+                };
+                body.spawn((
+                    Text::new(status_text),
                     font_row.clone(),
                     TextColor(TEXT_SECONDARY),
                 ));
             }
-        }
 
-        // ── Statistics summary section ──────────────────────────────
-        spawn_spacer(card, VAL_SPACE_2);
-        card.spawn((
-            Text::new("Statistics Summary"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        if let Some(sr) = stats {
-            let s = &sr.0;
-            let best_score_str = if s.best_single_score == 0 {
-                "\u{2014}".to_string()
-            } else {
-                s.best_single_score.to_string()
-            };
-            card.spawn((
-                Text::new(format!(
-                    "Played: {}  |  Won: {}  |  Win rate: {}  |  Best time: {}",
-                    s.games_played,
-                    s.games_won,
-                    format_win_rate(s),
-                    format_fastest_win(s.fastest_win_seconds),
-                )),
-                font_row.clone(),
-                TextColor(TEXT_PRIMARY),
+            // ── Progression section ─────────────────────────────────────
+            spawn_spacer(body, VAL_SPACE_2);
+            body.spawn((
+                Text::new("Progression"),
+                font_section.clone(),
+                TextColor(STATE_INFO),
             ));
-            card.spawn((
-                Text::new(format!(
-                    "Win streak: {} current, {} best  |  Best score: {}",
-                    s.win_streak_current, s.win_streak_best, best_score_str,
-                )),
-                font_row.clone(),
-                TextColor(TEXT_PRIMARY),
+            if let Some(p) = progress {
+                let prog = &p.0;
+                let (xp_span, xp_done) = xp_progress(prog.total_xp, prog.level);
+                let pct = if xp_span == 0 {
+                    100u64
+                } else {
+                    xp_done.saturating_mul(100).checked_div(xp_span).unwrap_or(100)
+                };
+                body.spawn((
+                    Text::new(format!(
+                        "Level {}  \u{2014}  {} XP  ({}/{} to next, {}%)",
+                        prog.level, prog.total_xp, xp_done, xp_span, pct
+                    )),
+                    font_row.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+                body.spawn((
+                    Text::new(format!(
+                        "Daily streak: {}  |  Card backs: {}  |  Backgrounds: {}",
+                        prog.daily_challenge_streak,
+                        prog.unlocked_card_backs.len(),
+                        prog.unlocked_backgrounds.len(),
+                    )),
+                    font_row.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+
+                // 14-day daily-challenge calendar row.
+                spawn_daily_calendar(
+                    body,
+                    &prog.daily_challenge_history,
+                    prog.daily_challenge_streak,
+                    prog.daily_challenge_longest_streak,
+                    Local::now().date_naive(),
+                    font_res,
+                );
+            }
+
+            // ── Achievements section ────────────────────────────────────
+            spawn_spacer(body, VAL_SPACE_2);
+            body.spawn((
+                Text::new("Achievements"),
+                font_section.clone(),
+                TextColor(STATE_INFO),
             ));
-        }
+            if let Some(ar) = achievements {
+                let records = &ar.0;
+                let unlocked_count = records.iter().filter(|r| r.unlocked).count();
+                body.spawn((
+                    Text::new(format!("{unlocked_count} / 18 unlocked")),
+                    font_row.clone(),
+                    TextColor(ACCENT_PRIMARY),
+                ));
+
+                let mut any_unlocked = false;
+                for record in records {
+                    let def = achievement_by_id(record.id.as_str());
+                    let is_secret = def.is_some_and(|d| d.secret);
+                    if is_secret && !record.unlocked {
+                        continue;
+                    }
+                    if !record.unlocked {
+                        continue;
+                    }
+                    any_unlocked = true;
+                    let name = def.map_or(record.id.as_str(), |d| d.name);
+                    let date_str = match record.unlock_date {
+                        Some(dt) => format!("  ({})", dt.format("%Y-%m-%d")),
+                        None => String::new(),
+                    };
+                    body.spawn((
+                        Text::new(format!("  [x] {name}{date_str}")),
+                        font_row.clone(),
+                        TextColor(STATE_SUCCESS),
+                    ));
+                }
+                if !any_unlocked {
+                    body.spawn((
+                        Text::new("  No achievements unlocked yet."),
+                        font_row.clone(),
+                        TextColor(TEXT_SECONDARY),
+                    ));
+                }
+            }
+
+            // ── Statistics summary section ──────────────────────────────
+            spawn_spacer(body, VAL_SPACE_2);
+            body.spawn((
+                Text::new("Statistics Summary"),
+                font_section.clone(),
+                TextColor(STATE_INFO),
+            ));
+            if let Some(sr) = stats {
+                let s = &sr.0;
+                let best_score_str = if s.best_single_score == 0 {
+                    "\u{2014}".to_string()
+                } else {
+                    s.best_single_score.to_string()
+                };
+                body.spawn((
+                    Text::new(format!(
+                        "Played: {}  |  Won: {}  |  Win rate: {}  |  Best time: {}",
+                        s.games_played,
+                        s.games_won,
+                        format_win_rate(s),
+                        format_fastest_win(s.fastest_win_seconds),
+                    )),
+                    font_row.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+                body.spawn((
+                    Text::new(format!(
+                        "Win streak: {} current, {} best  |  Best score: {}",
+                        s.win_streak_current, s.win_streak_best, best_score_str,
+                    )),
+                    font_row.clone(),
+                    TextColor(TEXT_PRIMARY),
+                ));
+            }
+        });
 
         spawn_modal_actions(card, |actions| {
             spawn_modal_button(
@@ -501,6 +571,36 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn profile_modal_body_is_scrollable() {
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyP);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&ProfileScrollable>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count, 1,
+            "Profile modal must spawn exactly one ProfileScrollable body"
+        );
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, With<ProfileScrollable>>();
+        let nodes: Vec<&Node> = q.iter(app.world()).collect();
+        assert_ne!(
+            nodes[0].max_height,
+            Val::Auto,
+            "scrollable body must set a non-default max_height"
+        );
+        assert_eq!(nodes[0].overflow, Overflow::scroll_y());
     }
 
     #[test]

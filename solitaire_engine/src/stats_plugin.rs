@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use solitaire_data::{
@@ -118,6 +119,18 @@ pub struct ReplaySelectorCaption;
 #[derive(Component, Debug)]
 pub struct PerModeBestsRow;
 
+/// Marker on the scrollable body Node inside the Stats modal.
+///
+/// The Stats panel renders an 8-cell primary grid, three per-mode bests
+/// rows, a five-cell progression grid, weekly goals, an unlocks line,
+/// optional Time Attack readout, and the latest replay caption — enough
+/// content to overflow the modal on the 800x600 minimum window. This
+/// marker tags the inner container that carries `Overflow::scroll_y()`
+/// plus a `max_height` constraint. Mirrors the `SettingsPanelScrollable`
+/// pattern.
+#[derive(Component, Debug)]
+pub struct StatsScrollable;
+
 /// Registers stats resources, update systems, and the UI toggle.
 pub struct StatsPlugin {
     /// Where to persist stats. `None` disables all file I/O (for tests).
@@ -167,6 +180,10 @@ impl Plugin for StatsPlugin {
             .add_message::<InfoToastEvent>()
             .add_message::<ToggleStatsRequestEvent>()
             .add_message::<WinStreakMilestoneEvent>()
+            // `MouseWheel` is emitted by Bevy's input plugin under
+            // `DefaultPlugins`; register it explicitly so the stats-scroll
+            // system also runs cleanly under `MinimalPlugins` in tests.
+            .add_message::<MouseWheel>()
             // record_abandoned must read `move_count` BEFORE handle_new_game
             // clobbers it with a fresh game. These are NOT in StatsUpdate because
             // StatsUpdate (as a set) is ordered after GameMutation by external
@@ -195,7 +212,34 @@ impl Plugin for StatsPlugin {
             .add_systems(
                 Update,
                 (handle_replay_selector_buttons, repaint_replay_selector_caption).chain(),
-            );
+            )
+            .add_systems(Update, scroll_stats_panel);
+    }
+}
+
+/// Routes mouse-wheel events into the Stats modal's scrollable body
+/// while the panel is open. No-op when no `StatsScrollable` exists in
+/// the world (modal closed). Mirrors `scroll_settings_panel`.
+fn scroll_stats_panel(
+    mut scroll_evr: MessageReader<MouseWheel>,
+    mut scrollables: Query<&mut ScrollPosition, With<StatsScrollable>>,
+) {
+    if scrollables.is_empty() {
+        scroll_evr.clear();
+        return;
+    }
+    let delta_y: f32 = scroll_evr
+        .read()
+        .map(|ev| match ev.unit {
+            MouseScrollUnit::Line => ev.y * 50.0,
+            MouseScrollUnit::Pixel => ev.y,
+        })
+        .sum();
+    if delta_y == 0.0 {
+        return;
+    }
+    for mut sp in scrollables.iter_mut() {
+        sp.0.y = (sp.0.y - delta_y).max(0.0);
     }
 }
 
@@ -561,104 +605,48 @@ fn spawn_stats_screen(
     spawn_modal(commands, StatsScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Statistics", font_res);
 
-        // First-launch caption — sits above the grid as gentle nudge so
-        // the wall of em-dashes reads as "nothing to track yet" rather
-        // than as broken state.
-        if is_first_launch {
-            card.spawn((
-                Text::new("Play a game to start tracking stats."),
-                TextFont {
-                    font_size: TYPE_CAPTION,
-                    ..default()
-                },
-                TextColor(TEXT_SECONDARY),
-                Node {
-                    margin: UiRect {
-                        bottom: VAL_SPACE_2,
+        // Scrollable body — the Stats panel renders an 8-cell grid plus
+        // multiple sections (per-mode bests, progression, weekly goals,
+        // unlocks, optional Time Attack, latest replay caption) and
+        // overflows the modal on the 800x600 minimum window. Wrapping
+        // in an `Overflow::scroll_y()` Node with a constrained
+        // `max_height` keeps every cell reachable; the Watch Replay /
+        // Done action row stays fixed outside the scroll.
+        card.spawn((
+            StatsScrollable,
+            ScrollPosition::default(),
+            Node {
+                flex_direction: FlexDirection::Column,
+                row_gap: VAL_SPACE_3,
+                max_height: Val::Vh(70.0),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+        ))
+        .with_children(|body| {
+            // First-launch caption — sits above the grid as gentle nudge so
+            // the wall of em-dashes reads as "nothing to track yet" rather
+            // than as broken state.
+            if is_first_launch {
+                body.spawn((
+                    Text::new("Play a game to start tracking stats."),
+                    TextFont {
+                        font_size: TYPE_CAPTION,
                         ..default()
                     },
-                    ..default()
-                },
-            ));
-        }
+                    TextColor(TEXT_SECONDARY),
+                    Node {
+                        margin: UiRect {
+                            bottom: VAL_SPACE_2,
+                            ..default()
+                        },
+                        ..default()
+                    },
+                ));
+            }
 
-        // --- primary stat cells grid ---
-        card.spawn(Node {
-            flex_direction: FlexDirection::Row,
-            flex_wrap: FlexWrap::Wrap,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::FlexStart,
-            column_gap: VAL_SPACE_4,
-            row_gap: VAL_SPACE_3,
-            width: Val::Percent(100.0),
-            ..default()
-        })
-        .with_children(|grid| {
-            spawn_stat_cell(grid, &win_rate_str,    "Win Rate");
-            spawn_stat_cell(grid, &played_str,      "Games Played");
-            spawn_stat_cell(grid, &won_str,         "Games Won");
-            spawn_stat_cell(grid, &lost_str,        "Games Lost");
-            spawn_stat_cell(grid, &fastest_str,     "Fastest Win");
-            spawn_stat_cell(grid, &avg_time_str,    "Avg Time");
-            spawn_stat_cell(grid, &best_score_str,  "Best Score");
-            spawn_stat_cell(grid, &best_streak_str, "Best Streak");
-        });
-
-        // --- per-mode bests section ---
-        // Three rows, one per supported mode. Time Attack uses session-level
-        // scoring (count of wins inside a 10-minute window) so a per-game
-        // best wouldn't compose; Daily uses Classic scoring and so already
-        // contributes to the Classic row.
-        card.spawn((
-            Text::new("Per-mode bests"),
-            font_section.clone(),
-            TextColor(STATE_INFO),
-        ));
-        card.spawn(Node {
-            flex_direction: FlexDirection::Column,
-            width: Val::Percent(100.0),
-            row_gap: VAL_SPACE_2,
-            ..default()
-        })
-        .with_children(|column| {
-            spawn_per_mode_bests_row(
-                column,
-                "Classic",
-                stats.classic_best_score,
-                stats.classic_fastest_win_seconds,
-                &font_row,
-            );
-            spawn_per_mode_bests_row(
-                column,
-                "Zen",
-                stats.zen_best_score,
-                stats.zen_fastest_win_seconds,
-                &font_row,
-            );
-            spawn_per_mode_bests_row(
-                column,
-                "Challenge",
-                stats.challenge_best_score,
-                stats.challenge_fastest_win_seconds,
-                &font_row,
-            );
-        });
-
-        // --- progression section ---
-        if let Some(p) = progress {
-            card.spawn((
-                Text::new("Progression"),
-                font_section.clone(),
-                TextColor(STATE_INFO),
-            ));
-
-            let level_str     = format_stat_value(p.level);
-            let xp_str        = format_stat_value(p.total_xp as u32);
-            let next_label    = xp_to_next_level_label(p.total_xp, p.level);
-            let daily_str     = format_stat_value(p.daily_challenge_streak);
-            let challenge_str = challenge_progress_label(p.challenge_index);
-
-            card.spawn(Node {
+            // --- primary stat cells grid ---
+            body.spawn(Node {
                 flex_direction: FlexDirection::Row,
                 flex_wrap: FlexWrap::Wrap,
                 justify_content: JustifyContent::Center,
@@ -669,68 +657,144 @@ fn spawn_stats_screen(
                 ..default()
             })
             .with_children(|grid| {
-                spawn_stat_cell(grid, &level_str,     "Level");
-                spawn_stat_cell(grid, &xp_str,        "Total XP");
-                spawn_stat_cell(grid, &next_label,    "Next Level");
-                spawn_stat_cell(grid, &daily_str,     "Daily Streak");
-                spawn_stat_cell(grid, &challenge_str, "Challenge");
+                spawn_stat_cell(grid, &win_rate_str,    "Win Rate");
+                spawn_stat_cell(grid, &played_str,      "Games Played");
+                spawn_stat_cell(grid, &won_str,         "Games Won");
+                spawn_stat_cell(grid, &lost_str,        "Games Lost");
+                spawn_stat_cell(grid, &fastest_str,     "Fastest Win");
+                spawn_stat_cell(grid, &avg_time_str,    "Avg Time");
+                spawn_stat_cell(grid, &best_score_str,  "Best Score");
+                spawn_stat_cell(grid, &best_streak_str, "Best Streak");
             });
 
-            // Weekly goals
-            card.spawn((
-                Text::new("Weekly Goals"),
+            // --- per-mode bests section ---
+            // Three rows, one per supported mode. Time Attack uses session-level
+            // scoring (count of wins inside a 10-minute window) so a per-game
+            // best wouldn't compose; Daily uses Classic scoring and so already
+            // contributes to the Classic row.
+            body.spawn((
+                Text::new("Per-mode bests"),
                 font_section.clone(),
-                TextColor(TEXT_SECONDARY),
+                TextColor(STATE_INFO),
             ));
-            for goal in WEEKLY_GOALS {
-                let pv = p.weekly_goal_progress.get(goal.id).copied().unwrap_or(0);
-                card.spawn((
-                    Text::new(format!("  {}: {}/{}", goal.description, pv, goal.target)),
+            body.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                width: Val::Percent(100.0),
+                row_gap: VAL_SPACE_2,
+                ..default()
+            })
+            .with_children(|column| {
+                spawn_per_mode_bests_row(
+                    column,
+                    "Classic",
+                    stats.classic_best_score,
+                    stats.classic_fastest_win_seconds,
+                    &font_row,
+                );
+                spawn_per_mode_bests_row(
+                    column,
+                    "Zen",
+                    stats.zen_best_score,
+                    stats.zen_fastest_win_seconds,
+                    &font_row,
+                );
+                spawn_per_mode_bests_row(
+                    column,
+                    "Challenge",
+                    stats.challenge_best_score,
+                    stats.challenge_fastest_win_seconds,
+                    &font_row,
+                );
+            });
+
+            // --- progression section ---
+            if let Some(p) = progress {
+                body.spawn((
+                    Text::new("Progression"),
+                    font_section.clone(),
+                    TextColor(STATE_INFO),
+                ));
+
+                let level_str     = format_stat_value(p.level);
+                let xp_str        = format_stat_value(p.total_xp as u32);
+                let next_label    = xp_to_next_level_label(p.total_xp, p.level);
+                let daily_str     = format_stat_value(p.daily_challenge_streak);
+                let challenge_str = challenge_progress_label(p.challenge_index);
+
+                body.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    column_gap: VAL_SPACE_4,
+                    row_gap: VAL_SPACE_3,
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
+                .with_children(|grid| {
+                    spawn_stat_cell(grid, &level_str,     "Level");
+                    spawn_stat_cell(grid, &xp_str,        "Total XP");
+                    spawn_stat_cell(grid, &next_label,    "Next Level");
+                    spawn_stat_cell(grid, &daily_str,     "Daily Streak");
+                    spawn_stat_cell(grid, &challenge_str, "Challenge");
+                });
+
+                // Weekly goals
+                body.spawn((
+                    Text::new("Weekly Goals"),
+                    font_section.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
+                for goal in WEEKLY_GOALS {
+                    let pv = p.weekly_goal_progress.get(goal.id).copied().unwrap_or(0);
+                    body.spawn((
+                        Text::new(format!("  {}: {}/{}", goal.description, pv, goal.target)),
+                        font_row.clone(),
+                        TextColor(TEXT_PRIMARY),
+                    ));
+                }
+
+                // Unlocks line
+                body.spawn((
+                    Text::new(format!(
+                        "Card Backs: {}  |  Backgrounds: {}",
+                        format_id_list(&p.unlocked_card_backs),
+                        format_id_list(&p.unlocked_backgrounds),
+                    )),
                     font_row.clone(),
-                    TextColor(TEXT_PRIMARY),
+                    TextColor(TEXT_SECONDARY),
                 ));
             }
 
-            // Unlocks line
-            card.spawn((
-                Text::new(format!(
-                    "Card Backs: {}  |  Backgrounds: {}",
-                    format_id_list(&p.unlocked_card_backs),
-                    format_id_list(&p.unlocked_backgrounds),
-                )),
+            // --- Time Attack section ---
+            if let Some(ta) = time_attack
+                && ta.active {
+                    let mins = (ta.remaining_secs / 60.0).floor() as u64;
+                    let secs = (ta.remaining_secs % 60.0).floor() as u64;
+                    body.spawn((
+                        Text::new(format!(
+                            "Time Attack \u{2014} {mins}m {secs:02}s left  |  Wins: {}",
+                            ta.wins
+                        )),
+                        font_section.clone(),
+                        TextColor(STATE_WARNING),
+                    ));
+                }
+
+            // --- Latest replay caption ---
+            // Surfaces the most recent winning game so the player can spot
+            // whether their last victory has been recorded. The Watch
+            // Replay action below is what the player clicks to revisit it.
+            let replay_caption = match latest_replay {
+                Some(r) => format!("Latest win: {}", format_replay_caption(r)),
+                None => "No replay recorded yet \u{2014} win a game first.".to_string(),
+            };
+            body.spawn((
+                Text::new(replay_caption),
                 font_row.clone(),
                 TextColor(TEXT_SECONDARY),
             ));
-        }
-
-        // --- Time Attack section ---
-        if let Some(ta) = time_attack
-            && ta.active {
-                let mins = (ta.remaining_secs / 60.0).floor() as u64;
-                let secs = (ta.remaining_secs % 60.0).floor() as u64;
-                card.spawn((
-                    Text::new(format!(
-                        "Time Attack \u{2014} {mins}m {secs:02}s left  |  Wins: {}",
-                        ta.wins
-                    )),
-                    font_section.clone(),
-                    TextColor(STATE_WARNING),
-                ));
-            }
-
-        // --- Latest replay caption ---
-        // Surfaces the most recent winning game so the player can spot
-        // whether their last victory has been recorded. The Watch
-        // Replay action below is what the player clicks to revisit it.
-        let replay_caption = match latest_replay {
-            Some(r) => format!("Latest win: {}", format_replay_caption(r)),
-            None => "No replay recorded yet \u{2014} win a game first.".to_string(),
-        };
-        card.spawn((
-            Text::new(replay_caption),
-            font_row.clone(),
-            TextColor(TEXT_SECONDARY),
-        ));
+        });
 
         spawn_modal_actions(card, |actions| {
             // The Watch Replay button is always rendered so the
@@ -1086,6 +1150,36 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn stats_modal_body_is_scrollable() {
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query::<&StatsScrollable>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count, 1,
+            "Stats modal must spawn exactly one StatsScrollable body"
+        );
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, With<StatsScrollable>>();
+        let nodes: Vec<&Node> = q.iter(app.world()).collect();
+        assert_ne!(
+            nodes[0].max_height,
+            Val::Auto,
+            "scrollable body must set a non-default max_height"
+        );
+        assert_eq!(nodes[0].overflow, Overflow::scroll_y());
     }
 
     #[test]
