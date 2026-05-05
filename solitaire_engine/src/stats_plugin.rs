@@ -82,6 +82,15 @@ pub struct LatestReplayPath(pub Option<PathBuf>);
 #[derive(Component, Debug)]
 pub struct WatchReplayButton;
 
+/// Marker component on each per-mode bests row in the stats overlay.
+///
+/// One row per supported [`solitaire_core::game_state::GameMode`] (Classic,
+/// Zen, Challenge — Time Attack and Daily are intentionally excluded; see
+/// `StatsSnapshot` doc comments). Tests query by this marker to assert the
+/// per-mode section rendered.
+#[derive(Component, Debug)]
+pub struct PerModeBestsRow;
+
 /// Registers stats resources, update systems, and the UI toggle.
 pub struct StatsPlugin {
     /// Where to persist stats. `None` disables all file I/O (for tests).
@@ -236,6 +245,13 @@ fn update_stats_on_win(
         stats
             .0
             .update_on_win(ev.score, ev.time_seconds, &game.0.draw_mode);
+        // Per-mode best score / fastest win — additive on top of the
+        // lifetime totals tracked by `update_on_win`. TimeAttack is a
+        // no-op inside the helper because it has its own session-level
+        // scoring model.
+        stats
+            .0
+            .update_per_mode_bests(ev.score, ev.time_seconds, game.0.mode);
         let new_streak = stats.0.win_streak_current;
         // Fire the streak-milestone event only on the threshold
         // crossing — `prev < threshold && new >= threshold`. This
@@ -460,6 +476,46 @@ fn spawn_stats_screen(
             spawn_stat_cell(grid, &best_streak_str, "Best Streak");
         });
 
+        // --- per-mode bests section ---
+        // Three rows, one per supported mode. Time Attack uses session-level
+        // scoring (count of wins inside a 10-minute window) so a per-game
+        // best wouldn't compose; Daily uses Classic scoring and so already
+        // contributes to the Classic row.
+        card.spawn((
+            Text::new("Per-mode bests"),
+            font_section.clone(),
+            TextColor(STATE_INFO),
+        ));
+        card.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            width: Val::Percent(100.0),
+            row_gap: VAL_SPACE_2,
+            ..default()
+        })
+        .with_children(|column| {
+            spawn_per_mode_bests_row(
+                column,
+                "Classic",
+                stats.classic_best_score,
+                stats.classic_fastest_win_seconds,
+                &font_row,
+            );
+            spawn_per_mode_bests_row(
+                column,
+                "Zen",
+                stats.zen_best_score,
+                stats.zen_fastest_win_seconds,
+                &font_row,
+            );
+            spawn_per_mode_bests_row(
+                column,
+                "Challenge",
+                stats.challenge_best_score,
+                stats.challenge_fastest_win_seconds,
+                &font_row,
+            );
+        });
+
         // --- progression section ---
         if let Some(p) = progress {
             card.spawn((
@@ -572,6 +628,74 @@ fn spawn_stats_screen(
             );
         });
     });
+}
+
+/// Spawn one row of the "Per-mode bests" section: the mode label on the
+/// left, then the best-score and best-time readouts right-aligned. Each
+/// row is tagged with [`PerModeBestsRow`] so tests can count them.
+///
+/// `best_score == 0` and `fastest_win_seconds == 0` both render as an
+/// em-dash, consistent with the first-launch zero-state treatment used
+/// by the primary cells above.
+fn spawn_per_mode_bests_row(
+    parent: &mut ChildSpawnerCommands,
+    mode_label: &str,
+    best_score: u32,
+    fastest_win_seconds: u64,
+    font_row: &TextFont,
+) {
+    let dash = "\u{2014}".to_string();
+    let score_str = if best_score == 0 {
+        format!("Best {dash}")
+    } else {
+        format!("Best {best_score}")
+    };
+    let time_str = if fastest_win_seconds == 0 {
+        format!("Best time {dash}")
+    } else {
+        format!("Best time {}", format_duration(fastest_win_seconds))
+    };
+
+    parent
+        .spawn((
+            PerModeBestsRow,
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                width: Val::Percent(100.0),
+                column_gap: VAL_SPACE_3,
+                ..default()
+            },
+        ))
+        .with_children(|row| {
+            // Mode label on the left.
+            row.spawn((
+                Text::new(mode_label.to_string()),
+                font_row.clone(),
+                TextColor(TEXT_PRIMARY),
+            ));
+            // Right-aligned readouts grouped together.
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::FlexEnd,
+                column_gap: VAL_SPACE_3,
+                ..default()
+            })
+            .with_children(|readouts| {
+                readouts.spawn((
+                    Text::new(score_str),
+                    font_row.clone(),
+                    TextColor(ACCENT_PRIMARY),
+                ));
+                readouts.spawn((
+                    Text::new(time_str),
+                    font_row.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
+            });
+        });
 }
 
 /// Spawn a single stat cell: a large value label on top and a small
@@ -834,6 +958,67 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn stats_screen_renders_three_per_mode_bests_rows() {
+        // Open the Stats overlay and assert three [`PerModeBestsRow`]
+        // entities exist — one per supported [`GameMode`] (Classic, Zen,
+        // Challenge — Time Attack and Daily are excluded by design).
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        app.update();
+
+        let row_count = app
+            .world_mut()
+            .query::<&PerModeBestsRow>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            row_count, 3,
+            "expected three per-mode bests rows (Classic, Zen, Challenge), got {row_count}"
+        );
+    }
+
+    #[test]
+    fn classic_win_event_updates_classic_best_score() {
+        // Default mode is Classic — a win event should populate the
+        // Classic per-mode bests but leave Zen and Challenge at zero.
+        let mut app = headless_app();
+        app.world_mut().write_message(GameWonEvent {
+            score: 1500,
+            time_seconds: 180,
+        });
+        app.update();
+
+        let stats = &app.world().resource::<StatsResource>().0;
+        assert_eq!(stats.classic_best_score, 1500);
+        assert_eq!(stats.classic_fastest_win_seconds, 180);
+        assert_eq!(stats.zen_best_score, 0);
+        assert_eq!(stats.challenge_best_score, 0);
+    }
+
+    #[test]
+    fn zen_win_event_updates_zen_best_score_only() {
+        let mut app = headless_app();
+        app.world_mut()
+            .resource_mut::<crate::resources::GameStateResource>()
+            .0
+            .mode = solitaire_core::game_state::GameMode::Zen;
+
+        app.world_mut().write_message(GameWonEvent {
+            score: 1800,
+            time_seconds: 600,
+        });
+        app.update();
+
+        let stats = &app.world().resource::<StatsResource>().0;
+        assert_eq!(stats.zen_best_score, 1800);
+        assert_eq!(stats.zen_fastest_win_seconds, 600);
+        assert_eq!(stats.classic_best_score, 0);
+        assert_eq!(stats.challenge_best_score, 0);
     }
 
     #[test]

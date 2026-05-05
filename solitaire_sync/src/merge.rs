@@ -109,7 +109,42 @@ fn merge_stats(
         best_single_score: local.best_single_score.max(remote.best_single_score),
         draw_one_wins: local.draw_one_wins.max(remote.draw_one_wins),
         draw_three_wins: local.draw_three_wins.max(remote.draw_three_wins),
+        // Per-mode bests. Bests take max; fastest times take a *zero-aware*
+        // min — see [`min_ignore_zero`] for the rationale (0 means "no win
+        // yet" for these fields, unlike the lifetime `fastest_win_seconds`
+        // which uses `u64::MAX` as its sentinel).
+        classic_best_score: local.classic_best_score.max(remote.classic_best_score),
+        classic_fastest_win_seconds: min_ignore_zero(
+            local.classic_fastest_win_seconds,
+            remote.classic_fastest_win_seconds,
+        ),
+        zen_best_score: local.zen_best_score.max(remote.zen_best_score),
+        zen_fastest_win_seconds: min_ignore_zero(
+            local.zen_fastest_win_seconds,
+            remote.zen_fastest_win_seconds,
+        ),
+        challenge_best_score: local.challenge_best_score.max(remote.challenge_best_score),
+        challenge_fastest_win_seconds: min_ignore_zero(
+            local.challenge_fastest_win_seconds,
+            remote.challenge_fastest_win_seconds,
+        ),
         last_modified: Utc::now(),
+    }
+}
+
+/// Zero-aware minimum: returns the smaller of `a` and `b`, but treats `0` as
+/// "no value recorded yet" so `min_ignore_zero(0, x) == x`.
+///
+/// The lifetime `fastest_win_seconds` field uses `u64::MAX` as its "no wins"
+/// sentinel (see [`StatsSnapshot::default`]) and so a plain `min` works for
+/// it. The per-mode `*_fastest_win_seconds` fields, on the other hand, are
+/// `#[serde(default)]` — and `u64`'s default is 0, not `u64::MAX`. Using a
+/// straight `min` would therefore wrongly resolve "one side has a real time,
+/// the other has no win" to 0. This helper preserves the real time instead.
+fn min_ignore_zero(a: u64, b: u64) -> u64 {
+    match (a, b) {
+        (0, x) | (x, 0) => x,
+        _ => a.min(b),
     }
 }
 
@@ -873,6 +908,87 @@ mod tests {
             merged.progress.daily_challenge_longest_streak, 9,
             "longest streak must be the max across both sides"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Per-mode bests merge
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn merge_per_mode_best_takes_max() {
+        // Classic best score: 1000 vs 2000 → 2000. Mirror behaviour for
+        // `best_single_score` so per-mode follows the same rule.
+        let mut local = default_payload();
+        local.stats.classic_best_score = 1000;
+        let mut remote = default_payload();
+        remote.stats.classic_best_score = 2000;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.classic_best_score, 2000);
+    }
+
+    #[test]
+    fn merge_per_mode_best_takes_max_for_zen_and_challenge() {
+        let mut local = default_payload();
+        local.stats.zen_best_score = 800;
+        local.stats.challenge_best_score = 5000;
+        let mut remote = default_payload();
+        remote.stats.zen_best_score = 1500;
+        remote.stats.challenge_best_score = 3000;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.zen_best_score, 1500);
+        assert_eq!(merged.stats.challenge_best_score, 5000);
+    }
+
+    #[test]
+    fn merge_per_mode_fastest_ignores_zero() {
+        // Local has no Zen win (zen_fastest = 0); remote has 180s.
+        // Straight min(0, 180) would return 0 — wrong. The merge must
+        // preserve the real time.
+        let local = default_payload();
+        let mut remote = default_payload();
+        remote.stats.zen_fastest_win_seconds = 180;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.zen_fastest_win_seconds, 180);
+    }
+
+    #[test]
+    fn merge_per_mode_fastest_takes_min_when_both_present() {
+        // When both sides have real times, the merge takes the smaller —
+        // mirroring the lifetime `fastest_win_seconds` behaviour.
+        let mut local = default_payload();
+        local.stats.classic_fastest_win_seconds = 240;
+        let mut remote = default_payload();
+        remote.stats.classic_fastest_win_seconds = 120;
+
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.classic_fastest_win_seconds, 120);
+    }
+
+    #[test]
+    fn merge_per_mode_fastest_both_zero_stays_zero() {
+        // Neither side has a win — the field must remain 0 rather than
+        // accidentally becoming non-zero.
+        let local = default_payload();
+        let remote = default_payload();
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.classic_fastest_win_seconds, 0);
+        assert_eq!(merged.stats.zen_fastest_win_seconds, 0);
+        assert_eq!(merged.stats.challenge_fastest_win_seconds, 0);
+    }
+
+    #[test]
+    fn merge_per_mode_fastest_local_real_remote_zero() {
+        // Symmetric to `merge_per_mode_fastest_ignores_zero`: local has the
+        // real time, remote is the zero-side. The merge must keep local's
+        // value rather than flooring to 0.
+        let mut local = default_payload();
+        local.stats.challenge_fastest_win_seconds = 300;
+        let remote = default_payload();
+        let (merged, _) = merge(&local, &remote);
+        assert_eq!(merged.stats.challenge_fastest_win_seconds, 300);
     }
 
     #[test]
