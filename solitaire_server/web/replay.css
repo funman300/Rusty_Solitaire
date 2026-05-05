@@ -56,41 +56,29 @@ main {
     align-items: center;
 }
 
+/* Board: a positioning context for both the dashed empty-pile slots
+   and the absolutely-positioned card sprites. Width matches the
+   7-column grid (7*card-w + 6 inter-column gaps), height covers the
+   top row plus a worst-case 13-card tableau fan. Cards live as
+   siblings of the slot placeholders so they can move between piles
+   without ever changing parent — the transform-based `transition`
+   then animates the flight. */
 #board {
+    position: relative;
     background: var(--felt);
     border-radius: 12px;
     padding: 24px;
-    width: min(100%, calc(7 * var(--card-w) + 8 * var(--gap)));
-    display: grid;
-    grid-template-columns: repeat(7, var(--card-w));
-    grid-template-rows: var(--card-h) auto;
-    gap: var(--gap);
-    column-gap: var(--gap);
-    row-gap: 32px;
+    width: calc(7 * var(--card-w) + 6 * var(--gap));
+    /* Top row + a generous fan budget (12 fan steps + the card's
+       own height) so a king-down-to-ace column never overflows. */
+    height: calc(var(--card-h) + 32px + var(--card-h) + 12 * 28px);
 }
 
-/* Top row: stock, waste, [skip], 4 foundations. */
-.pile-stock     { grid-column: 1; grid-row: 1; }
-.pile-waste     { grid-column: 2; grid-row: 1; }
-.pile-foundation-0 { grid-column: 4; grid-row: 1; }
-.pile-foundation-1 { grid-column: 5; grid-row: 1; }
-.pile-foundation-2 { grid-column: 6; grid-row: 1; }
-.pile-foundation-3 { grid-column: 7; grid-row: 1; }
-.pile-tableau-0 { grid-column: 1; grid-row: 2; }
-.pile-tableau-1 { grid-column: 2; grid-row: 2; }
-.pile-tableau-2 { grid-column: 3; grid-row: 2; }
-.pile-tableau-3 { grid-column: 4; grid-row: 2; }
-.pile-tableau-4 { grid-column: 5; grid-row: 2; }
-.pile-tableau-5 { grid-column: 6; grid-row: 2; }
-.pile-tableau-6 { grid-column: 7; grid-row: 2; }
-
-.pile {
-    position: relative;
-    width: var(--card-w);
-    /* Tableau columns let cards stack downward. */
-}
-
-.pile-empty {
+/* Empty-pile slot placeholders are absolutely positioned at the same
+   coordinates the renderer uses for cards, so they line up perfectly
+   when the pile is empty. */
+.slot {
+    position: absolute;
     width: var(--card-w);
     height: var(--card-h);
     border: 2px dashed rgba(255, 255, 255, 0.15);
@@ -99,6 +87,13 @@ main {
 
 .card {
     position: absolute;
+    /* `top: 0; left: 0` plus a per-card `transform: translate(...)`
+       gives us a single transformed property to animate. Using
+       `transform` (rather than `top` / `left`) lets the browser run
+       the animation on the compositor — smooth even on the
+       low-spec laptops the player tests on. */
+    top: 0;
+    left: 0;
     width: var(--card-w);
     height: var(--card-h);
     background: var(--card-bg);
@@ -110,18 +105,9 @@ main {
     font-weight: 600;
     line-height: 1;
     user-select: none;
-    transition: top 180ms ease, opacity 180ms ease;
-}
-
-/* Tableau fan: cards beneath the top one peek through ~28 px down. */
-.pile-tableau-0 .card,
-.pile-tableau-1 .card,
-.pile-tableau-2 .card,
-.pile-tableau-3 .card,
-.pile-tableau-4 .card,
-.pile-tableau-5 .card,
-.pile-tableau-6 .card {
-    /* Per-card top set inline by JS (offset = idx * 28 px). */
+    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
+        opacity 200ms ease;
+    will-change: transform;
 }
 
 .card.face-down {

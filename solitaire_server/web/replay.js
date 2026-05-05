@@ -5,11 +5,44 @@
 // `GameState` compiled to WebAssembly), and renders each step's pile
 // snapshot as plain HTML cards. The WASM module is the single source
 // of truth for the rules engine — we don't re-implement Klondike in JS.
+//
+// Card flight animation: each card's DOM element persists across
+// re-renders, keyed by `card.id`. `render()` updates each card's
+// `transform: translate(...)` to its new (pile, index) coordinates;
+// the CSS `transition` on `transform` animates the flight. Cards that
+// disappear from the snapshot fade and remove; new cards fade in at
+// their target position.
 
 import init, { ReplayPlayer } from "/web/pkg/solitaire_wasm.js";
 
 const STEP_INTERVAL_MS = 600;
 const FAN_OFFSET_PX = 28;
+const CARD_W = 80;
+const CARD_H = 112;
+const GAP = 12;
+
+// Pile origin (top-left of the slot, in board-relative pixels).
+// Top row: stock at column 0, waste at column 1, foundations at 3-6.
+// Bottom row: tableau columns 0-6.
+const TOP_ROW_Y = 0;
+const TABLEAU_ROW_Y = CARD_H + 32;
+const colX = (col) => col * (CARD_W + GAP);
+
+const PILE_ORIGIN = {
+    stock: { x: colX(0), y: TOP_ROW_Y },
+    waste: { x: colX(1), y: TOP_ROW_Y },
+    "foundation-0": { x: colX(3), y: TOP_ROW_Y },
+    "foundation-1": { x: colX(4), y: TOP_ROW_Y },
+    "foundation-2": { x: colX(5), y: TOP_ROW_Y },
+    "foundation-3": { x: colX(6), y: TOP_ROW_Y },
+    "tableau-0": { x: colX(0), y: TABLEAU_ROW_Y },
+    "tableau-1": { x: colX(1), y: TABLEAU_ROW_Y },
+    "tableau-2": { x: colX(2), y: TABLEAU_ROW_Y },
+    "tableau-3": { x: colX(3), y: TABLEAU_ROW_Y },
+    "tableau-4": { x: colX(4), y: TABLEAU_ROW_Y },
+    "tableau-5": { x: colX(5), y: TABLEAU_ROW_Y },
+    "tableau-6": { x: colX(6), y: TABLEAU_ROW_Y },
+};
 
 const SUIT_GLYPHS = {
     clubs: "♣",
@@ -17,12 +50,8 @@ const SUIT_GLYPHS = {
     hearts: "♥",
     spades: "♠",
 };
-
 const RED_SUITS = new Set(["diamonds", "hearts"]);
-
-const RANK_LABELS = [
-    "", "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K",
-];
+const RANK_LABELS = ["", "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
 const board = document.getElementById("board");
 const captionEl = document.getElementById("caption");
@@ -38,8 +67,12 @@ let player = null;
 let replayJson = null;
 let playInterval = null;
 
+// Persistent map: card.id → DOM element. Reused across renders so the
+// browser interpolates the `transform` change rather than rebuilding
+// nodes every step.
+const cardEls = new Map();
+
 async function bootstrap() {
-    // /replays/<id> — pull the id off the path so we can fetch the JSON.
     const id = window.location.pathname.split("/").pop();
     if (!id) {
         captionEl.textContent = "No replay id in URL.";
@@ -65,8 +98,20 @@ async function bootstrap() {
         `· ${formatDuration(replay.time_seconds)} win on ${replay.recorded_at} ` +
         `· final score ${replay.final_score}`;
 
+    spawnEmptySlots();
     await init();
     resetPlayer();
+}
+
+/// Spawn the dashed empty-pile placeholders once. They never move and
+/// never get keyed to card ids, so they're outside the cardEls map.
+function spawnEmptySlots() {
+    Object.entries(PILE_ORIGIN).forEach(([name, { x, y }]) => {
+        const slot = document.createElement("div");
+        slot.className = `slot slot-${name}`;
+        slot.style.transform = `translate(${x}px, ${y}px)`;
+        board.appendChild(slot);
+    });
 }
 
 function resetPlayer() {
@@ -103,15 +148,74 @@ function finish() {
     btnStep.disabled = true;
 }
 
+/// Apply `snap` to the persistent card-element map.
+///
+/// Phase 1: collect every card present in this snapshot, computing its
+/// target board-relative (x, y) from its pile + index.
+/// Phase 2: for each card, find or create its DOM element and update
+/// its visual state + transform. Persistent elements interpolate via
+/// CSS transition; freshly-created ones fade in.
+/// Phase 3: any card present in `cardEls` but absent from `snap` (rare
+/// but happens during stat resets) fades out and is removed.
 function render(snap) {
     if (!snap) return;
-    board.replaceChildren();
-    renderPile("stock", snap.stock, false);
-    renderPile("waste", snap.waste, false);
+
+    const targets = new Map(); // card.id → { card, x, y }
+
+    function placePile(name, cards, fan) {
+        const origin = PILE_ORIGIN[name];
+        cards.forEach((card, idx) => {
+            const yOffset = fan ? idx * FAN_OFFSET_PX : 0;
+            targets.set(card.id, {
+                card,
+                x: origin.x,
+                y: origin.y + yOffset,
+                z: idx,
+            });
+        });
+    }
+
+    placePile("stock", snap.stock, false);
+    placePile("waste", snap.waste, false);
     snap.foundations.forEach((cards, idx) =>
-        renderPile(`foundation-${idx}`, cards, false));
+        placePile(`foundation-${idx}`, cards, false));
     snap.tableaus.forEach((cards, idx) =>
-        renderPile(`tableau-${idx}`, cards, true));
+        placePile(`tableau-${idx}`, cards, true));
+
+    // Apply or create.
+    targets.forEach(({ card, x, y, z }) => {
+        let el = cardEls.get(card.id);
+        if (!el) {
+            el = createCardElement(card);
+            // Spawn off-screen with opacity 0 so the entry transition
+            // fades in at the destination rather than popping.
+            el.style.transform = `translate(${x}px, ${y}px)`;
+            el.style.opacity = "0";
+            board.appendChild(el);
+            cardEls.set(card.id, el);
+            // Force the browser to commit the off-screen frame before
+            // we set the visible state, so the transition runs.
+            requestAnimationFrame(() => {
+                el.style.opacity = "1";
+            });
+        } else {
+            updateCardElement(el, card);
+            el.style.transform = `translate(${x}px, ${y}px)`;
+        }
+        el.style.zIndex = String(z + 1);
+    });
+
+    // Drop any cards no longer in play (e.g. on player reset).
+    cardEls.forEach((el, id) => {
+        if (!targets.has(id)) {
+            el.style.opacity = "0";
+            // Remove after the fade transition completes.
+            setTimeout(() => {
+                el.remove();
+                cardEls.delete(id);
+            }, 220);
+        }
+    });
 
     progressEl.textContent = `step ${snap.step_idx} / ${snap.total_steps}`;
     scoreEl.textContent = `Score ${snap.score}`;
@@ -125,50 +229,51 @@ function render(snap) {
     }
 }
 
-function renderPile(name, cards, fan) {
-    const pile = document.createElement("div");
-    pile.className = `pile pile-${name}`;
-    if (cards.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "pile-empty";
-        pile.appendChild(empty);
-        board.appendChild(pile);
-        return;
-    }
-    cards.forEach((card, idx) => {
-        const top = fan ? idx * FAN_OFFSET_PX : 0;
-        pile.appendChild(buildCard(card, top));
-    });
-    board.appendChild(pile);
-}
-
-function buildCard(card, top) {
+function createCardElement(card) {
     const el = document.createElement("div");
     el.className = "card";
-    el.style.top = `${top}px`;
+    el.dataset.cardId = String(card.id);
+    populateCardFace(el, card);
+    return el;
+}
+
+/// Cheap "is this still the same visual state" check. Face-up cards
+/// only need a re-paint if their face_up flag flipped (rank/suit are
+/// immutable per id), so we can skip rebuilding the inner DOM for the
+/// 99% case where only the transform changed.
+function updateCardElement(el, card) {
+    const wasFaceDown = el.classList.contains("face-down");
+    const isFaceDown = !card.face_up;
+    if (wasFaceDown !== isFaceDown) {
+        el.replaceChildren();
+        el.classList.remove("red", "black", "face-down");
+        populateCardFace(el, card);
+    }
+}
+
+function populateCardFace(el, card) {
     if (!card.face_up) {
         el.classList.add("face-down");
-        return el;
+        return;
     }
     el.classList.add(RED_SUITS.has(card.suit) ? "red" : "black");
     const label = RANK_LABELS[card.rank] || "?";
     const glyph = SUIT_GLYPHS[card.suit] || "?";
 
-    const top_corner = document.createElement("span");
-    top_corner.className = "corner top";
-    top_corner.textContent = `${label}\n${glyph}`;
-    el.appendChild(top_corner);
+    const top = document.createElement("span");
+    top.className = "corner top";
+    top.textContent = `${label}\n${glyph}`;
+    el.appendChild(top);
 
     const center = document.createElement("span");
     center.className = "center";
     center.textContent = glyph;
     el.appendChild(center);
 
-    const bottom_corner = document.createElement("span");
-    bottom_corner.className = "corner bottom";
-    bottom_corner.textContent = `${label}\n${glyph}`;
-    el.appendChild(bottom_corner);
-    return el;
+    const bottom = document.createElement("span");
+    bottom.className = "corner bottom";
+    bottom.textContent = `${label}\n${glyph}`;
+    el.appendChild(bottom);
 }
 
 function formatDuration(seconds) {
@@ -197,7 +302,15 @@ btnPlay.addEventListener("click", () => {
 });
 
 btnPrev.addEventListener("click", () => {
-    if (replayJson) resetPlayer();
+    if (!replayJson) return;
+    // Drop every existing card so the next render fades them all in
+    // at the freshly-dealt positions. Without this, cards from the
+    // current state would slide to wherever the new deal puts them
+    // — confusing since the deal is supposed to look like a fresh
+    // start, not a continuation.
+    cardEls.forEach((el) => el.remove());
+    cardEls.clear();
+    resetPlayer();
 });
 
 bootstrap();
