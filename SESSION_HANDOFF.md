@@ -1,14 +1,14 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-06 (post-v0.16.0) — Modal-feel polish round shipped: every overlay scrolls when it overflows, every button shows a pointer cursor on hover, modal focus lands on the same frame, and read-only modals dismiss on scrim click. Direction now opens.
+**Last updated:** 2026-05-06 (mid-session post-v0.16.0) — Solver-driven hints + replay-rate slider landed on top of v0.16.0. An async-solver attempt was rolled back when an agent left 3 failing tests during interruption. Test-to-work ratio noted as a quality signal — recent agents had been mandating ≥3 tests per feature including trivial Default/serde-derive coverage; future agent briefs scale that back to behaviour-level tests only.
 
 ## Status at pause
 
-- **HEAD on origin:** v0.16.0's tag commit.
+- **HEAD on origin:** v0.16.0's tag commit; this session adds two follow-up commits on top.
 - **Working tree:** clean apart from untracked `CARD_PLAN.md` (intentional).
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings` clean.
-- **Tests:** **1196 passed / 0 failed** across the workspace.
-- **Tags on origin:** `v0.9.0` through `v0.16.0`.
+- **Tests:** **1208 passed / 0 failed** across the workspace.
+- **Tags on origin:** `v0.9.0` through `v0.16.0`. v0.17.0 not yet cut.
 
 ## Where we are
 
@@ -38,21 +38,27 @@ The post-v0.15.0 next-round candidates are still mostly open — solver-driven h
 | Scrim dismiss core | `a54201e` | New `ScrimDismissible` marker on `ModalScrim` opts a modal into click-outside-to-close. `dismiss_modal_on_scrim_click` system in `ui_modal` despawns the topmost dismissible scrim on a left-mouse press whose cursor lands on the scrim and outside every `ModalCard`. Stats / Achievements / Help opted in. |
 | Scrim dismiss tail | `cbf2483` | One-line opt-in (capture scrim + insert marker) for Profile / Leaderboard / Home, completing all six read-only modals. |
 
+## Post-v0.16.0 (this session, unreleased)
+
+| Area | Commit | What landed |
+|---|---|---|
+| Solver-driven hints | `87275bf` | The H-key hint now asks the v0.15.0 solver for the actual best first move via the new `try_solve_with_first_move` / `try_solve_from_state` APIs. Heuristic stays as the fallback for inconclusive deals. Median 2 ms per H press. |
+| Replay-rate slider | (pending) | Settings → Gameplay slider tunes `replay_move_interval_secs` 0.10–1.00 s in 0.05 s steps; default 0.45 s. `tick_replay_playback` reads from `SettingsResource` per frame so the slider takes effect on the next playback tick. |
+
 ## Open punch list
 
 ### Release prep
 
-1. **Smoke-test on a real game**: confirm scroll feels right on Achievements (the original bug), pointer cursor changes on every interactive surface, the very first Tab in a modal already activates the primary, and clicking the dimmed area dismisses the read-only modals while NOT dismissing Settings/Pause.
+1. **Cut v0.17.0** when ready — solver hints + replay-rate slider is a small but coherent slice on top of v0.16.0.
 2. **Desktop packaging** per `ARCHITECTURE.md §17`. Arch PKGBUILD exists in `/home/manage/solitaire-quest-pkgbuild/` (separate repo). Pending: app icon, macOS `.icns` + notarisation cert, Windows `.ico` + Authenticode cert, AppImage recipe.
 
-### Carryover from v0.15.0 next-round candidates
+### Process note (raised this session)
 
-Still open — would each be ~50–200 LOC:
+Recent agent briefs reflexively asked for ≥3 tests per feature, which produced low-value coverage on trivial settings fields (default-value tests, serde-derive round-trips, clamp tests that just exercise stdlib `clamp`). Future agent briefs should ask only for tests that pin **behaviour contracts or regressions on real bugs** — not coverage of language/library mechanics.
 
-- **Solver-driven hints** — the existing hint system uses a heuristic; promote it to ask `try_solve` for the actual best move. Now that the solver is in place this is mostly plumbing.
-- **Replay-playback rate slider** — the 0.45 s/move pace is hardcoded; a Settings slider in the same row as tooltip-delay / time-bonus would let power users speed up older replays.
-- **Solver progress overlay** — when "Winnable deals only" is on, a brief "checking deal…" toast surfaces after ~500 ms so the player isn't confused by the rare worst-case stall.
-- **Solver-on-AsyncComputeTaskPool** — current solver runs synchronously on the main thread. Worst-case 50 attempts × 120 ms = 6 s of UI stall on pathological seeds. Async + cancel button would be safer.
+### Carryover candidates — still open
+
+- **Solver-on-AsyncComputeTaskPool** — current solver runs synchronously on the main thread. Worst-case 50 attempts × 120 ms = 6 s of UI stall on pathological seeds. **An attempt this session was rolled back** when an agent was interrupted leaving 3 failing tests; redoing this needs more careful scoping (smaller pieces, real cancel-and-test flow, NOT a parallel agent split). Worth taking next.
 - **Per-deal "won previously" indicator** — the rolling replay history's seeds make this easy: when a new game starts on a seed the player has already won, surface a tiny indicator on the HUD.
 - **Replay sharing** — `replays.json` is per-machine. Allow a player to copy a replay's URL (already wired via `solitaire_server`) and post it elsewhere. The web-viewer already exists.
 
