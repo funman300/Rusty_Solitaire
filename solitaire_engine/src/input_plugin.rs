@@ -40,10 +40,10 @@ use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::events::{
     DrawRequestEvent, ForfeitRequestEvent, HintVisualEvent, InfoToastEvent, MoveRejectedEvent,
-    MoveRequestEvent, NewGameConfirmEvent, NewGameRequestEvent, StartZenRequestEvent,
-    StateChangedEvent, UndoRequestEvent,
+    MoveRequestEvent, NewGameRequestEvent, StartZenRequestEvent, StateChangedEvent,
+    UndoRequestEvent,
 };
-use crate::game_plugin::GameMutation;
+use crate::game_plugin::{ConfirmNewGameScreen, GameMutation, RestorePromptScreen};
 use crate::pause_plugin::PausedResource;
 use crate::progress_plugin::ProgressResource;
 use crate::layout::{Layout, LayoutResource};
@@ -63,22 +63,6 @@ const DRAG_Z: f32 = 500.0;
 /// uses).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct HintSolverConfig(pub solitaire_core::solver::SolverConfig);
-
-/// Shared countdown state for the new-game double-press confirmation
-/// flow.
-///
-/// Using a resource (instead of `Local`) lets the keyboard sub-systems
-/// share the same countdown state without needing to pass values
-/// between them. Forfeit no longer has a keyboard countdown — `G` now
-/// fires `ForfeitRequestEvent` and `PausePlugin` shows a real
-/// `ForfeitConfirmScreen` modal.
-#[derive(Resource, Debug, Default)]
-struct KeyboardConfirmState {
-    /// Seconds remaining in the new-game confirmation window (> 0 while open).
-    new_game_countdown: f32,
-    /// True while we are waiting for the second N press to confirm a new game.
-    new_game_pending: bool,
-}
 
 /// Registers keyboard, mouse, and touch input systems.
 ///
@@ -100,8 +84,6 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HintCycleIndex>()
             .init_resource::<HintSolverConfig>()
-            .init_resource::<KeyboardConfirmState>()
-            .add_message::<NewGameConfirmEvent>()
             .add_message::<StartZenRequestEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ForfeitRequestEvent>()
@@ -131,9 +113,6 @@ impl Plugin for InputPlugin {
     }
 }
 
-/// Seconds after the first N press during which a second N confirms new game.
-const NEW_GAME_CONFIRM_WINDOW: f32 = 3.0;
-
 /// Bundles the event writers needed by the core keyboard handler.
 ///
 /// Keeping these in a [`SystemParam`] avoids hitting Bevy's 16-parameter limit.
@@ -141,41 +120,37 @@ const NEW_GAME_CONFIRM_WINDOW: f32 = 3.0;
 struct CoreKeyboardMessages<'w> {
     undo: MessageWriter<'w, UndoRequestEvent>,
     new_game: MessageWriter<'w, NewGameRequestEvent>,
-    confirm_event: MessageWriter<'w, NewGameConfirmEvent>,
     info_toast: MessageWriter<'w, InfoToastEvent>,
     draw: MessageWriter<'w, DrawRequestEvent>,
 }
 
-/// Handles the core keyboard shortcuts: U (undo), N (new game + confirmation
-/// window), Z (zen mode), D / Space (draw), and ticks down the new-game
-/// confirmation countdown each frame.
+/// Handles the core keyboard shortcuts: U (undo), N (new game), Z (zen mode),
+/// D / Space (draw).
+///
+/// `N` fires `NewGameRequestEvent` straight through; the existing
+/// `handle_new_game` flow shows the `ConfirmNewGameScreen` modal when
+/// the current game is in progress, so a single press surfaces a real
+/// Confirm / Cancel UI instead of a "press N again" toast. `Shift+N`
+/// keeps the keyboard power-user bypass by setting `confirmed: true`.
+///
+/// While the confirm modal or the restore prompt is already open, the
+/// system skips the N branch so those modals' own input handlers can
+/// process N (cancel / start-new-game) without us re-firing a request
+/// the same frame.
 #[allow(clippy::too_many_arguments)]
 fn handle_keyboard_core(
     keys: Res<ButtonInput<KeyCode>>,
     paused: Option<Res<PausedResource>>,
     progress: Option<Res<ProgressResource>>,
-    game: Option<Res<GameStateResource>>,
-    time: Res<Time>,
-    mut confirm: ResMut<KeyboardConfirmState>,
     mut ev: CoreKeyboardMessages<'_>,
     mut time_attack: Option<ResMut<TimeAttackResource>>,
     selection: Option<Res<SelectionState>>,
     mut zen_requests: MessageReader<StartZenRequestEvent>,
+    confirm_screens: Query<(), With<ConfirmNewGameScreen>>,
+    restore_prompts: Query<(), With<RestorePromptScreen>>,
 ) {
     if paused.is_some_and(|p| p.0) {
         return;
-    }
-
-    // Tick down the new-game confirmation window each frame.
-    if confirm.new_game_countdown > 0.0 {
-        confirm.new_game_countdown -= time.delta_secs();
-        if confirm.new_game_countdown <= 0.0 {
-            confirm.new_game_countdown = 0.0;
-            if confirm.new_game_pending {
-                confirm.new_game_pending = false;
-                ev.info_toast.write(InfoToastEvent("New game cancelled".to_string()));
-            }
-        }
     }
 
     if keys.just_pressed(KeyCode::KeyU) {
@@ -194,27 +169,24 @@ fn handle_keyboard_core(
                     mode: Some(solitaire_core::game_state::GameMode::Classic),
                     confirmed: false,
                 });
-                confirm.new_game_countdown = 0.0;
                 return;
             }
 
-        let active_game = game.as_ref().is_some_and(|g| g.0.move_count > 0 && !g.0.is_won);
-        let shift_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-        if shift_held || !active_game {
-            // Shift+N or no active game — start immediately, no confirmation.
-            ev.new_game.write(NewGameRequestEvent::default());
-            confirm.new_game_countdown = 0.0;
-            confirm.new_game_pending = false;
-        } else if confirm.new_game_countdown > 0.0 {
-            // Second press within the window — confirmed.
-            ev.new_game.write(NewGameRequestEvent::default());
-            confirm.new_game_countdown = 0.0;
-            confirm.new_game_pending = false;
+        // The confirm modal and restore prompt own N while they're up —
+        // they cancel / accept respectively. Skipping here prevents us
+        // from firing a fresh request the same frame those modals close.
+        if !confirm_screens.is_empty() || !restore_prompts.is_empty() {
+            // intentional: defer to those modals' input handlers.
         } else {
-            // First press on an active game — require confirmation.
-            confirm.new_game_countdown = NEW_GAME_CONFIRM_WINDOW;
-            confirm.new_game_pending = true;
-            ev.confirm_event.write(NewGameConfirmEvent);
+            let shift_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            ev.new_game.write(NewGameRequestEvent {
+                seed: None,
+                mode: None,
+                // Shift+N skips the confirm modal for keyboard power-users;
+                // bare N falls through `handle_new_game`'s active-game check
+                // and shows the modal when a game is in progress.
+                confirmed: shift_held,
+            });
         }
     }
 
@@ -2017,15 +1989,6 @@ mod tests {
 
         let hints = all_hints(&game);
         assert!(hints.is_empty(), "no hint should exist when the game is truly stuck");
-    }
-
-    /// Const-assert that `NEW_GAME_CONFIRM_WINDOW` is positive so the
-    /// confirmation countdown actually opens on the first N press.
-    ///
-    /// Mirrors the existing `forfeit_confirm_window_is_positive` test.
-    #[test]
-    fn new_game_confirm_window_is_positive() {
-        const { assert!(NEW_GAME_CONFIRM_WINDOW > 0.0, "NEW_GAME_CONFIRM_WINDOW must be > 0"); }
     }
 
     // -----------------------------------------------------------------------

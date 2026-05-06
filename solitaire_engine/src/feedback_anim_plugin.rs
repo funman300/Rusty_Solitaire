@@ -21,8 +21,8 @@
 //!
 //! # Task #69 — Animated card deal on new game start
 //!
-//! When `NewGameRequestEvent` fires (on a fresh game, `move_count == 0`) or
-//! `NewGameConfirmEvent` fires, `start_deal_anim` reads `LayoutResource` and
+//! When `NewGameRequestEvent` fires (on a fresh game, `move_count == 0`),
+//! `start_deal_anim` reads `LayoutResource` and
 //! inserts a `CardAnim` on every card entity, sliding each card from the stock
 //! pile's position to its current (final) position with a per-card stagger
 //! derived from the current `AnimSpeed` setting plus a deterministic ±10 %

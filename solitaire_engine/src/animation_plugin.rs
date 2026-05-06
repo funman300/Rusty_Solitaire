@@ -21,7 +21,7 @@ use crate::card_animation::{sample_curve, CardAnimation, MotionCurve};
 use crate::card_plugin::CardEntity;
 use crate::challenge_plugin::ChallengeAdvancedEvent;
 use crate::daily_challenge_plugin::{DailyChallengeCompletedEvent, DailyGoalAnnouncementEvent};
-use crate::events::{InfoToastEvent, NewGameConfirmEvent, XpAwardedEvent};
+use crate::events::{InfoToastEvent, XpAwardedEvent};
 use crate::events::{AchievementUnlockedEvent, GameWonEvent};
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
@@ -161,7 +161,6 @@ impl Plugin for AnimationPlugin {
             .add_message::<TimeAttackEndedEvent>()
             .add_message::<ChallengeAdvancedEvent>()
             .add_message::<SettingsChangedEvent>()
-            .add_message::<NewGameConfirmEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<XpAwardedEvent>()
             .init_resource::<EffectiveSlideDuration>()
@@ -183,7 +182,6 @@ impl Plugin for AnimationPlugin {
                     handle_challenge_toast,
                     handle_settings_toast,
                     handle_auto_complete_toast,
-                    handle_new_game_confirm_toast,
                     handle_xp_awarded_toast,
                     tick_toasts,
                     (enqueue_toasts, drive_toast_display).chain(),
@@ -456,15 +454,6 @@ fn handle_auto_complete_toast(
         } else {
             *shown = false;
         }
-    }
-}
-
-fn handle_new_game_confirm_toast(
-    mut commands: Commands,
-    mut events: MessageReader<NewGameConfirmEvent>,
-) {
-    for _ in events.read() {
-        spawn_toast(&mut commands, "Press N again to start a new game".to_string(), 3.0);
     }
 }
 

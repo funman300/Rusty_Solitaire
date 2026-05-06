@@ -88,7 +88,7 @@ pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,
     ForfeitEvent, ForfeitRequestEvent, FoundationCompletedEvent, GameWonEvent, HelpRequestEvent,
     HintVisualEvent, InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
-    NewGameConfirmEvent, NewGameRequestEvent, PauseRequestEvent, StartChallengeRequestEvent,
+    NewGameRequestEvent, PauseRequestEvent, StartChallengeRequestEvent,
     StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent, StartZenRequestEvent,
     StateChangedEvent, SyncCompleteEvent, ToggleAchievementsRequestEvent,
     ToggleLeaderboardRequestEvent, ToggleProfileRequestEvent, ToggleSettingsRequestEvent,

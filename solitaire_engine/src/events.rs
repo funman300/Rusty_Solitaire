@@ -207,13 +207,6 @@ pub struct ToggleLeaderboardRequestEvent;
 #[derive(Message, Debug, Clone)]
 pub struct SyncCompleteEvent(pub Result<SyncResponse, String>);
 
-/// Fired by `InputPlugin` when N is pressed while a game is in progress
-/// but confirmation has not yet been received. The animation plugin shows
-/// a "Press N again to confirm" toast. A second N press within the
-/// confirmation window sends `NewGameRequestEvent`.
-#[derive(Message, Debug, Clone, Copy, Default)]
-pub struct NewGameConfirmEvent;
-
 /// Generic informational toast message. Any system can fire this to display
 /// a short string to the player, e.g. "Locked — reach level 5".
 #[derive(Message, Debug, Clone)]
