@@ -501,7 +501,12 @@ fn spawn_leaderboard_screen(
                 }
                 LeaderboardResource::Loaded(rows) if rows.is_empty() => {
                     body.spawn((
-                        Text::new("No entries yet \u{2014} sync and opt in to appear here."),
+                        Text::new("Be the first on the leaderboard."),
+                        font_status.clone(),
+                        TextColor(TEXT_PRIMARY),
+                    ));
+                    body.spawn((
+                        Text::new("Win a game and opt in to appear here."),
                         font_row.clone(),
                         TextColor(TEXT_SECONDARY),
                     ));

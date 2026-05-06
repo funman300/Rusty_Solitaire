@@ -22,7 +22,7 @@ use solitaire_data::{
     TOOLTIP_DELAY_STEP_SECS,
 };
 
-use crate::events::{ManualSyncRequestEvent, ToggleSettingsRequestEvent};
+use crate::events::{InfoToastEvent, ManualSyncRequestEvent, ToggleSettingsRequestEvent};
 use crate::font_plugin::FontResource;
 use crate::progress_plugin::ProgressResource;
 use crate::resources::{SettingsScrollPos, SyncStatus, SyncStatusResource};
@@ -296,6 +296,7 @@ impl Plugin for SettingsPlugin {
             .add_message::<SettingsChangedEvent>()
             .add_message::<ManualSyncRequestEvent>()
             .add_message::<ToggleSettingsRequestEvent>()
+            .add_message::<InfoToastEvent>()
             .add_message::<bevy::input::mouse::MouseWheel>()
             // `WindowResized` / `WindowMoved` are real Bevy window events
             // and emitted by the windowing backend under `DefaultPlugins`,
@@ -383,6 +384,7 @@ fn handle_volume_keys(
     mut settings: ResMut<SettingsResource>,
     path: Res<SettingsStoragePath>,
     mut changed: MessageWriter<SettingsChangedEvent>,
+    mut toast: MessageWriter<InfoToastEvent>,
 ) {
     let mut delta = 0.0_f32;
     if keys.just_pressed(KeyCode::BracketLeft) {
@@ -401,6 +403,10 @@ fn handle_volume_keys(
     }
     persist(&path, &settings.0);
     changed.write(SettingsChangedEvent(settings.0.clone()));
+    toast.write(InfoToastEvent(format!(
+        "SFX volume: {}%",
+        (after * 100.0).round() as i32
+    )));
 }
 
 /// Opens or closes the Settings panel — `O` keyboard accelerator or

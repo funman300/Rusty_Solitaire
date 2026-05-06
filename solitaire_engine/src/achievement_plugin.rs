@@ -474,8 +474,28 @@ fn spawn_achievements_screen(
         ..default()
     };
 
+    let any_unlocked = records.iter().any(|r| r.unlocked);
+
     let scrim = spawn_modal(commands, AchievementsScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, header, font_res);
+
+        // First-time hint — shown until the player has unlocked anything.
+        // The list itself describes individual rewards, but a top-level
+        // explanation gives newer players context for the otherwise dense
+        // greyed-out grid.
+        if !any_unlocked {
+            card.spawn((
+                Text::new(
+                    "Complete games and try new modes to unlock achievements and rewards.",
+                ),
+                TextFont {
+                    font: font_res.map(|f| f.0.clone()).unwrap_or_default(),
+                    font_size: TYPE_CAPTION,
+                    ..default()
+                },
+                TextColor(TEXT_SECONDARY),
+            ));
+        }
 
         // Scrollable body — the achievements list grows to ~19 rows which
         // overflows the modal on the 800x600 minimum window. Wrapping the
