@@ -129,7 +129,7 @@ fn main() {
         .add_plugins(TimeAttackPlugin)
         .add_plugins(HudPlugin)
         .add_plugins(HelpPlugin)
-        .add_plugins(HomePlugin)
+        .add_plugins(HomePlugin::default())
         .add_plugins(ProfilePlugin)
         .add_plugins(PausePlugin)
         .add_plugins(SettingsPlugin::default())

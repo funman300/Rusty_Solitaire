@@ -115,22 +115,55 @@ impl HomeMode {
 #[derive(Component, Debug)]
 struct HomeModeCard(HomeMode);
 
+/// Tracks whether the launch-time Home modal has already been auto-shown
+/// for this app session. Flipped to `true` by [`spawn_home_on_launch`]
+/// the first time it spawns the modal, so the auto-show is one-shot per
+/// process — subsequent dismissals (Cancel / mode pick) don't trigger
+/// a respawn, but the player can still re-open the picker with `M`.
+#[derive(Resource, Debug, Default)]
+struct LaunchHomeShown(bool);
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
 
 /// Registers the M-key toggle, the mode-card click handler, and the
 /// Cancel-button handler.
-pub struct HomePlugin;
+///
+/// `auto_show_on_launch` (default true) controls whether the picker
+/// auto-spawns once the splash clears at app start. Headless tests use
+/// [`HomePlugin::headless`] to opt out so each test starts with no
+/// modal in the world.
+pub struct HomePlugin {
+    auto_show_on_launch: bool,
+}
+
+impl Default for HomePlugin {
+    fn default() -> Self {
+        Self {
+            auto_show_on_launch: true,
+        }
+    }
+}
+
+impl HomePlugin {
+    /// Test-only constructor that disables the launch-time auto-show.
+    /// `MinimalPlugins` test setups don't include a splash, so the
+    /// gating system would otherwise fire on the first tick and
+    /// pre-spawn the modal that every test asserts is absent.
+    pub fn headless() -> Self {
+        Self {
+            auto_show_on_launch: false,
+        }
+    }
+}
 
 impl Plugin for HomePlugin {
     fn build(&self, app: &mut App) {
-        // Be defensive about message registration so HomePlugin works
-        // standalone in tests (the actual handlers live in
-        // input_plugin / challenge_plugin / time_attack_plugin /
-        // daily_challenge_plugin, but those plugins might not be
-        // installed in a tightly-scoped headless app).
-        app.add_message::<NewGameRequestEvent>()
+        // Pre-mark the auto-show as already done in headless mode so the
+        // gating system is a permanent no-op for tests.
+        app.insert_resource(LaunchHomeShown(!self.auto_show_on_launch))
+            .add_message::<NewGameRequestEvent>()
             .add_message::<StartZenRequestEvent>()
             .add_message::<StartChallengeRequestEvent>()
             .add_message::<StartTimeAttackRequestEvent>()
@@ -147,6 +180,7 @@ impl Plugin for HomePlugin {
             .add_systems(
                 Update,
                 (
+                    spawn_home_on_launch,
                     toggle_home_screen,
                     attach_focusable_to_home_mode_cards,
                     handle_home_card_click,
@@ -156,6 +190,54 @@ impl Plugin for HomePlugin {
                     .chain(),
             );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-show on launch
+// ---------------------------------------------------------------------------
+
+/// Auto-spawns the Home / mode-picker modal once per app session, so
+/// the player lands on a deliberate "what mode do I want to play"
+/// screen instead of the default Classic deal.
+///
+/// Gated on the launch-time UI being clear:
+///
+/// * `SplashRoot` must be gone — the splash owns the foreground during
+///   the brand beat and the home modal appearing under it would feel
+///   like a flash of half-rendered UI.
+/// * `RestorePromptScreen` must not be open and `PendingRestoredGame`
+///   must be empty — when the player has a saved in-progress game the
+///   restore prompt takes precedence; the home picker would compete
+///   with it for attention.
+/// * `HomeScreen` must not already exist (defensive — e.g. the player
+///   pressed `M` between ticks).
+/// * `LaunchHomeShown` flips to `true` after the first spawn so this
+///   system becomes a no-op for the rest of the session. Cancelling
+///   the modal therefore goes to the underlying default deal rather
+///   than respawning the picker.
+#[allow(clippy::too_many_arguments)]
+fn spawn_home_on_launch(
+    mut commands: Commands,
+    mut shown: ResMut<LaunchHomeShown>,
+    splash: Query<(), With<crate::splash_plugin::SplashRoot>>,
+    restore_prompts: Query<(), With<crate::game_plugin::RestorePromptScreen>>,
+    pending_restore: Option<Res<crate::game_plugin::PendingRestoredGame>>,
+    existing: Query<(), With<HomeScreen>>,
+    progress: Option<Res<ProgressResource>>,
+    font_res: Option<Res<FontResource>>,
+) {
+    if shown.0
+        || !splash.is_empty()
+        || !restore_prompts.is_empty()
+        || pending_restore.as_ref().is_some_and(|p| p.0.is_some())
+        || !existing.is_empty()
+    {
+        return;
+    }
+
+    let level = progress.as_ref().map_or(0, |p| p.0.level);
+    spawn_home_screen(&mut commands, level, font_res.as_deref());
+    shown.0 = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -602,7 +684,7 @@ mod tests {
             .add_plugins(GamePlugin)
             .add_plugins(TablePlugin)
             .add_plugins(ProgressPlugin::headless())
-            .add_plugins(HomePlugin);
+            .add_plugins(HomePlugin::headless());
         app.init_resource::<ButtonInput<KeyCode>>();
         app.update();
         app
@@ -892,7 +974,7 @@ mod tests {
             .add_plugins(GamePlugin)
             .add_plugins(TablePlugin)
             .add_plugins(ProgressPlugin::headless())
-            .add_plugins(HomePlugin);
+            .add_plugins(HomePlugin::headless());
         app.init_resource::<ButtonInput<KeyCode>>();
         app.update();
         app
