@@ -171,11 +171,15 @@ fn advance_time_attack(
     mut ended: MessageWriter<TimeAttackEndedEvent>,
     paused: Option<Res<crate::pause_plugin::PausedResource>>,
     path: Option<Res<TimeAttackSessionPath>>,
+    home_screens: Query<(), With<crate::home_plugin::HomeScreen>>,
 ) {
     if !session.active {
         return;
     }
-    if paused.is_some_and(|p| p.0) {
+    // Mirrors `tick_elapsed_time`: pause while the launch / mode-picker
+    // Home modal is up so the countdown doesn't burn while the player
+    // is choosing what to play next.
+    if paused.is_some_and(|p| p.0) || !home_screens.is_empty() {
         return;
     }
     session.remaining_secs -= time.delta_secs();
