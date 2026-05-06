@@ -20,6 +20,7 @@ use crate::settings_plugin::SettingsResource;
 use crate::stats_plugin::{format_fastest_win, format_win_rate, StatsResource};
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
+    ScrimDismissible,
 };
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_ELEVATED, BORDER_STRONG, SPACE_1, STATE_INFO, STATE_SUCCESS, TEXT_PRIMARY,
@@ -184,7 +185,7 @@ fn spawn_profile_screen(
         ..default()
     };
 
-    spawn_modal(commands, ProfileScreen, Z_MODAL_PANEL, |card| {
+    let scrim = spawn_modal(commands, ProfileScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Profile", font_res);
 
         // Scrollable body — the Profile panel renders sync info,
@@ -395,6 +396,8 @@ fn spawn_profile_screen(
             );
         });
     });
+    // Profile is read-only — opt into click-outside-to-dismiss.
+    commands.entity(scrim).insert(ScrimDismissible);
 }
 
 /// Spawn a fixed-height vertical spacer node.

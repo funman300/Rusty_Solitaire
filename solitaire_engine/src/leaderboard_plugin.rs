@@ -21,6 +21,7 @@ use crate::settings_plugin::SettingsResource;
 use crate::sync_plugin::SyncProviderResource;
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
+    ScrimDismissible,
 };
 use crate::ui_theme::{
     ACCENT_PRIMARY, BORDER_SUBTLE, STATE_INFO, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
@@ -392,7 +393,7 @@ fn spawn_leaderboard_screen(
     remote_available: bool,
     font_res: Option<&FontResource>,
 ) {
-    spawn_modal(commands, LeaderboardScreen, Z_MODAL_PANEL, |card| {
+    let scrim = spawn_modal(commands, LeaderboardScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Leaderboard", font_res);
 
         // Subhead — what the screen does + what the buttons control.
@@ -566,6 +567,8 @@ fn spawn_leaderboard_screen(
             );
         });
     });
+    // Leaderboard is read-only — opt into click-outside-to-dismiss.
+    commands.entity(scrim).insert(ScrimDismissible);
 }
 
 fn header_cell(parent: &mut ChildSpawnerCommands, text: &str, width: f32, font: &TextFont) {

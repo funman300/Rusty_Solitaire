@@ -26,6 +26,7 @@ use crate::progress_plugin::ProgressResource;
 use crate::ui_focus::{Disabled, FocusGroup, Focusable};
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
+    ScrimDismissible,
 };
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_STRONG, BORDER_SUBTLE, RADIUS_MD, STATE_INFO,
@@ -359,7 +360,7 @@ fn handle_home_digit_keys(
 
 /// Spawns the Home modal with five mode cards plus a Cancel button.
 fn spawn_home_screen(commands: &mut Commands, level: u32, font_res: Option<&FontResource>) {
-    spawn_modal(commands, HomeScreen, Z_MODAL_PANEL, |card| {
+    let scrim = spawn_modal(commands, HomeScreen, Z_MODAL_PANEL, |card| {
         spawn_modal_header(card, "Choose a Mode", font_res);
 
         for mode in [
@@ -383,6 +384,8 @@ fn spawn_home_screen(commands: &mut Commands, level: u32, font_res: Option<&Font
             );
         });
     });
+    // Home is read-only — opt into click-outside-to-dismiss.
+    commands.entity(scrim).insert(ScrimDismissible);
 }
 
 /// Tab-walk order for each mode card, matching the visual top-to-bottom
