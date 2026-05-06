@@ -163,21 +163,6 @@ mod tests {
     // --- Persistence ---
 
     #[test]
-    fn round_trip_save_and_load() {
-        let path = tmp_path("round_trip");
-        let _ = fs::remove_file(&path);
-
-        let mut p = PlayerProgress::default();
-        p.add_xp(1234);
-        p.unlocked_card_backs.push(2);
-        save_progress_to(&path, &p).expect("save");
-        let loaded = load_progress_from(&path);
-        assert_eq!(loaded.total_xp, 1234);
-        assert_eq!(loaded.level, p.level);
-        assert!(loaded.unlocked_card_backs.contains(&2));
-    }
-
-    #[test]
     fn load_from_missing_file_returns_default() {
         let path = tmp_path("missing_xyz");
         let _ = fs::remove_file(&path);

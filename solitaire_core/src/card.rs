@@ -78,16 +78,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rank_value_ace_is_one() {
-        assert_eq!(Rank::Ace.value(), 1);
-    }
-
-    #[test]
-    fn rank_value_king_is_thirteen() {
-        assert_eq!(Rank::King.value(), 13);
-    }
-
-    #[test]
     fn rank_values_are_sequential() {
         let ranks = [
             Rank::Ace, Rank::Two, Rank::Three, Rank::Four, Rank::Five,
@@ -100,26 +90,11 @@ mod tests {
     }
 
     #[test]
-    fn suit_red_is_diamonds_and_hearts() {
-        assert!(Suit::Diamonds.is_red());
-        assert!(Suit::Hearts.is_red());
-        assert!(!Suit::Clubs.is_red());
-        assert!(!Suit::Spades.is_red());
-    }
-
-    #[test]
-    fn suit_black_is_clubs_and_spades() {
-        assert!(Suit::Clubs.is_black());
-        assert!(Suit::Spades.is_black());
-        assert!(!Suit::Diamonds.is_black());
-        assert!(!Suit::Hearts.is_black());
-    }
-
-    #[test]
-    fn card_face_up_field_reflects_construction() {
-        let card = Card { id: 0, suit: Suit::Hearts, rank: Rank::Ace, face_up: false };
-        assert!(!card.face_up);
-        let card2 = Card { id: 1, suit: Suit::Spades, rank: Rank::King, face_up: true };
-        assert!(card2.face_up);
+    fn suit_red_and_black_are_complementary() {
+        for suit in [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades] {
+            assert_ne!(suit.is_red(), suit.is_black(), "{suit:?} must be exactly one of red/black");
+        }
+        assert!(Suit::Diamonds.is_red() && Suit::Hearts.is_red());
+        assert!(Suit::Clubs.is_black() && Suit::Spades.is_black());
     }
 }

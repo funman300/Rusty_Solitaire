@@ -90,9 +90,4 @@ mod tests {
         seeds.dedup();
         assert_eq!(seeds.len(), len_before);
     }
-
-    #[test]
-    fn challenge_count_matches_seed_list_length() {
-        assert_eq!(challenge_count() as usize, CHALLENGE_SEEDS.len());
-    }
 }

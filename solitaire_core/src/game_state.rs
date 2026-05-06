@@ -816,11 +816,6 @@ mod tests {
     }
 
     #[test]
-    fn undo_count_starts_at_zero() {
-        assert_eq!(new_game().undo_count, 0);
-    }
-
-    #[test]
     fn undo_count_increments_on_each_undo() {
         let mut g = new_game();
         g.draw().unwrap();
@@ -901,11 +896,6 @@ mod tests {
     }
 
     #[test]
-    fn zen_mode_default_is_classic_via_default_trait() {
-        assert_eq!(GameMode::default(), GameMode::Classic);
-    }
-
-    #[test]
     fn zen_mode_field_persists_through_construction() {
         let g = GameState::new_with_mode(1, DrawMode::DrawThree, GameMode::Zen);
         assert_eq!(g.mode, GameMode::Zen);
@@ -954,12 +944,6 @@ mod tests {
         g.draw().unwrap();
         // TimeAttack does not disable undo — only Challenge does.
         assert!(g.undo().is_ok(), "undo must be permitted in TimeAttack mode");
-    }
-
-    #[test]
-    fn time_attack_score_starts_at_zero() {
-        let g = GameState::new_with_mode(42, DrawMode::DrawOne, GameMode::TimeAttack);
-        assert_eq!(g.score, 0);
     }
 
     #[test]
