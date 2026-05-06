@@ -1410,11 +1410,18 @@ fn volume_row<Marker: Component>(
 ) {
     let label_font = label_text_font(font_res);
     let value_font = value_text_font(font_res);
+    // Row spans the full body width with a flex-grow spacer between
+    // the left-aligned label and the right-aligned controls cluster.
+    // Without `width: 100%` + the spacer, the label / value / buttons
+    // bunch against the left edge and a varying-length value (e.g.
+    // "0.80" → "1.00") shifts the +/− buttons sideways frame to
+    // frame, visually overlapping with adjacent UI on small windows.
     parent
         .spawn(Node {
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             column_gap: VAL_SPACE_2,
+            width: Val::Percent(100.0),
             ..default()
         })
         .with_children(|row| {
@@ -1423,14 +1430,31 @@ fn volume_row<Marker: Component>(
                 label_font,
                 TextColor(TEXT_SECONDARY),
             ));
-            row.spawn((
-                marker,
-                Text::new(format!("{value:.2}")),
-                value_font,
-                TextColor(TEXT_PRIMARY),
-            ));
-            icon_button(row, "−", btn_down, tooltip_down, font_res);
-            icon_button(row, "+", btn_up, tooltip_up, font_res);
+            // Spacer: takes up all remaining horizontal space so the
+            // controls cluster sits flush against the right edge.
+            row.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
+            // Controls cluster — value + decrement + increment held
+            // together so the buttons stay in fixed positions even
+            // as the value text width varies.
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                ..default()
+            })
+            .with_children(|cluster| {
+                cluster.spawn((
+                    marker,
+                    Text::new(format!("{value:.2}")),
+                    value_font,
+                    TextColor(TEXT_PRIMARY),
+                ));
+                icon_button(cluster, "−", btn_down, tooltip_down, font_res);
+                icon_button(cluster, "+", btn_up, tooltip_up, font_res);
+            });
         });
 }
 
@@ -1450,6 +1474,7 @@ fn tooltip_delay_row(
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             column_gap: VAL_SPACE_2,
+            width: Val::Percent(100.0),
             ..default()
         })
         .with_children(|row| {
@@ -1458,26 +1483,38 @@ fn tooltip_delay_row(
                 label_font,
                 TextColor(TEXT_SECONDARY),
             ));
-            row.spawn((
-                TooltipDelayText,
-                Text::new(tooltip_delay_label(value_secs)),
-                value_font,
-                TextColor(TEXT_PRIMARY),
-            ));
-            icon_button(
-                row,
-                "−",
-                SettingsButton::TooltipDelayDown,
-                "Shorten the hover delay before tooltips appear.",
-                font_res,
-            );
-            icon_button(
-                row,
-                "+",
-                SettingsButton::TooltipDelayUp,
-                "Lengthen the hover delay before tooltips appear.",
-                font_res,
-            );
+            row.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                ..default()
+            })
+            .with_children(|cluster| {
+                cluster.spawn((
+                    TooltipDelayText,
+                    Text::new(tooltip_delay_label(value_secs)),
+                    value_font,
+                    TextColor(TEXT_PRIMARY),
+                ));
+                icon_button(
+                    cluster,
+                    "−",
+                    SettingsButton::TooltipDelayDown,
+                    "Shorten the hover delay before tooltips appear.",
+                    font_res,
+                );
+                icon_button(
+                    cluster,
+                    "+",
+                    SettingsButton::TooltipDelayUp,
+                    "Lengthen the hover delay before tooltips appear.",
+                    font_res,
+                );
+            });
         });
 }
 
@@ -1500,6 +1537,7 @@ fn time_bonus_multiplier_row(
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             column_gap: VAL_SPACE_2,
+            width: Val::Percent(100.0),
             ..default()
         })
         .with_children(|row| {
@@ -1508,26 +1546,38 @@ fn time_bonus_multiplier_row(
                 label_font,
                 TextColor(TEXT_SECONDARY),
             ));
-            row.spawn((
-                TimeBonusMultiplierText,
-                Text::new(time_bonus_label(value)),
-                value_font,
-                TextColor(TEXT_PRIMARY),
-            ));
-            icon_button(
-                row,
-                "−",
-                SettingsButton::TimeBonusDown,
-                "Shrink the time-bonus shown in the win modal. Cosmetic only.",
-                font_res,
-            );
-            icon_button(
-                row,
-                "+",
-                SettingsButton::TimeBonusUp,
-                "Boost the time-bonus shown in the win modal. Cosmetic only.",
-                font_res,
-            );
+            row.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                ..default()
+            })
+            .with_children(|cluster| {
+                cluster.spawn((
+                    TimeBonusMultiplierText,
+                    Text::new(time_bonus_label(value)),
+                    value_font,
+                    TextColor(TEXT_PRIMARY),
+                ));
+                icon_button(
+                    cluster,
+                    "−",
+                    SettingsButton::TimeBonusDown,
+                    "Shrink the time-bonus shown in the win modal. Cosmetic only.",
+                    font_res,
+                );
+                icon_button(
+                    cluster,
+                    "+",
+                    SettingsButton::TimeBonusUp,
+                    "Boost the time-bonus shown in the win modal. Cosmetic only.",
+                    font_res,
+                );
+            });
         });
 }
 
@@ -1550,6 +1600,7 @@ fn replay_move_interval_row(
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             column_gap: VAL_SPACE_2,
+            width: Val::Percent(100.0),
             ..default()
         })
         .with_children(|row| {
@@ -1558,26 +1609,38 @@ fn replay_move_interval_row(
                 label_font,
                 TextColor(TEXT_SECONDARY),
             ));
-            row.spawn((
-                ReplayMoveIntervalText,
-                Text::new(replay_move_interval_label(value_secs)),
-                value_font,
-                TextColor(TEXT_PRIMARY),
-            ));
-            icon_button(
-                row,
-                "−",
-                SettingsButton::ReplayMoveIntervalDown,
-                "Speed up replay playback (shorter per-move interval).",
-                font_res,
-            );
-            icon_button(
-                row,
-                "+",
-                SettingsButton::ReplayMoveIntervalUp,
-                "Slow down replay playback (longer per-move interval).",
-                font_res,
-            );
+            row.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                ..default()
+            })
+            .with_children(|cluster| {
+                cluster.spawn((
+                    ReplayMoveIntervalText,
+                    Text::new(replay_move_interval_label(value_secs)),
+                    value_font,
+                    TextColor(TEXT_PRIMARY),
+                ));
+                icon_button(
+                    cluster,
+                    "−",
+                    SettingsButton::ReplayMoveIntervalDown,
+                    "Speed up replay playback (shorter per-move interval).",
+                    font_res,
+                );
+                icon_button(
+                    cluster,
+                    "+",
+                    SettingsButton::ReplayMoveIntervalUp,
+                    "Slow down replay playback (longer per-move interval).",
+                    font_res,
+                );
+            });
         });
 }
 
@@ -1603,6 +1666,7 @@ fn toggle_row<Marker: Component>(
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             column_gap: VAL_SPACE_2,
+            width: Val::Percent(100.0),
             ..default()
         })
         .with_children(|row| {
@@ -1611,8 +1675,20 @@ fn toggle_row<Marker: Component>(
                 label_font,
                 TextColor(TEXT_SECONDARY),
             ));
-            row.spawn((marker, Text::new(value), value_font, TextColor(TEXT_PRIMARY)));
-            icon_button(row, "⇄", action, tooltip, font_res);
+            row.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
+            row.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                ..default()
+            })
+            .with_children(|cluster| {
+                cluster.spawn((marker, Text::new(value), value_font, TextColor(TEXT_PRIMARY)));
+                icon_button(cluster, "⇄", action, tooltip, font_res);
+            });
         });
 }
 
