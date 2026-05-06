@@ -126,23 +126,26 @@ impl HomeMode {
     /// readability rather than visual fidelity. Swap to `Image` nodes
     /// when art lands; the rest of the tile layout doesn't change.
     ///
-    /// Picks are deliberately constrained to BMP / Dingbats codepoints
-    /// (Unicode 1.x) so the project's system-default font fallback
-    /// renders every glyph. Earlier emoji choices (📅 🌸 ⚡ ⏱) showed
-    /// up as missing-glyph rectangles on Linux desktops without an
-    /// emoji font in the system font stack.
+    /// Picks are constrained to **card suits** (U+2660-2666) and basic
+    /// **Geometric Shapes** (U+25xx) — the two ranges the bundled
+    /// FiraMono-Medium face actually covers. Earlier choices in
+    /// Dingbats (★ ❀ ✦) and Misc Symbols (⌚) rendered as
+    /// missing-glyph rectangles because FiraMono's coverage there is
+    /// minimal.
     fn glyph(self) -> &'static str {
         match self {
-            // Black club — card suit, every font has it.
+            // Black club — card suit, the obvious solitaire mark.
             HomeMode::Classic => "\u{2663}",
-            // Black star — Dingbats; reads as "today's special".
-            HomeMode::Daily => "\u{2605}",
-            // White florette — Dingbats; reads as a calm bloom for Zen.
-            HomeMode::Zen => "\u{2740}",
-            // Black four-pointed star — Dingbats; reads as a hard target.
-            HomeMode::Challenge => "\u{2726}",
-            // Watch face — Misc Symbols (Unicode 1.1), pre-emoji vintage.
-            HomeMode::TimeAttack => "\u{231A}",
+            // Black diamond — Geometric Shapes; reads as the day's gem.
+            HomeMode::Daily => "\u{25C6}",
+            // White circle — Geometric Shapes; reads as the Zen enso.
+            HomeMode::Zen => "\u{25CB}",
+            // Black up-pointing triangle — Geometric Shapes; reads as
+            // a mountain / a step up in difficulty.
+            HomeMode::Challenge => "\u{25B2}",
+            // Black right-pointing triangle — Geometric Shapes; the
+            // standard "play / fast-forward" mark for a timed run.
+            HomeMode::TimeAttack => "\u{25B6}",
         }
     }
 
