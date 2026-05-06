@@ -146,7 +146,17 @@ fn toggle_profile_screen(
     screens: Query<Entity, With<ProfileScreen>>,
 ) {
     let button_clicked = requests.read().count() > 0;
-    if !keys.just_pressed(KeyCode::KeyP) && !button_clicked {
+    let p_pressed = keys.just_pressed(KeyCode::KeyP);
+    let esc_pressed = keys.just_pressed(KeyCode::Escape);
+    let already_open = !screens.is_empty();
+    // P / button toggles open-or-close. Esc only ever closes — when
+    // Profile is layered over Home (clicking the new Home stats chip
+    // opens this on top), Esc must dismiss the *topmost* modal.
+    // Without this branch, Esc fell through to Home's cancel handler
+    // and closed the wrong modal.
+    let want_open = !already_open && (p_pressed || button_clicked);
+    let want_close = already_open && (p_pressed || button_clicked || esc_pressed);
+    if !want_open && !want_close {
         return;
     }
     if let Ok(entity) = screens.single() {

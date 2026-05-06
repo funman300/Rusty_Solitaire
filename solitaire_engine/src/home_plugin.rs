@@ -475,13 +475,19 @@ fn handle_home_cancel_button(
     keys: Option<Res<ButtonInput<KeyCode>>>,
     cancel_buttons: Query<&Interaction, (With<HomeCancelButton>, Changed<Interaction>)>,
     screens: Query<Entity, With<HomeScreen>>,
+    other_modal_scrims: Query<(), (With<crate::ui_modal::ModalScrim>, Without<HomeScreen>)>,
 ) {
     if screens.is_empty() {
         return;
     }
     let click = cancel_buttons.iter().any(|i| *i == Interaction::Pressed);
     let esc = keys.is_some_and(|k| k.just_pressed(KeyCode::Escape));
-    if !click && !esc {
+    // Esc only closes Home when it is the *topmost* modal. With Profile
+    // (or any other ModalScrim) layered on top, the topmost owns the
+    // dismissal — without this gate a single Esc closed the back
+    // modal (Home) and left the front modal orphaned.
+    let esc_targets_home = esc && other_modal_scrims.is_empty();
+    if !click && !esc_targets_home {
         return;
     }
     for entity in &screens {
