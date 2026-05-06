@@ -235,6 +235,7 @@ impl Plugin for WinSummaryPlugin {
                     collect_session_achievements,
                     spawn_win_summary_after_delay,
                     handle_win_summary_buttons,
+                    handle_win_summary_keyboard,
                     apply_screen_shake,
                     reveal_score_breakdown,
                 )
@@ -624,6 +625,31 @@ fn handle_win_summary_buttons(
     }
 }
 
+/// Keyboard accelerator for the win summary's "Play Again" button.
+/// Enter / Return collapses the win modal and starts a fresh deal —
+/// the same path the click handler takes — so a keyboard-only player
+/// can dismiss the post-win celebration without reaching for the mouse.
+fn handle_win_summary_keyboard(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    overlays: Query<Entity, With<WinSummaryOverlay>>,
+    mut commands: Commands,
+    mut new_game: MessageWriter<NewGameRequestEvent>,
+) {
+    if overlays.is_empty() {
+        return;
+    }
+    let Some(keys) = keys else {
+        return;
+    };
+    if !keys.just_pressed(KeyCode::Enter) {
+        return;
+    }
+    for entity in &overlays {
+        commands.entity(entity).despawn();
+    }
+    new_game.write(NewGameRequestEvent::default());
+}
+
 /// Applies a decaying sinusoidal offset to the main `Camera2d` each frame
 /// while `ScreenShakeResource::remaining > 0`.
 ///
@@ -798,8 +824,11 @@ fn spawn_overlay(
                     BackgroundColor(ACCENT_PRIMARY),
                 ))
                 .with_children(|b| {
+                    // Append the Enter / Return glyph so keyboard players see
+                    // the accelerator on the button itself — mirrors the
+                    // chip-style hints on every modal button helper.
                     b.spawn((
-                        Text::new("Play Again"),
+                        Text::new("Play Again  \u{21B5}"),
                         TextFont { font_size: TYPE_BODY_LG, ..default() },
                         TextColor(BG_BASE),
                     ));
