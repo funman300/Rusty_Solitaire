@@ -121,11 +121,34 @@ impl Plugin for UiFocusPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FocusedButton>()
             .add_systems(Startup, spawn_focus_overlay)
+            // Attach + auto-focus run in `PostUpdate` so they see entities
+            // a click-handler in `Update` queued via `Commands` earlier in
+            // the same frame. If they ran in `Update` they'd race the
+            // click handler: there's no ordering edge between an arbitrary
+            // modal-spawning system and the focus chain, so Bevy's
+            // `auto_insert_apply_deferred` pass cannot synchronise them.
+            // Pushing the attach / auto-focus pair into `PostUpdate` puts
+            // the natural schedule-boundary sync point between every
+            // modal spawn and focus arrival — `FocusedButton` is always
+            // populated before the same `app.update()` returns.
+            //
+            // The remaining systems stay in `Update` so they keep
+            // observing input on the frame it occurs. They read
+            // `FocusedButton` written during the *previous* tick's
+            // `PostUpdate`, which is exactly what we want: the very next
+            // user keypress after a modal opens lands on a populated
+            // resource.
             .add_systems(
-                Update,
+                PostUpdate,
                 (
                     attach_focusable_to_modal_buttons,
                     auto_focus_on_modal_open,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                Update,
+                (
                     sync_focus_on_mouse_click,
                     clear_hud_focus_on_unhover,
                     handle_focus_keys,
@@ -825,6 +848,143 @@ mod tests {
         let (_scrim, a, _b) = spawn_two_button_modal(&mut app);
         let focused = app.world().resource::<FocusedButton>().0;
         assert_eq!(focused, Some(a), "Primary button A should auto-focus");
+    }
+
+    /// One-shot trigger resource consumed by the production-shaped test
+    /// system [`spawn_modal_via_system`]. When set to `true`, the system
+    /// queues a `spawn_modal` call on the next `Update` and clears the
+    /// flag. Mirrors the real production flow where a click-handler
+    /// system queues the modal spawn via `Commands` rather than the
+    /// test fixture using `world.flush()` ahead of time.
+    #[derive(Resource, Default)]
+    struct SpawnModalTrigger(bool);
+
+    /// Production-shaped modal spawner: a regular Bevy `System` that
+    /// reads a trigger flag and queues a 2-button modal via `Commands`.
+    /// Crucially this system has **no** ordering relationship with
+    /// `UiFocusPlugin`'s chain — exactly the situation that surfaces the
+    /// "focus arrives one frame late" bug in production.
+    fn spawn_modal_via_system(
+        mut commands: Commands,
+        mut trigger: ResMut<SpawnModalTrigger>,
+    ) {
+        if !trigger.0 {
+            return;
+        }
+        trigger.0 = false;
+        spawn_modal(&mut commands, TestModal, 0, |card| {
+            spawn_modal_actions(card, |actions| {
+                spawn_modal_button(
+                    actions,
+                    TestButtonB,
+                    "B",
+                    None,
+                    ButtonVariant::Secondary,
+                    None,
+                );
+                spawn_modal_button(
+                    actions,
+                    TestButtonA,
+                    "A",
+                    None,
+                    ButtonVariant::Primary,
+                    None,
+                );
+            });
+        });
+    }
+
+    /// Same-frame-focus contract: when a modal is spawned by an
+    /// independent system during the same `Update` as the focus chain,
+    /// `FocusedButton` must be populated with the primary button by the
+    /// time `handle_focus_keys` runs in that **same** update — so a Tab
+    /// pressed in the very next tick advances focus rather than
+    /// landing on "nothing focused → primary".
+    #[test]
+    fn primary_button_is_focused_on_modal_spawn_same_frame() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(UiModalPlugin)
+            .add_plugins(UiFocusPlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<SpawnModalTrigger>();
+        // Register the production-shaped spawn system in `Update` with
+        // no chain relationship to `UiFocusPlugin`.
+        app.add_systems(Update, spawn_modal_via_system);
+        // Initial Startup pass.
+        app.update();
+
+        // Trigger the spawn and run exactly ONE update — the same
+        // `Update` cycle that the focus chain runs in. By the end of
+        // this update, `FocusedButton` must already point at the
+        // primary button.
+        app.world_mut().resource_mut::<SpawnModalTrigger>().0 = true;
+        app.update();
+
+        let primary = app
+            .world_mut()
+            .query_filtered::<Entity, With<TestButtonA>>()
+            .iter(app.world())
+            .next()
+            .expect("Primary button should exist after the spawn update");
+
+        assert_eq!(
+            app.world().resource::<FocusedButton>().0,
+            Some(primary),
+            "FocusedButton must be populated with the primary on the same frame the modal spawns"
+        );
+    }
+
+    /// Tab pressed on the very next tick after a modal opens must
+    /// advance focus from the primary to the secondary — not from
+    /// "nothing focused" to the primary. The latter would mean focus
+    /// arrived a frame late and Tab was wasted on first-focus instead
+    /// of advancing.
+    #[test]
+    fn first_tab_after_modal_open_advances_to_secondary() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(UiModalPlugin)
+            .add_plugins(UiFocusPlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<SpawnModalTrigger>();
+        app.add_systems(Update, spawn_modal_via_system);
+        app.update();
+
+        // Spawn the modal in update N.
+        app.world_mut().resource_mut::<SpawnModalTrigger>().0 = true;
+        app.update();
+
+        // Press Tab on update N+1. If focus arrived correctly in N,
+        // Tab advances primary → secondary. If focus arrived late,
+        // Tab promotes "no focus" to primary (the bug).
+        let primary = app
+            .world_mut()
+            .query_filtered::<Entity, With<TestButtonA>>()
+            .iter(app.world())
+            .next()
+            .expect("primary spawned");
+        let secondary = app
+            .world_mut()
+            .query_filtered::<Entity, With<TestButtonB>>()
+            .iter(app.world())
+            .next()
+            .expect("secondary spawned");
+
+        press_key(&mut app, KeyCode::Tab);
+        app.update();
+
+        let focused_after_tab = app.world().resource::<FocusedButton>().0;
+        assert_ne!(
+            focused_after_tab,
+            Some(primary),
+            "first Tab after modal open should advance off the primary, not land on it (focus arrived late)"
+        );
+        assert_eq!(
+            focused_after_tab,
+            Some(secondary),
+            "first Tab from primary should land on the secondary"
+        );
     }
 
     #[test]
