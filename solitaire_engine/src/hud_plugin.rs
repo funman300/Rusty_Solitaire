@@ -206,6 +206,16 @@ pub const SCORE_FLOATER_THRESHOLD: i32 = 50;
 #[derive(Component, Debug)]
 pub struct ActionButton;
 
+/// Marker on rows inside a popover panel ([`ModesPopover`] or
+/// [`MenuPopover`]). Popover rows already carry `ActionButton` so the
+/// hover/press paint path applies to them, but the auto-fade applied
+/// to the top-level action bar must NOT also fade these rows — the
+/// popover only renders when the player has explicitly opened it, so
+/// its content should always be at full opacity. `apply_action_fade`
+/// excludes entities with this marker via `Without<PopoverRow>`.
+#[derive(Component, Debug)]
+pub struct PopoverRow;
+
 /// Marker on the "New Game" action button anchored top-right of the play
 /// area. Click fires [`NewGameRequestEvent`]; the existing
 /// `ConfirmNewGameScreen` modal handles confirmation when a game is in
@@ -856,6 +866,7 @@ fn spawn_modes_popover(
                     .spawn((
                         option,
                         ActionButton,
+                        PopoverRow,
                         Button,
                         Tooltip::new(tooltip),
                         Node {
@@ -1009,6 +1020,7 @@ fn spawn_menu_popover(commands: &mut Commands, font_res: Option<&FontResource>) 
                     .spawn((
                         option,
                         ActionButton,
+                        PopoverRow,
                         Button,
                         Tooltip::new(tooltip),
                         Node {
@@ -1139,9 +1151,20 @@ fn update_action_fade(
 /// `Last` (after `paint_action_buttons`) so a hover-state change in the
 /// same frame doesn't override the fade with an opaque idle / hover
 /// colour.
+#[allow(clippy::type_complexity)]
 fn apply_action_fade(
     fade: Res<HudActionFade>,
-    mut buttons: Query<(&Children, &mut BackgroundColor), With<ActionButton>>,
+    // Excludes `PopoverRow` so the auto-fade only applies to the
+    // top-level action bar buttons. Popover rows live inside an
+    // explicitly-opened dropdown panel and need to stay visible
+    // regardless of the bar's fade state — without the exclusion
+    // the rows fade to invisible while the popover container stays
+    // visible, leaving a solid background block with no readable
+    // content.
+    mut buttons: Query<
+        (&Children, &mut BackgroundColor),
+        (With<ActionButton>, Without<PopoverRow>),
+    >,
     mut text_q: Query<&mut TextColor>,
 ) {
     for (children, mut bg) in &mut buttons {
