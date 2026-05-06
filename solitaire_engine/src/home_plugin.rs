@@ -120,8 +120,12 @@ struct HomeModeCard(HomeMode);
 /// the first time it spawns the modal, so the auto-show is one-shot per
 /// process — subsequent dismissals (Cancel / mode pick) don't trigger
 /// a respawn, but the player can still re-open the picker with `M`.
+///
+/// Other plugins (e.g. `game_plugin`'s restore-prompt handler) can flip
+/// the flag manually to suppress the launch auto-show when the player
+/// has already made a launch-time choice through a different surface.
 #[derive(Resource, Debug, Default)]
-struct LaunchHomeShown(bool);
+pub struct LaunchHomeShown(pub bool);
 
 // ---------------------------------------------------------------------------
 // Plugin

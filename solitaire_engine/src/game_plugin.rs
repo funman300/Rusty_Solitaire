@@ -586,6 +586,7 @@ fn handle_restore_prompt(
     mut game: ResMut<GameStateResource>,
     mut changed: MessageWriter<StateChangedEvent>,
     mut new_game: MessageWriter<NewGameRequestEvent>,
+    mut launch_home_shown: Option<ResMut<crate::home_plugin::LaunchHomeShown>>,
 ) {
     if screens.is_empty() {
         return;
@@ -605,7 +606,7 @@ fn handle_restore_prompt(
         .any(|i| *i == Interaction::Pressed);
     let click_new = new_game_buttons.iter().any(|i| *i == Interaction::Pressed);
 
-    if key_continue || click_continue {
+    let resolved = if key_continue || click_continue {
         if let Some(restored) = pending.0.take() {
             game.0 = restored;
             changed.write(StateChangedEvent);
@@ -613,6 +614,7 @@ fn handle_restore_prompt(
         for entity in &screens {
             commands.entity(entity).despawn();
         }
+        true
     } else if key_new || click_new {
         pending.0 = None;
         for entity in &screens {
@@ -623,6 +625,19 @@ fn handle_restore_prompt(
             mode: None,
             confirmed: true,
         });
+        true
+    } else {
+        false
+    };
+
+    // The player has just made an explicit launch-time choice (continue
+    // saved game, or start a fresh deal). Suppress the launch-time Home
+    // auto-show so it doesn't pop on top of the resolution they picked.
+    // `M` still re-opens the picker on demand.
+    if resolved
+        && let Some(ref mut shown) = launch_home_shown
+    {
+        shown.0 = true;
     }
 }
 
