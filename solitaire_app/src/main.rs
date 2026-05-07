@@ -10,10 +10,10 @@ use solitaire_data::{load_settings_from, provider_for_backend, settings_file_pat
 use solitaire_engine::{
     register_theme_asset_sources, AchievementPlugin, AnimationPlugin, AssetSourcesPlugin,
     AudioPlugin, AutoCompletePlugin, CardAnimationPlugin, CardPlugin, ChallengePlugin,
-    CursorPlugin, DailyChallengePlugin, FeedbackAnimPlugin, FontPlugin, GamePlugin, HelpPlugin,
-    HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin, OnboardingPlugin, PausePlugin,
-    ProfilePlugin, ProgressPlugin, RadialMenuPlugin, ReplayOverlayPlugin, ReplayPlaybackPlugin,
-    SelectionPlugin, SettingsPlugin, SplashPlugin,
+    CursorPlugin, DailyChallengePlugin, DiagnosticsHudPlugin, FeedbackAnimPlugin, FontPlugin,
+    GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
+    OnboardingPlugin, PausePlugin, ProfilePlugin, ProgressPlugin, RadialMenuPlugin,
+    ReplayOverlayPlugin, ReplayPlaybackPlugin, SelectionPlugin, SettingsPlugin, SplashPlugin,
     StatsPlugin, SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin, TimeAttackPlugin,
     UiFocusPlugin, UiModalPlugin, UiTooltipPlugin, WeeklyGoalsPlugin, WinSummaryPlugin,
 };
@@ -145,7 +145,8 @@ fn main() {
         .add_plugins(UiModalPlugin)
         .add_plugins(UiFocusPlugin)
         .add_plugins(UiTooltipPlugin)
-        .add_plugins(SplashPlugin);
+        .add_plugins(SplashPlugin)
+        .add_plugins(DiagnosticsHudPlugin);
 
     // Smart default window sizing: when no saved geometry was loaded,
     // resize the freshly-opened 1280×800 window to ~70 % of the primary

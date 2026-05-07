@@ -12,6 +12,7 @@ pub mod feedback_anim_plugin;
 pub mod challenge_plugin;
 pub mod cursor_plugin;
 pub mod daily_challenge_plugin;
+pub mod diagnostics_hud;
 pub mod events;
 pub mod game_plugin;
 pub mod help_plugin;
@@ -85,6 +86,7 @@ pub use card_plugin::{
 };
 pub use font_plugin::{FontPlugin, FontResource};
 pub use cursor_plugin::CursorPlugin;
+pub use diagnostics_hud::DiagnosticsHudPlugin;
 pub use events::{
     AchievementUnlockedEvent, CardFaceRevealedEvent, CardFlippedEvent, DrawRequestEvent,
     ForfeitEvent, ForfeitRequestEvent, FoundationCompletedEvent, GameWonEvent, HelpRequestEvent,
