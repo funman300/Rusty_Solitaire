@@ -6,7 +6,100 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+Two threads in flight: closing the v0.19.0 punch list (settings opt-out
+for the smart-default sizer, share-link discoverability, the last
+async-pull test flake) and a new performance / portability arc (F3
+diagnostics overlay landing first, then a working Android build
+target via `cargo apk`). The Android build is the load-bearing
+change — `solitaire_app` now compiles into both a desktop `bin` and
+an Android `cdylib` from the same source tree, so subsequent work
+can iterate on a phone or AVD without forking the codebase.
+
+### Added
+
+- **Android build target — first working APK** (`fb8b2ac`).
+  `cargo apk build -p solitaire_app --target x86_64-linux-android`
+  now produces a 54 MB debug-signed APK at
+  `target/debug/apk/solitaire-quest.apk`. Five gating points
+  resolved end-to-end:
+  - **`solitaire_app` split into bin + lib.** cargo-apk needs a
+    `cdylib` to bundle as `libmain.so`; pure-bin crates panic
+    with "Bin is not compatible with Cdylib". `src/lib.rs`
+    carries the ECS bootstrap as `pub fn run`; `src/main.rs` is
+    a 3-line shim that delegates for the desktop path.
+  - **`[package.metadata.android]`** pins target SDK 34 / min
+    SDK 26 and points `assets = "../assets"` at the workspace
+    asset directory so desktop and APK share one set.
+  - **Workspace `bevy` features** add `android-native-activity`
+    (target-gated inside bevy_internal — desktop builds compile
+    it out). Pairs with cargo-apk's NativeActivity wrapper.
+  - **`arboard` target-gated** to `cfg(not(target_os =
+    "android"))`. The crate has no Android backend; cargo apk
+    fails with E0433 on `platform::Clipboard` if left
+    unconditional. Stats's "Copy share link" surfaces an
+    informational toast on Android until JNI ClipboardManager
+    lands in the Phase-Android round.
+  - **`keyring` + `keyring-core` target-gated.** Bionic doesn't
+    expose `libc::__errno_location` so the transitive
+    `rpassword` won't compile. `auth_tokens` ships an Android
+    stub returning `KeychainUnavailable` for every call —
+    matches the existing fallback for a Linux box without
+    Secret Service.
+  - Cosmetic: cargo-apk panics post-sign when it tries to also
+    wrap the bin target. The APK on disk is unaffected;
+    `cargo apk build --lib` is the small workaround.
+- **Android developer setup + build runbook** (`59424a3`).
+  Captures Debian 13 toolchain install (JDK 21, unzip, SDK
+  licence prompts), the `cargo apk build` invocation, the
+  cosmetic post-sign panic workaround, and a what-is-wired-vs-
+  stubbed table for the android target. Runnable on a fresh
+  clone — no machine-local context required.
+- **F3-toggleable FPS / frame-time overlay** (`690e1d2`).
+  `DiagnosticsHudPlugin` wraps Bevy's `FrameTimeDiagnosticsPlugin`
+  and renders a corner readout the developer toggles with F3.
+  Hidden by default; F3 is not gated by pause / modal state.
+  Reads `smoothed()` so the cell isn't a per-frame jittery
+  scoreboard. Format: `FPS NN \u{2022} M.MM ms`. Anchored
+  top-right at `z = Z_SPLASH + 100` above every modal / toast /
+  splash. Update system bails when hidden so the
+  diagnostic-store lookup is free when nobody's looking.
+- **"Smart window size" Settings toggle** (`e1b8766`). Gameplay
+  section gains an opt-out toggle for v0.19.0's
+  `apply_smart_default_window_size` system. New
+  `Settings::disable_smart_default_size: bool` with
+  `#[serde(default)]` so legacy `settings.json` files load to
+  the shipped behaviour (smart sizer enabled). `solitaire_app::main`
+  reads the flag once at startup and skips the system's
+  registration when set. Saved window geometry still wins over
+  both branches; tooltip on the row makes that explicit.
+- **"Shareable" badge on the Latest-win caption** (`9b065e5`).
+  The Stats overlay's Latest-win caption now appends
+  `\u{2022} Shareable` when the displayed replay carries a
+  populated `share_url`. Players can see at a glance whether the
+  Copy share link button will produce a URL or surface the
+  upload-prerequisite toast.
+- **Help overlay covers M / P / Win-Summary-Enter** (`35516d3`).
+  Three new rows in the Overlays section: M (Home / Mode
+  launcher), P (Profile), and the Enter accelerator that
+  dismisses the Win Summary modal. Three post-v0.18 entries
+  that had drifted out of the cheat sheet are now listed.
+
+### Fixed
+
+- **`pull_failure_sets_error_status` test flake** (`67c150b`).
+  The fixed 5-update budget was the last test still subject to
+  the AsyncComputeTaskPool starvation mode that v0.19.0's
+  auto-save fix already cleared. Replaced with a wall-clock-
+  bounded loop (5-second deadline, `std::thread::yield_now`
+  between iterations) that exits as soon as the status flips.
+  Mirrors the auto-save flake fix shape.
+
+### Stats
+
+- 1170 passing tests / 0 failing (matches v0.19.0; the
+  pull-failure flake fix changed the test's pumping shape but
+  not its count).
+- Zero clippy warnings under `--workspace --all-targets -- -D warnings`.
 
 ## [0.19.0] — 2026-05-06
 
