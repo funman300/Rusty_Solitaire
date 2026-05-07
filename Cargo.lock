@@ -6929,6 +6929,7 @@ dependencies = [
  "bevy",
  "chrono",
  "dirs",
+ "image",
  "kira",
  "resvg",
  "ron",

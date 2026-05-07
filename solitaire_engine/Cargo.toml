@@ -26,3 +26,8 @@ arboard        = { workspace = true }
 [dev-dependencies]
 async-trait = { workspace = true }
 tempfile    = { workspace = true }
+# Used by the theme-thumbnail tests to encode a known-valid PNG at
+# runtime. Already a transitive dep of bevy_image, so the dev-dep is
+# free in build-graph terms — it just makes the API surface available
+# to test code without forcing us into bevy_image's re-export shape.
+image       = { version = "0.25", default-features = false, features = ["png"] }
