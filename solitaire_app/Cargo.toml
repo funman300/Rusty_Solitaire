@@ -8,8 +8,68 @@ edition.workspace = true
 name = "solitaire_app"
 path = "src/main.rs"
 
+# `cdylib` is what cargo-apk packages into `libsolitaire_app.so` for
+# Android — the activity dlopens the shared object and calls into it.
+# `rlib` lets the bin target above link the library normally on
+# desktop. Both produce the same code; only the linkage form differs.
+[lib]
+name = "solitaire_app"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 bevy             = { workspace = true }
 solitaire_engine = { workspace = true }
 solitaire_data   = { workspace = true }
+
+# `keyring`'s default-store init only matters on platforms with a
+# real keychain backend (Linux Secret Service, macOS Keychain,
+# Windows Credential Store). The crate also pulls `rpassword`
+# transitively, which uses `libc::__errno_location` — a symbol
+# Android's bionic doesn't expose. Target-gating keeps
+# `cargo apk build` viable; the call site in `lib.rs` has its own
+# `cfg(not(target_os = "android"))` guard so the desktop init path
+# is unchanged.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 keyring          = { workspace = true }
+
+# --- Android packaging metadata (read by `cargo-apk`) -------------------
+#
+# Pinning these values inside the repo means a contributor running
+# `cargo apk build -p solitaire_app --target x86_64-linux-android`
+# does not need to install whatever SDK version cargo-apk happens to
+# default to today. The numbers track the SDK we install in the dev
+# setup script: target SDK 34 (Android 14, current Play Store target),
+# min SDK 26 (Android 8, the lowest Bevy 0.18 supports cleanly with
+# the wgpu / GLES path).
+#
+# Asset path is `../assets` so the same directory the desktop build
+# already uses ships into the APK without copy-tree gymnastics.
+# `apk_name` keeps the output filename predictable across machines.
+[package.metadata.android]
+package = "com.solitairequest.app"
+apk_name = "solitaire-quest"
+build_targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"]
+assets = "../assets"
+# No `runtime_libs` — we don't ship any precompiled .so files,
+# the entire app is pure Rust + Bevy. cargo-apk would try to
+# resolve `runtime_libs/<arch>/` if set, and fail on a non-existent
+# arch directory under our package.
+strip = "strip"
+
+[package.metadata.android.sdk]
+target_sdk_version = 34
+min_sdk_version = 26
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen"
+required = true
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[package.metadata.android.application]
+label = "Solitaire Quest"
+# `debuggable` defaults to false on release builds; cargo-apk flips it
+# automatically for debug profiles. Leaving the field unset keeps the
+# default behaviour.

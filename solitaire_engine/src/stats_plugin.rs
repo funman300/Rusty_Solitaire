@@ -317,24 +317,40 @@ fn handle_copy_share_link_button(
         ));
         return;
     };
-    match arboard::Clipboard::new() {
-        Ok(mut cb) => match cb.set_text(url.clone()) {
-            Ok(()) => {
-                toast.write(InfoToastEvent(format!("Copied: {url}")));
-            }
+
+    // Desktop: `arboard` writes the URL to the OS clipboard.
+    // Android: `arboard` has no platform backend (would fail to
+    // compile, so the dependency is target-gated in
+    // solitaire_engine/Cargo.toml). The button still spawns and
+    // resolves to a meaningful toast instead — when we wire the
+    // Android Phase, this becomes a JNI call into ClipboardManager.
+    #[cfg(not(target_os = "android"))]
+    {
+        match arboard::Clipboard::new() {
+            Ok(mut cb) => match cb.set_text(url.clone()) {
+                Ok(()) => {
+                    toast.write(InfoToastEvent(format!("Copied: {url}")));
+                }
+                Err(e) => {
+                    warn!("clipboard write failed: {e}");
+                    toast.write(InfoToastEvent(
+                        "Couldn't write to clipboard \u{2014} share link wasn't copied.".to_string(),
+                    ));
+                }
+            },
             Err(e) => {
-                warn!("clipboard write failed: {e}");
+                warn!("clipboard init failed: {e}");
                 toast.write(InfoToastEvent(
-                    "Couldn't write to clipboard \u{2014} share link wasn't copied.".to_string(),
+                    "Couldn't reach the clipboard \u{2014} share link wasn't copied.".to_string(),
                 ));
             }
-        },
-        Err(e) => {
-            warn!("clipboard init failed: {e}");
-            toast.write(InfoToastEvent(
-                "Couldn't reach the clipboard \u{2014} share link wasn't copied.".to_string(),
-            ));
         }
+    }
+    #[cfg(target_os = "android")]
+    {
+        toast.write(InfoToastEvent(format!(
+            "Share link: {url}"
+        )));
     }
 }
 

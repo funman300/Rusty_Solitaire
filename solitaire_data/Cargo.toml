@@ -13,9 +13,18 @@ chrono         = { workspace = true }
 thiserror      = { workspace = true }
 async-trait    = { workspace = true }
 dirs           = { workspace = true }
-keyring-core   = { workspace = true }
 reqwest        = { workspace = true }
 tokio          = { workspace = true }
+
+# `keyring-core` is the typed Entry/Error API used by
+# `auth_tokens`. The crate's own dependency tree pulls in
+# `rpassword` which uses `libc::__errno_location` — a symbol the
+# Android NDK doesn't expose (`__errno` lives at a different path
+# on bionic). On Android `auth_tokens` falls back to a stub
+# implementation that always returns `KeychainUnavailable`; the
+# real backend lands when we wire Android Keystore via JNI.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+keyring-core   = { workspace = true }
 
 [dev-dependencies]
 solitaire_server = { path = "../solitaire_server" }

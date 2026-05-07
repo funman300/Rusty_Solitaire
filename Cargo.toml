@@ -54,7 +54,7 @@ bevy = { version = "0.18", default-features = false, features = [
     "bevy_window",
     "custom_cursor",
     "reflect_auto_register",
-    # default_platform (desktop subset; no android/webgl/gilrs/sysinfo)
+    # default_platform (desktop subset)
     "std",
     "bevy_winit",
     "default_font",
@@ -65,6 +65,13 @@ bevy = { version = "0.18", default-features = false, features = [
     # the game in an X11 frame inside the Wayland compositor.
     "wayland",
     "x11",
+    # Android: NativeActivity glue. The feature is target-gated inside
+    # bevy_internal — desktop builds compile it out, so leaving it on
+    # the always-on list is harmless on Linux/macOS/Windows. Pairs with
+    # cargo-apk's NativeActivity wrapper (cargo-apk 0.10+ uses this by
+    # default). Switch to `android-game-activity` later if we want
+    # AndroidX GameActivity for Google Play Games integration.
+    "android-native-activity",
     # common_api
     "bevy_color",
     "bevy_image",

@@ -21,6 +21,15 @@ tiny-skia      = { workspace = true }
 ron            = { workspace = true }
 dirs           = { workspace = true }
 zip            = { workspace = true }
+
+# `arboard` provides clipboard access for the Stats overlay's
+# "Copy share link" button. The crate has no Android backend
+# (its `platform::Clipboard` module is unimplemented for the
+# android target — `cargo apk build` fails with E0433 if this is
+# left unconditional). On Android the same button surfaces an
+# informational toast instead; see
+# `stats_plugin::handle_copy_share_link_button`.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 arboard        = { workspace = true }
 
 [dev-dependencies]
