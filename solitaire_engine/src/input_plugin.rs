@@ -84,6 +84,7 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HintCycleIndex>()
             .init_resource::<HintSolverConfig>()
+            .init_resource::<crate::pending_hint::PendingHintTask>()
             .add_message::<StartZenRequestEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ForfeitRequestEvent>()
@@ -109,7 +110,18 @@ impl Plugin for InputPlugin {
                     .chain(),
             )
             .add_systems(Update, handle_fullscreen)
-            .add_systems(Update, reset_hint_cycle_on_state_change);
+            .add_systems(Update, reset_hint_cycle_on_state_change)
+            // Async hint pipeline: state-change drop runs before the
+            // poll system so a move applied this frame cancels any
+            // in-flight task before its result can be surfaced.
+            .add_systems(
+                Update,
+                (
+                    crate::pending_hint::drop_pending_hint_on_state_change,
+                    crate::pending_hint::poll_pending_hint_task,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -219,36 +231,29 @@ fn handle_keyboard_core(
     // Esc is handled by `PausePlugin` (overlay toggle + paused flag).
 }
 
-/// Handles the H key: surface the solver's provably-best first move when
-/// the position is winnable; otherwise fall back to cycling through the
-/// heuristic hints.
+/// Handles the H key: spawn an async solver task on
+/// `AsyncComputeTaskPool` whose result `pending_hint::poll_pending_hint_task`
+/// turns into hint visuals one frame later.
 ///
-/// The solver (`solitaire_core::solver::try_solve_from_state`) is run
-/// synchronously on each H press — median ~2 ms on real positions, with a
-/// hard cap from `SolverConfig::default()`'s budgets. When the verdict is
-/// `Winnable`, the returned `first_move` is shown as a single, stable hint
-/// (no cycling — the optimal move doesn't change between identical
-/// presses). When the verdict is `Unwinnable` or `Inconclusive`, the
-/// handler falls back to the legacy heuristic in `all_hints`, which still
-/// cycles through every legal move.
+/// Median solve time is ~2 ms but pathological positions can hit the
+/// `SolverConfig::default()` cap at ~120 ms; running synchronously
+/// (the v0.17.0 behaviour) blocked the main thread on the same frame
+/// the player pressed H. Cancel-on-replace lives in
+/// `PendingHintTask::spawn` — a fresh H press while a previous task
+/// is in flight drops the previous task's handle.
 ///
-/// When no moves are available a "No hints available" toast is shown
-/// instead. The H key always produces a hint when any legal move exists.
-///
-/// TODO: if profiling ever shows >100 ms solver calls in practice, move
-/// the solver call to `AsyncComputeTaskPool` to keep input latency low.
-#[allow(clippy::too_many_arguments)]
+/// Special-cases: when the game is already won, surface a "Game won!"
+/// toast instead of asking the solver. The poll system handles the
+/// "no legal moves" toast on the heuristic fallback path so the
+/// handler here only needs to dispatch.
 fn handle_keyboard_hint(
     keys: Res<ButtonInput<KeyCode>>,
     paused: Option<Res<PausedResource>>,
     game: Option<Res<GameStateResource>>,
     layout: Option<Res<LayoutResource>>,
     solver_config: Res<HintSolverConfig>,
-    mut hint_cycle: ResMut<HintCycleIndex>,
-    mut commands: Commands,
-    card_entities: Query<(Entity, &CardEntity, &mut Sprite)>,
+    mut pending_hint: ResMut<crate::pending_hint::PendingHintTask>,
     mut info_toast: MessageWriter<InfoToastEvent>,
-    mut hint_visual: MessageWriter<HintVisualEvent>,
 ) {
     if paused.is_some_and(|p| p.0) {
         return;
@@ -266,43 +271,37 @@ fn handle_keyboard_hint(
 
     let Some(_layout_res) = layout else { return };
 
-    // First pass: ask the solver for the provably-best move. The
-    // solver is deterministic, so repeated H presses on the same
-    // position keep showing the same hint (cycling is reserved for
-    // the heuristic fallback path).
-    use solitaire_core::solver::{try_solve_from_state, SolverResult};
-    let outcome = try_solve_from_state(&g.0, &solver_config.0);
-    if outcome.result == SolverResult::Winnable
-        && let Some(mv) = outcome.first_move
-    {
-        let from = mv.source.clone();
-        let to = mv.dest.clone();
-        emit_hint_visuals(&g.0, &from, &to, &mut commands, card_entities, &mut info_toast, &mut hint_visual);
-        return;
-    }
+    pending_hint.spawn(g.0.clone(), solver_config.0);
+}
 
-    // Fallback: heuristic cycling hint. Used when the solver verdict
-    // is `Unwinnable` (no legal winning path — but a legal *move* may
-    // still exist, e.g. drawing from stock) or `Inconclusive` (budget
-    // exhausted on a complex mid-game position).
-    let hints = all_hints(&g.0);
+/// Heuristic hint helper used by `pending_hint::poll_pending_hint_task`
+/// when the solver returns `Inconclusive` or `Unwinnable`.
+///
+/// Picks the hint at `HintCycleIndex % hints.len()` (wrapping) and
+/// advances the index so successive H presses on a stuck position
+/// cycle through every legal move. Returns `None` when no legal move
+/// exists at all — the caller surfaces a "No hints available" toast.
+pub fn find_heuristic_hint(
+    game: &GameState,
+    hint_cycle: &mut HintCycleIndex,
+) -> Option<(PileType, PileType)> {
+    let hints = all_hints(game);
     if hints.is_empty() {
-        info_toast.write(InfoToastEvent("No hints available".to_string()));
-        return;
+        return None;
     }
-
-    // Pick the hint at the current cycle index (wrapping) and advance.
     let idx = hint_cycle.0 % hints.len();
     hint_cycle.0 = hint_cycle.0.wrapping_add(1);
     let (from, to, _count) = hints[idx].clone();
-    emit_hint_visuals(&g.0, &from, &to, &mut commands, card_entities, &mut info_toast, &mut hint_visual);
+    Some((from, to))
 }
 
 /// Apply the visual + toast effects for a single chosen hint move.
 ///
 /// Shared between the solver-driven and heuristic-driven hint paths so
-/// both produce identical player-facing feedback.
-fn emit_hint_visuals(
+/// both produce identical player-facing feedback. Called from
+/// `pending_hint::poll_pending_hint_task` once the async solver task
+/// resolves.
+pub fn emit_hint_visuals(
     game: &GameState,
     from: &PileType,
     to: &PileType,
@@ -2149,191 +2148,50 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Hint system — solver promotion (v0.16.0+)
+    // Hint system — async port (v0.18.0+)
     //
-    // The H-key hint is now backed by `solitaire_core::solver::try_solve_from_state`.
-    // When the solver proves the position winnable, the hint is the
-    // first move on the solver's solution path. When the solver returns
-    // Inconclusive (budget exhausted) or Unwinnable, the legacy
-    // heuristic in `all_hints` supplies the hint instead so the H key
-    // always produces feedback while any legal move exists.
+    // `handle_keyboard_hint` no longer runs the solver inline; it
+    // spawns an `AsyncComputeTaskPool` task whose result the polling
+    // system in `pending_hint` turns into hint visuals one frame
+    // later. The behaviour contract this section pins is "pressing H
+    // populates `PendingHintTask`" — the spawn-to-emit pipeline is
+    // covered end-to-end in `pending_hint::tests`.
     // -----------------------------------------------------------------------
 
-    /// Build a minimal Bevy app that registers only the resources and
-    /// messages needed to drive `handle_keyboard_hint` end-to-end.
-    /// Skips every other input system — the test only exercises the hint
-    /// path and we want the assertions to be unaffected by other handlers.
-    fn hint_test_app() -> App {
+    /// Pressing H on a non-paused, non-won game with a live
+    /// `GameStateResource` + `LayoutResource` must populate
+    /// `PendingHintTask`. The polling system, exercised in
+    /// `pending_hint::tests`, drives the result to a visual event.
+    #[test]
+    fn pressing_h_spawns_pending_hint_task() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.add_message::<InfoToastEvent>();
         app.add_message::<HintVisualEvent>();
         app.init_resource::<HintCycleIndex>();
         app.init_resource::<HintSolverConfig>();
+        app.init_resource::<crate::pending_hint::PendingHintTask>();
         app.init_resource::<ButtonInput<KeyCode>>();
-        // Layout: a fixed 1280x800 layout — `handle_keyboard_hint` only
-        // checks the resource is present, never reads coordinates.
         app.insert_resource(crate::layout::LayoutResource(
             crate::layout::compute_layout(Vec2::new(1280.0, 800.0)),
         ));
+        app.insert_resource(GameStateResource(GameState::new(42, DrawMode::DrawOne)));
         app.add_systems(Update, handle_keyboard_hint);
-        app
-    }
 
-    /// Helper: simulate "the player just pressed H this frame".
-    fn press_h(app: &mut App) {
-        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-        input.release(KeyCode::KeyH);
-        input.clear();
-        input.press(KeyCode::KeyH);
-    }
-
-    /// Build a near-finished `GameState`: foundations hold A..Q for each
-    /// suit, four Kings sit on tableau columns 0..3, stock and waste
-    /// empty. Solver-side equivalent of the `near_finished_game_state`
-    /// helper in `solitaire_core::solver::tests`.
-    fn near_finished_game_state() -> GameState {
-        use solitaire_core::card::{Card, Rank, Suit};
-        let mut game = GameState::new(1, DrawMode::DrawOne);
-        for slot in 0..4_u8 {
-            game.piles
-                .get_mut(&PileType::Foundation(slot))
-                .unwrap()
-                .cards
-                .clear();
+        // Simulate the H key being pressed this frame.
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.release(KeyCode::KeyH);
+            input.clear();
+            input.press(KeyCode::KeyH);
         }
-        for i in 0..7_usize {
-            game.piles
-                .get_mut(&PileType::Tableau(i))
-                .unwrap()
-                .cards
-                .clear();
-        }
-        game.piles.get_mut(&PileType::Stock).unwrap().cards.clear();
-        game.piles.get_mut(&PileType::Waste).unwrap().cards.clear();
-        let suit_for_slot = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
-        let ranks_below_king = [
-            Rank::Ace, Rank::Two, Rank::Three, Rank::Four, Rank::Five,
-            Rank::Six, Rank::Seven, Rank::Eight, Rank::Nine, Rank::Ten,
-            Rank::Jack, Rank::Queen,
-        ];
-        for (slot, suit) in suit_for_slot.iter().enumerate() {
-            let pile = game
-                .piles
-                .get_mut(&PileType::Foundation(slot as u8))
-                .unwrap();
-            for (i, rank) in ranks_below_king.iter().enumerate() {
-                pile.cards.push(Card {
-                    id: (slot as u32) * 13 + i as u32,
-                    suit: *suit,
-                    rank: *rank,
-                    face_up: true,
-                });
-            }
-        }
-        for (col, suit) in suit_for_slot.iter().enumerate() {
-            game.piles
-                .get_mut(&PileType::Tableau(col))
-                .unwrap()
-                .cards
-                .push(Card {
-                    id: 100 + col as u32,
-                    suit: *suit,
-                    rank: Rank::King,
-                    face_up: true,
-                });
-        }
-        game
-    }
-
-    /// When the solver verdict is Winnable, the hint must come from the
-    /// solver: in our near-finished fixture, four Tableau→Foundation
-    /// moves are legal and the solver returns one of them. The
-    /// `HintVisualEvent` source card must be one of the four Kings and
-    /// the destination must be a foundation slot.
-    #[test]
-    fn hint_uses_solver_when_winnable() {
-        use solitaire_core::card::Rank;
-        let mut app = hint_test_app();
-        let game = near_finished_game_state();
-        // Track the 4 King ids so we can assert the hint source matches.
-        let king_ids: Vec<u32> = (0..4_u8)
-            .map(|c| {
-                game.piles
-                    .get(&PileType::Tableau(c as usize))
-                    .unwrap()
-                    .cards
-                    .last()
-                    .filter(|c| c.rank == Rank::King)
-                    .map(|c| c.id)
-                    .expect("each tableau col 0..3 has a King on top")
-            })
-            .collect();
-
-        app.insert_resource(GameStateResource(game));
-        press_h(&mut app);
         app.update();
 
-        // Read out the messages via the standard cursor API.
-        let messages = app.world().resource::<Messages<HintVisualEvent>>();
-        let mut cursor = messages.get_cursor();
-        let collected: Vec<HintVisualEvent> = cursor.read(messages).cloned().collect();
-        assert_eq!(
-            collected.len(), 1,
-            "exactly one HintVisualEvent must fire on a winnable solver verdict"
-        );
-        let event = &collected[0];
         assert!(
-            king_ids.contains(&event.source_card_id),
-            "solver hint must point at one of the four Kings; got id {}",
-            event.source_card_id
-        );
-        assert!(
-            matches!(event.dest_pile, PileType::Foundation(_)),
-            "solver hint destination must be a foundation slot; got {:?}",
-            event.dest_pile
-        );
-    }
-
-    /// When the solver returns Inconclusive (e.g. tight budgets force an
-    /// early bail), the heuristic fallback must still produce a hint
-    /// event so the H key never feels broken.
-    ///
-    /// We force the solver inconclusive by setting both budgets to 0 —
-    /// the search bails on the very first iteration, returning
-    /// `SolverResult::Inconclusive`. The heuristic fallback then runs on
-    /// the fresh deal and finds at least one legal move.
-    #[test]
-    fn hint_falls_back_to_heuristic_when_solver_inconclusive() {
-        use solitaire_core::solver::SolverConfig;
-        let mut app = hint_test_app();
-        // Force solver to bail before exploring anything.
-        app.insert_resource(HintSolverConfig(SolverConfig {
-            move_budget: 0,
-            state_budget: 0,
-        }));
-        // A fresh seeded deal — guaranteed to have at least one legal
-        // move (the standard Klondike opening always has draws available
-        // even if no immediate tableau move exists).
-        let game = GameState::new(42, DrawMode::DrawOne);
-        app.insert_resource(GameStateResource(game));
-        press_h(&mut app);
-        app.update();
-
-        let world = app.world();
-        let visuals = world.resource::<Messages<HintVisualEvent>>();
-        let mut visual_cursor = visuals.get_cursor();
-        let collected: Vec<HintVisualEvent> = visual_cursor.read(visuals).cloned().collect();
-        // Either a card-move hint (most fresh deals) or a draw suggestion.
-        // A draw suggestion fires no `HintVisualEvent` (only an
-        // `InfoToastEvent`), so we accept zero-or-one HintVisualEvent so
-        // long as at least one feedback signal was emitted overall.
-        let toasts = world.resource::<Messages<InfoToastEvent>>();
-        let mut toast_cursor = toasts.get_cursor();
-        let toast_count = toast_cursor.read(toasts).count();
-        assert!(
-            !collected.is_empty() || toast_count > 0,
-            "heuristic fallback must produce a hint signal (visual or toast)"
+            app.world()
+                .resource::<crate::pending_hint::PendingHintTask>()
+                .is_pending(),
+            "pressing H must spawn an async hint task",
         );
     }
 }

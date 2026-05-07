@@ -22,6 +22,7 @@ pub mod input_plugin;
 pub mod layout;
 pub mod onboarding_plugin;
 pub mod pause_plugin;
+pub mod pending_hint;
 pub mod profile_plugin;
 pub mod radial_menu;
 pub mod replay_overlay;
