@@ -74,23 +74,13 @@ pub struct StatsCell;
 #[derive(Resource, Debug, Default, Clone)]
 pub struct ReplayHistoryResource(pub ReplayHistory);
 
-/// Most recent shareable replay URL written by `sync_plugin` after the
-/// `SyncProvider::push_replay` task completes successfully. `None`
-/// until the player wins a game on a server-backed sync backend;
-/// repopulated on each subsequent win.
-///
-/// The Stats overlay's "Copy share link" button reads from here and
-/// writes the URL to the OS clipboard via `arboard`. Not persisted to
-/// disk — the URL is recoverable by re-uploading the same replay
-/// (still in `replays.json`), so the session-bound lifetime is fine
-/// for a v1 share affordance.
-#[derive(Resource, Debug, Default, Clone)]
-pub struct LastSharedReplayUrl(pub Option<String>);
-
 /// Marker on the "Copy share link" button inside the Stats modal.
-/// Click writes [`LastSharedReplayUrl`] to the OS clipboard via
-/// `arboard` and surfaces a confirmation toast. Hidden / disabled
-/// when no shareable URL is available.
+/// Click reads the share URL from the currently-selected replay
+/// (`history.0.replays[selected.0].share_url`) and writes it to the
+/// OS clipboard via `arboard`, surfacing a confirmation toast. The
+/// share URL is populated by `sync_plugin::poll_replay_upload_result`
+/// when the corresponding win's upload completes and is persisted to
+/// `replays.json` so it survives a restart.
 #[derive(Component, Debug)]
 pub struct CopyShareLinkButton;
 
@@ -195,7 +185,6 @@ impl Plugin for StatsPlugin {
             .insert_resource(ReplayHistoryResource(initial_history))
             .init_resource::<SelectedReplayIndex>()
             .insert_resource(LatestReplayPath(replay_path))
-            .init_resource::<LastSharedReplayUrl>()
             .add_message::<GameWonEvent>()
             .add_message::<NewGameRequestEvent>()
             .add_message::<ForfeitEvent>()
@@ -299,24 +288,32 @@ fn refresh_replay_history_on_win(
 /// resets the live game to the recorded deal and ticks through the
 /// move list via [`crate::replay_playback`]; the
 /// [`crate::replay_overlay`] banner surfaces while playback runs.
-/// Copies [`LastSharedReplayUrl`] to the OS clipboard via `arboard`
-/// and surfaces a confirmation toast. When no URL is in hand (no win
-/// yet on a server-backed sync backend, local-only mode, or upload
-/// failed) the button still acknowledges the click but explains why
-/// the clipboard wasn't written. `arboard::Clipboard::new()` failures
-/// are logged + surfaced as a generic "couldn't reach the clipboard"
-/// toast rather than swallowed — they're rare but worth diagnosing.
+/// Copies the currently-selected replay's `share_url` to the OS
+/// clipboard via `arboard` and surfaces a confirmation toast. When no
+/// URL is in hand on the selected entry (replay never uploaded — the
+/// player won on a local-only backend, the upload failed, or the
+/// replay pre-dates v0.19.0 share-link persistence) the button still
+/// acknowledges the click but explains why the clipboard wasn't
+/// written. `arboard::Clipboard::new()` failures are logged + surfaced
+/// as a generic "couldn't reach the clipboard" toast rather than
+/// swallowed — they're rare but worth diagnosing.
 fn handle_copy_share_link_button(
     buttons: Query<&Interaction, (With<CopyShareLinkButton>, Changed<Interaction>)>,
-    last_url: Res<LastSharedReplayUrl>,
+    history: Res<ReplayHistoryResource>,
+    selected: Res<SelectedReplayIndex>,
     mut toast: MessageWriter<InfoToastEvent>,
 ) {
     if !buttons.iter().any(|i| *i == Interaction::Pressed) {
         return;
     }
-    let Some(url) = last_url.0.as_ref() else {
+    let Some(url) = history
+        .0
+        .replays
+        .get(selected.0)
+        .and_then(|r| r.share_url.as_ref())
+    else {
         toast.write(InfoToastEvent(
-            "No share link yet \u{2014} win a game on a server-backed sync to upload one.".to_string(),
+            "No share link for this replay \u{2014} win a game on a server-backed sync to upload one.".to_string(),
         ));
         return;
     };

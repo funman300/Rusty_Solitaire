@@ -138,6 +138,15 @@ pub struct Replay {
     /// Ordered move list. Each entry is what the player did, replayable
     /// against a fresh `GameState` constructed from the seed.
     pub moves: Vec<ReplayMove>,
+    /// Public share URL for this replay on the active sync backend, set
+    /// by `sync_plugin::poll_replay_upload_result` when the upload
+    /// task resolves. `None` when the player won on a local-only
+    /// backend, the upload failed, or the replay pre-dates v0.19.0
+    /// share-link persistence. `#[serde(default)]` keeps older
+    /// `replays.json` files loadable without bumping
+    /// [`REPLAY_SCHEMA_VERSION`].
+    #[serde(default)]
+    pub share_url: Option<String>,
 }
 
 impl Replay {
@@ -162,6 +171,7 @@ impl Replay {
             final_score,
             recorded_at,
             moves,
+            share_url: None,
         }
     }
 }
@@ -479,6 +489,34 @@ mod tests {
         );
 
         let _ = fs::remove_file(&path);
+    }
+
+    /// Backwards-compat: a `Replay` record persisted before v0.19.0
+    /// share-link persistence carries no `share_url` field on disk.
+    /// `#[serde(default)]` must let it deserialise cleanly with
+    /// `share_url == None`, so existing players don't see their
+    /// rolling history wiped on the v0.19.0 update.
+    #[test]
+    fn replay_loads_when_share_url_field_is_absent() {
+        let pre_v019_json = format!(
+            r#"{{
+                "schema_version": {schema},
+                "seed": 1,
+                "draw_mode": "DrawOne",
+                "mode": "Classic",
+                "time_seconds": 60,
+                "final_score": 100,
+                "recorded_at": "2025-01-01",
+                "moves": []
+            }}"#,
+            schema = REPLAY_SCHEMA_VERSION,
+        );
+        let parsed: Replay = serde_json::from_str(&pre_v019_json)
+            .expect("pre-v0.19.0 replay JSON must still deserialise");
+        assert!(
+            parsed.share_url.is_none(),
+            "missing share_url field must default to None",
+        );
     }
 
     /// Atomic-write contract — `.tmp` must not be left behind after

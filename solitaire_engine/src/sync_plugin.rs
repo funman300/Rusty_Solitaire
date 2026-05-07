@@ -19,8 +19,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use solitaire_data::{
-    save_achievements_to, save_progress_to, save_stats_to, AchievementRecord, PlayerProgress,
-    Replay, StatsSnapshot, SyncError, SyncProvider,
+    save_achievements_to, save_progress_to, save_replay_history_to, save_stats_to,
+    AchievementRecord, PlayerProgress, Replay, StatsSnapshot, SyncError, SyncProvider,
 };
 use solitaire_sync::{merge, SyncPayload, SyncResponse};
 
@@ -29,7 +29,7 @@ use crate::events::{GameWonEvent, ManualSyncRequestEvent, SyncCompleteEvent};
 use crate::game_plugin::RecordingReplay;
 use crate::progress_plugin::{ProgressResource, ProgressStoragePath};
 use crate::resources::{GameStateResource, SyncStatus, SyncStatusResource};
-use crate::stats_plugin::{LastSharedReplayUrl, StatsResource, StatsStoragePath};
+use crate::stats_plugin::{LatestReplayPath, ReplayHistoryResource, StatsResource, StatsStoragePath};
 
 // ---------------------------------------------------------------------------
 // Public resources
@@ -324,14 +324,18 @@ fn push_replay_on_win(
 }
 
 /// Update-schedule system: harvests the upload task's result on the
-/// main thread once it resolves. On success writes the share URL to
-/// [`LastSharedReplayUrl`] so the Stats overlay's Copy button has
-/// something to send to the clipboard. On `UnsupportedPlatform` (the
-/// `LocalOnlyProvider` no-op path) clears the URL silently. Real
-/// network / auth errors log a warn and clear the URL.
+/// main thread once it resolves. On success writes the share URL into
+/// the most-recent entry of [`ReplayHistoryResource`] (`replays[0]`,
+/// guaranteed by `record_replay_on_win` to be the win this upload
+/// covers, since `cancel-on-replace` in `push_replay_on_win` drops any
+/// older in-flight task) and persists the updated history to disk so
+/// the URL survives a restart. `UnsupportedPlatform` (the
+/// `LocalOnlyProvider` no-op path) is silently absorbed; real network
+/// / auth errors log a warn but never clobber an existing URL.
 fn poll_replay_upload_result(
     mut pending: ResMut<PendingReplayUpload>,
-    mut last_url: ResMut<LastSharedReplayUrl>,
+    mut history: ResMut<ReplayHistoryResource>,
+    replay_path: Res<LatestReplayPath>,
 ) {
     let Some(task) = pending.0.as_mut() else {
         return;
@@ -340,13 +344,25 @@ fn poll_replay_upload_result(
         return;
     };
     pending.0 = None;
-    match result {
-        Ok(url) => last_url.0 = Some(url),
-        Err(SyncError::UnsupportedPlatform) => last_url.0 = None,
+    let url = match result {
+        Ok(url) => url,
+        Err(SyncError::UnsupportedPlatform) => return,
         Err(e) => {
             warn!("replay upload failed: {e}");
-            last_url.0 = None;
+            return;
         }
+    };
+    let Some(entry) = history.0.replays.first_mut() else {
+        // Defensive: `push_replay_on_win` only fires after a win, so a
+        // missing replays[0] means another system cleared the history
+        // mid-upload. Drop the URL silently rather than panicking.
+        return;
+    };
+    entry.share_url = Some(url);
+    if let Some(path) = replay_path.0.as_deref()
+        && let Err(e) = save_replay_history_to(path, &history.0)
+    {
+        warn!("failed to persist share URL into replay history: {e}");
     }
 }
 
@@ -513,5 +529,88 @@ mod tests {
         let stats = StatsSnapshot { games_played: 42, ..Default::default() };
         let payload = build_payload(&stats, &[], &PlayerProgress::default());
         assert_eq!(payload.stats.games_played, 42);
+    }
+
+    /// `poll_replay_upload_result` must write the resolved share URL
+    /// into `replays[0].share_url` AND persist the updated history to
+    /// disk so the URL survives a restart. Pins v0.19.0's persistent
+    /// share-link contract — the v0.18.0 ephemeral
+    /// `LastSharedReplayUrl` resource is gone, so a regression here
+    /// would silently drop the link.
+    #[test]
+    fn upload_result_writes_share_url_into_replay_and_persists() {
+        use solitaire_core::game_state::{DrawMode, GameMode};
+        use solitaire_data::{
+            load_replay_history_from, save_replay_history_to, Replay, ReplayHistory,
+        };
+
+        let mut app = headless_app_with(NoOpProvider);
+        let path = std::env::temp_dir()
+            .join("solitaire_test_replay_share_url_persist.json");
+        let _ = std::fs::remove_file(&path);
+
+        // Seed the in-memory history with a single replay carrying no
+        // share_url — the upload-poll path must populate it.
+        let initial = Replay::new(
+            42,
+            DrawMode::DrawOne,
+            GameMode::Classic,
+            60,
+            500,
+            chrono::NaiveDate::from_ymd_opt(2026, 5, 6).expect("valid date"),
+            vec![],
+        );
+        let history = ReplayHistory {
+            schema_version: solitaire_data::REPLAY_HISTORY_SCHEMA_VERSION,
+            replays: vec![initial],
+        };
+        save_replay_history_to(&path, &history).expect("seed history on disk");
+        app.insert_resource(crate::stats_plugin::ReplayHistoryResource(history));
+        app.insert_resource(crate::stats_plugin::LatestReplayPath(Some(path.clone())));
+
+        // Pre-resolved task carrying the URL the production path would
+        // get back from the server.
+        let url = "https://example.test/replays/abc123".to_string();
+        let task = AsyncComputeTaskPool::get().spawn({
+            let url = url.clone();
+            async move { Ok::<String, SyncError>(url) }
+        });
+        app.world_mut()
+            .resource_mut::<PendingReplayUpload>()
+            .0 = Some(task);
+
+        // Pump frames until the polling system observes the task as
+        // ready and clears `PendingReplayUpload`.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while app.world().resource::<PendingReplayUpload>().0.is_some() {
+            app.update();
+            std::thread::yield_now();
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        assert!(
+            app.world().resource::<PendingReplayUpload>().0.is_none(),
+            "upload task should have been consumed within 15 s wall-clock",
+        );
+
+        // In-memory contract: replays[0].share_url is now Some(url).
+        let live = app
+            .world()
+            .resource::<crate::stats_plugin::ReplayHistoryResource>();
+        assert_eq!(
+            live.0.replays.first().and_then(|r| r.share_url.clone()),
+            Some(url.clone()),
+            "share URL must be written into replays[0].share_url",
+        );
+        // Persistence contract: a fresh load picks up the same URL.
+        let on_disk = load_replay_history_from(&path).expect("history must reload");
+        assert_eq!(
+            on_disk.replays.first().and_then(|r| r.share_url.clone()),
+            Some(url),
+            "share URL must survive a save/load round-trip",
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }
