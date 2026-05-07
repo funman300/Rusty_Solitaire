@@ -847,8 +847,23 @@ fn spawn_stats_screen(
             // Surfaces the most recent winning game so the player can spot
             // whether their last victory has been recorded. The Watch
             // Replay action below is what the player clicks to revisit it.
+            //
+            // When the displayed replay carries a `share_url` (uploaded
+            // to a sync server, persisted by v0.19.0's share-link
+            // contract), append a "Shareable" badge so the player can
+            // tell at a glance whether the Copy share link button below
+            // will produce a URL — without it the button surfaces a
+            // toast explaining why nothing was copied, which is more
+            // friction than necessary when a quick visual cue suffices.
             let replay_caption = match latest_replay {
-                Some(r) => format!("Latest win: {}", format_replay_caption(r)),
+                Some(r) => {
+                    let base = format!("Latest win: {}", format_replay_caption(r));
+                    if r.share_url.is_some() {
+                        format!("{base} \u{2022} Shareable")
+                    } else {
+                        base
+                    }
+                }
                 None => "No replay recorded yet \u{2014} win a game first.".to_string(),
             };
             body.spawn((
