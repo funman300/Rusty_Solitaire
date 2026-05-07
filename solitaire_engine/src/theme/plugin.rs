@@ -295,118 +295,63 @@ pub fn set_theme(
 // Picker-thumbnail generation
 // ---------------------------------------------------------------------------
 
-/// Basename (no extension) of the canonical "preview face" inside a
-/// theme — the Ace of Spades. Matches `CardKey::manifest_name(Spades,
-/// Ace)`. The thumbnail loader appends `.svg` first and falls back to
-/// `.png` so themes shipped as raster art still get real previews.
-const PREVIEW_FACE_BASENAME: &str = "spades_ace";
+/// Filename of the canonical "preview face" SVG inside a theme — the
+/// Ace of Spades. Matches `CardKey::manifest_name(Spades, Ace)` so the
+/// path resolves the same way whether we're reading from disk or from
+/// the bundled-default lookup table.
+const PREVIEW_FACE_FILENAME: &str = "spades_ace.svg";
 
-/// Basename (no extension) of the back preview inside a theme. Matched
-/// the same way as [`PREVIEW_FACE_BASENAME`].
-const PREVIEW_BACK_BASENAME: &str = "back";
+/// Filename of the back SVG inside a theme.
+const PREVIEW_BACK_FILENAME: &str = "back.svg";
 
-/// Bytes of one preview slot tagged with its source format. SVGs go
-/// through `rasterize_svg` (vector → fixed-size pixmap); PNGs decode
-/// directly into a `bevy::image::Image` whose intrinsic dimensions
-/// the UI scales at draw time.
-#[derive(Debug)]
-enum ThemePreviewBytes {
-    /// SVG source — the bundled default theme's convention. Caller
-    /// rasterises through the existing `usvg` + `resvg` pipeline.
-    Svg(Vec<u8>),
-    /// PNG source — the convention for raster-art user themes (e.g.
-    /// pixel-art themes generated via Claude Design — see
-    /// `SESSION_HANDOFF.md` for the v0.19 drop-in flow).
-    Png(Vec<u8>),
-}
-
-/// Resolves the preview bytes for a card slot in `theme_id`, trying
-/// `.svg` first (the bundled default's convention) and falling back
-/// to `.png` for raster-art themes. Returns `None` when neither
-/// extension resolves — the caller renders a placeholder.
+/// Resolves the SVG bytes for one preview file (`back.svg` or
+/// `spades_ace.svg`) belonging to the named theme.
 ///
-/// - For the bundled `default` theme: reads from the embedded
-///   `DEFAULT_THEME_SVGS` table via [`default_theme_svg_bytes`]. SVG
-///   only — the embed table is `.svg` exclusive.
-/// - For any user theme: reads from `<user_theme_dir>/<id>/`. Tries
-///   `<basename>.svg` then `<basename>.png`. Either branch returns
-///   `None` on I/O failure (file missing, permission denied, etc.).
-fn read_theme_preview_bytes(theme_id: &str, basename: &str) -> Option<ThemePreviewBytes> {
+/// - For the bundled `default` theme, reads from the embedded
+///   `DEFAULT_THEME_SVGS` table via [`default_theme_svg_bytes`]. No
+///   filesystem I/O.
+/// - For any user theme, reads from `<user_theme_dir>/<id>/<filename>`.
+///   Returns `None` for any I/O failure (file missing, permission
+///   denied, etc.) — the caller treats `None` as "render placeholder".
+fn read_theme_preview_svg_bytes(theme_id: &str, filename: &str) -> Option<Vec<u8>> {
     if theme_id == "default" {
-        let filename = format!("{basename}.svg");
-        return default_theme_svg_bytes(&filename)
-            .map(|b| ThemePreviewBytes::Svg(b.to_vec()));
+        return default_theme_svg_bytes(filename).map(|b| b.to_vec());
     }
-    let dir = user_theme_dir().join(theme_id);
-    if let Ok(bytes) = std::fs::read(dir.join(format!("{basename}.svg"))) {
-        return Some(ThemePreviewBytes::Svg(bytes));
-    }
-    if let Ok(bytes) = std::fs::read(dir.join(format!("{basename}.png"))) {
-        return Some(ThemePreviewBytes::Png(bytes));
-    }
-    None
+    let path = user_theme_dir().join(theme_id).join(filename);
+    std::fs::read(&path).ok()
 }
 
-/// Decodes raster bytes (currently PNG) into a `bevy::image::Image`.
-/// Bevy's `Image::from_buffer` dispatches via the supplied
-/// `ImageType`, so this is a thin wrapper that translates I/O
-/// failures into a logged warning + `None`.
-fn decode_png_for_thumbnail(png_bytes: &[u8]) -> Option<Image> {
-    use bevy::image::{CompressedImageFormats, Image, ImageSampler, ImageType};
-    use bevy::asset::RenderAssetUsages;
-    Image::from_buffer(
-        png_bytes,
-        ImageType::Format(bevy::image::ImageFormat::Png),
-        CompressedImageFormats::default(),
-        true, // is_srgb — pixel-art faces are authored in sRGB
-        ImageSampler::Default,
-        RenderAssetUsages::default(),
-    )
-    .map_err(|e| warn!("theme thumbnail png decode failed: {e}"))
-    .ok()
-}
-
-/// Pure helper: turns one preview byte slice into a thumbnail
-/// `Handle<Image>`. SVGs rasterise to a fixed
-/// `THEME_THUMBNAIL_WIDTH_PX × THEME_THUMBNAIL_HEIGHT_PX` pixmap
-/// (preserving aspect, centred); PNGs decode at their native
-/// dimensions and Bevy's UI scales them at draw time. Returns
-/// [`Handle::default`] on decode / rasterise failure so the picker
-/// can render a placeholder without crashing.
+/// Pure helper: rasterises one SVG preview byte slice at the picker's
+/// thumbnail dimensions, inserts the resulting `Image` into
+/// `Assets<Image>`, and returns the new handle. Returns
+/// [`Handle::default`] if rasterisation fails (malformed SVG, etc.) so
+/// the picker can render a placeholder for broken themes without
+/// crashing.
 fn rasterize_preview_to_handle(
-    bytes: &ThemePreviewBytes,
+    svg_bytes: &[u8],
     images: &mut Assets<Image>,
 ) -> Handle<Image> {
-    match bytes {
-        ThemePreviewBytes::Svg(b) => {
-            let target = UVec2::new(THEME_THUMBNAIL_WIDTH_PX, THEME_THUMBNAIL_HEIGHT_PX);
-            match rasterize_svg(b, target) {
-                Ok(image) => images.add(image),
-                Err(err) => {
-                    warn!("theme thumbnail svg rasterise failed: {err}");
-                    Handle::default()
-                }
-            }
+    let target = UVec2::new(THEME_THUMBNAIL_WIDTH_PX, THEME_THUMBNAIL_HEIGHT_PX);
+    match rasterize_svg(svg_bytes, target) {
+        Ok(image) => images.add(image),
+        Err(err) => {
+            warn!("theme thumbnail rasterise failed: {err}");
+            Handle::default()
         }
-        ThemePreviewBytes::Png(b) => match decode_png_for_thumbnail(b) {
-            Some(image) => images.add(image),
-            None => Handle::default(),
-        },
     }
 }
 
 /// Builds a [`ThemeThumbnailPair`] for a single theme. Either handle
-/// is [`Handle::default`] when the matching face / back file could
-/// not be located in either `.svg` or `.png` form, or when decoding
-/// failed.
+/// is [`Handle::default`] when the matching SVG could not be located
+/// or rasterised.
 fn generate_thumbnail_pair_for(
     theme_id: &str,
     images: &mut Assets<Image>,
 ) -> ThemeThumbnailPair {
-    let ace = read_theme_preview_bytes(theme_id, PREVIEW_FACE_BASENAME)
+    let ace = read_theme_preview_svg_bytes(theme_id, PREVIEW_FACE_FILENAME)
         .map(|b| rasterize_preview_to_handle(&b, images))
         .unwrap_or_default();
-    let back = read_theme_preview_bytes(theme_id, PREVIEW_BACK_BASENAME)
+    let back = read_theme_preview_svg_bytes(theme_id, PREVIEW_BACK_FILENAME)
         .map(|b| rasterize_preview_to_handle(&b, images))
         .unwrap_or_default();
     ThemeThumbnailPair { ace, back }
@@ -615,90 +560,19 @@ mod tests {
         );
     }
 
-    /// `read_theme_preview_bytes` for the default theme always
-    /// returns embedded SVG bytes for the canonical preview pair —
+    /// `read_theme_preview_svg_bytes` for the default theme always
+    /// returns embedded bytes for the canonical preview pair —
     /// covering the happy-path branch of the helper.
     #[test]
     fn read_default_theme_preview_returns_some_for_canonical_files() {
         assert!(
-            matches!(
-                read_theme_preview_bytes("default", PREVIEW_BACK_BASENAME),
-                Some(ThemePreviewBytes::Svg(_)),
-            ),
-            "default theme back must resolve to embedded SVG bytes"
+            read_theme_preview_svg_bytes("default", PREVIEW_BACK_FILENAME).is_some(),
+            "default theme back.svg must be embedded"
         );
         assert!(
-            matches!(
-                read_theme_preview_bytes("default", PREVIEW_FACE_BASENAME),
-                Some(ThemePreviewBytes::Svg(_)),
-            ),
-            "default theme spades_ace must resolve to embedded SVG bytes"
+            read_theme_preview_svg_bytes("default", PREVIEW_FACE_FILENAME).is_some(),
+            "default theme spades_ace.svg must be embedded"
         );
-    }
-
-    /// PNG raster-art themes (e.g. the v0.19 drop-in pixel-art theme
-    /// generated via Claude Design) must produce non-default
-    /// thumbnail handles in the picker. The function reads
-    /// `<user_theme_dir>/<id>/spades_ace.png` and `back.png`,
-    /// decodes them via Bevy's `Image::from_buffer`, and inserts the
-    /// resulting `Image` into `Assets<Image>`. Pins the v0.18 →
-    /// v0.19 SVG-only → SVG-or-PNG widening of the thumbnail
-    /// pipeline.
-    #[test]
-    fn png_only_user_theme_generates_real_thumbnails() {
-        // Drop a synthetic theme into a unique temp subdirectory so
-        // the test doesn't collide with whatever real themes the dev
-        // machine has installed under user_theme_dir().
-        let theme_id = format!(
-            "test-png-theme-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        );
-        let theme_dir = user_theme_dir().join(&theme_id);
-        std::fs::create_dir_all(&theme_dir).expect("create temp theme dir");
-
-        // Encode a real 2×3 RGBA PNG via the `image` dev-dep so the
-        // test exercises Bevy's actual PNG decoder. A handcrafted byte
-        // string is too fragile (DEFLATE encodes are non-trivial) and
-        // a `include_bytes!` of a checked-in PNG would shoulder
-        // committed binary into the repo.
-        let mut png_bytes: Vec<u8> = Vec::new();
-        let img = image::RgbaImage::from_pixel(2, 3, image::Rgba([200, 60, 60, 255]));
-        image::DynamicImage::ImageRgba8(img)
-            .write_to(
-                &mut std::io::Cursor::new(&mut png_bytes),
-                image::ImageFormat::Png,
-            )
-            .expect("encode tiny png");
-
-        std::fs::write(theme_dir.join("spades_ace.png"), &png_bytes)
-            .expect("write spades_ace.png");
-        std::fs::write(theme_dir.join("back.png"), &png_bytes)
-            .expect("write back.png");
-
-        let mut images = Assets::<Image>::default();
-        let pair = generate_thumbnail_pair_for(&theme_id, &mut images);
-
-        assert_ne!(
-            pair.ace,
-            Handle::default(),
-            "PNG-only theme must yield a real ace thumbnail handle, not the placeholder",
-        );
-        assert_ne!(
-            pair.back,
-            Handle::default(),
-            "PNG-only theme must yield a real back thumbnail handle, not the placeholder",
-        );
-        assert!(
-            pair.is_fully_populated(),
-            "complete PNG-only pair must report fully-populated",
-        );
-
-        // Cleanup — the test is robust to leftover dirs but tidy up
-        // anyway so /tmp doesn't grow on repeated CI runs.
-        let _ = std::fs::remove_dir_all(&theme_dir);
     }
 
     /// `ensure_theme_thumbnails` is idempotent: calling it twice with
