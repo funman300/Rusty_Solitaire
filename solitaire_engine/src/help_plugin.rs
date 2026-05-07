@@ -184,6 +184,8 @@ const CONTROL_SECTIONS: &[ControlSection] = &[
     ControlSection {
         title: "Overlays",
         rows: &[
+            ControlRow { keys: "M", description: "Mode launcher (Home)" },
+            ControlRow { keys: "P", description: "Profile" },
             ControlRow { keys: "S", description: "Stats & progression" },
             ControlRow { keys: "A", description: "Achievements" },
             ControlRow { keys: "L", description: "Leaderboard" },
@@ -192,6 +194,7 @@ const CONTROL_SECTIONS: &[ControlSection] = &[
             ControlRow { keys: "F11", description: "Toggle fullscreen" },
             ControlRow { keys: "Esc", description: "Pause / resume" },
             ControlRow { keys: "[ / ]", description: "SFX volume down / up" },
+            ControlRow { keys: "Enter", description: "Play Again (on the Win Summary)" },
         ],
     },
 ];
