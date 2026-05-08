@@ -30,8 +30,9 @@ use crate::progress_plugin::LevelUpEvent;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
 use crate::time_attack_plugin::TimeAttackEndedEvent;
 use crate::ui_theme::{
-    scaled_duration, ACCENT_PRIMARY, MOTION_CASCADE_SLIDE_SECS, MOTION_CASCADE_STAGGER_SECS,
-    MOTION_SLIDE_SECS, TEXT_PRIMARY, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4, Z_TOAST,
+    scaled_duration, ACCENT_SECONDARY, BG_ELEVATED, MOTION_CASCADE_SLIDE_SECS,
+    MOTION_CASCADE_STAGGER_SECS, MOTION_SLIDE_SECS, RADIUS_MD, STATE_DANGER, STATE_INFO,
+    STATE_WARNING, TEXT_PRIMARY, TYPE_BODY_LG, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4, Z_TOAST,
 };
 use crate::weekly_goals_plugin::WeeklyGoalCompletedEvent;
 
@@ -339,6 +340,7 @@ fn handle_achievement_toast(
             &mut commands,
             format!("Achievement: {}", display_name_for(&ev.0.id)),
             ACHIEVEMENT_TOAST_SECS,
+            ToastVariant::Celebration,
         );
     }
 }
@@ -349,6 +351,7 @@ fn handle_levelup_toast(mut commands: Commands, mut events: MessageReader<LevelU
             &mut commands,
             format!("Level Up! → {}", ev.new_level),
             LEVELUP_TOAST_SECS,
+            ToastVariant::Celebration,
         );
     }
 }
@@ -358,7 +361,12 @@ fn handle_daily_goal_announcement_toast(
     mut events: MessageReader<DailyGoalAnnouncementEvent>,
 ) {
     for ev in events.read() {
-        spawn_toast(&mut commands, format!("Goal: {}", ev.0), DAILY_TOAST_SECS);
+        spawn_toast(
+            &mut commands,
+            format!("Goal: {}", ev.0),
+            DAILY_TOAST_SECS,
+            ToastVariant::Info,
+        );
     }
 }
 
@@ -371,6 +379,7 @@ fn handle_daily_toast(
             &mut commands,
             format!("Daily Challenge Complete! (Streak: {})", ev.streak),
             DAILY_TOAST_SECS,
+            ToastVariant::Celebration,
         );
     }
 }
@@ -384,6 +393,7 @@ fn handle_weekly_toast(
             &mut commands,
             format!("Weekly Goal: {}", ev.description),
             WEEKLY_TOAST_SECS,
+            ToastVariant::Celebration,
         );
     }
 }
@@ -397,6 +407,7 @@ fn handle_time_attack_toast(
             &mut commands,
             format!("Time Attack: {} win{}", ev.wins, if ev.wins == 1 { "" } else { "s" }),
             TIME_ATTACK_TOAST_SECS,
+            ToastVariant::Info,
         );
     }
 }
@@ -410,6 +421,7 @@ fn handle_challenge_toast(
             &mut commands,
             format!("Challenge {} cleared!", ev.previous_index.saturating_add(1)),
             CHALLENGE_TOAST_SECS,
+            ToastVariant::Celebration,
         );
     }
 }
@@ -429,11 +441,21 @@ fn handle_settings_toast(
         *last_music = Some(music);
         if sfx_changed {
             let pct = (sfx * 100.0).round() as i32;
-            spawn_toast(&mut commands, format!("SFX: {pct}%"), VOLUME_TOAST_SECS);
+            spawn_toast(
+                &mut commands,
+                format!("SFX: {pct}%"),
+                VOLUME_TOAST_SECS,
+                ToastVariant::Info,
+            );
         }
         if music_changed {
             let pct = (music * 100.0).round() as i32;
-            spawn_toast(&mut commands, format!("Music: {pct}%"), VOLUME_TOAST_SECS);
+            spawn_toast(
+                &mut commands,
+                format!("Music: {pct}%"),
+                VOLUME_TOAST_SECS,
+                ToastVariant::Info,
+            );
         }
     }
 }
@@ -449,7 +471,12 @@ fn handle_auto_complete_toast(
         if s.active {
             if !*shown {
                 *shown = true;
-                spawn_toast(&mut commands, "Auto-completing…".to_string(), 2.0);
+                spawn_toast(
+                    &mut commands,
+                    "Auto-completing…".to_string(),
+                    2.0,
+                    ToastVariant::Info,
+                );
             }
         } else {
             *shown = false;
@@ -513,37 +540,72 @@ fn drive_toast_display(
         }
 }
 
-/// Spawns a centered top-of-screen `ToastEntity` for the queued toast system.
+/// Visual variant of a toast — drives the 1px border accent per the
+/// design-system toast spec
+/// (`docs/ui-mockups/design-system.md` → "Toasts").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastVariant {
+    /// Neutral system message — teal border. Default for `InfoToastEvent`,
+    /// settings volume notifications, and the auto-complete announcement.
+    Info,
+    /// Caution / penalty — gold border. Currently unused by an in-engine
+    /// event; kept so future warning-flavoured toasts have a slot.
+    #[allow(dead_code)]
+    Warning,
+    /// Failure / rejected action — pink border. Currently unused; kept so
+    /// future error-flavoured toasts have a slot.
+    #[allow(dead_code)]
+    Error,
+    /// Reward / milestone — lavender border. Used for XP awards,
+    /// achievement unlocks, level-ups, daily/weekly/challenge completions.
+    Celebration,
+}
+
+impl ToastVariant {
+    /// Returns the 1px border accent for this variant per the design
+    /// system. Single source of truth — `spawn_toast` and
+    /// `spawn_queued_toast` both consume it so a future palette swap
+    /// only has to touch the token, never every call site.
+    fn border_color(self) -> Color {
+        match self {
+            ToastVariant::Info => STATE_INFO,
+            ToastVariant::Warning => STATE_WARNING,
+            ToastVariant::Error => STATE_DANGER,
+            ToastVariant::Celebration => ACCENT_SECONDARY,
+        }
+    }
+}
+
+/// Spawns a bottom-anchored `ToastEntity` for the queued toast system.
+///
+/// Queued toasts always carry [`ToastVariant::Info`] — the queue is fed
+/// by [`InfoToastEvent`] which is by definition neutral system info.
+/// Variants other than `Info` belong on the immediate-fire path
+/// ([`spawn_toast`]) where the call site knows the semantic intent.
 fn spawn_queued_toast(commands: &mut Commands, message: String) -> Entity {
-    commands
-        .spawn((
-            ToastEntity,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(15.0),
-                top: Val::Percent(8.0),
-                width: Val::Percent(70.0),
-                padding: UiRect::axes(VAL_SPACE_4, VAL_SPACE_2),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.60)),
-            ZIndex(Z_TOAST),
-        ))
-        .with_children(|b| {
-            b.spawn((
-                Text::new(message),
-                TextFont { font_size: 22.0, ..default() },
-                TextColor(TEXT_PRIMARY),
-            ));
-        })
-        .id()
+    spawn_toast_node(
+        commands,
+        ToastEntity,
+        message,
+        ToastVariant::Info,
+        // Slightly taller anchor than the immediate-fire path so a
+        // queued info banner doesn't collide with a celebration toast
+        // fired in the same frame.
+        Val::Percent(6.0),
+        Val::Percent(15.0),
+        Val::Percent(70.0),
+        UiRect::axes(VAL_SPACE_4, VAL_SPACE_2),
+    )
 }
 
 fn handle_xp_awarded_toast(mut commands: Commands, mut events: MessageReader<XpAwardedEvent>) {
     for ev in events.read() {
-        spawn_toast(&mut commands, format!("+{} XP", ev.amount), 3.0);
+        spawn_toast(
+            &mut commands,
+            format!("+{} XP", ev.amount),
+            3.0,
+            ToastVariant::Celebration,
+        );
     }
 }
 
@@ -569,33 +631,88 @@ fn tick_toasts(
     }
 }
 
-fn spawn_toast(commands: &mut Commands, message: String, duration_secs: f32) {
+/// Spawns a bottom-anchored fire-and-forget toast that despawns after
+/// `duration_secs`. The `variant` selects the 1px accent border color
+/// per the design-system toast spec.
+fn spawn_toast(
+    commands: &mut Commands,
+    message: String,
+    duration_secs: f32,
+    variant: ToastVariant,
+) {
+    spawn_toast_node(
+        commands,
+        (ToastOverlay, ToastTimer(duration_secs)),
+        message,
+        variant,
+        // Sits above the queued banner so a celebration toast spawned
+        // alongside a queued info message remains readable.
+        Val::Percent(14.0),
+        Val::Percent(25.0),
+        Val::Percent(50.0),
+        UiRect::axes(VAL_SPACE_4, VAL_SPACE_3),
+    );
+}
+
+/// Common toast-spawn primitive used by both the queued and the
+/// fire-and-forget paths. Centralizes the design-system contract so a
+/// future spec change (e.g. a different border thickness) is a
+/// one-line edit.
+///
+/// The Terminal toast spec from `design-system.md`:
+/// - Opaque [`BG_ELEVATED`] fill (no translucent dim).
+/// - 1px border in the variant's accent color.
+/// - [`TYPE_BODY_LG`] (18px) `TEXT_PRIMARY` caption — the spec calls
+///   for 16px, but the engine type scale only carries 14/18/26/40/...
+///   rungs; 18 is the closest rung that preserves the scale invariants
+///   tested in `ui_theme::tests`.
+/// - [`RADIUS_MD`] corners.
+/// - Bottom-anchored absolute position; `bottom_pct` differs between
+///   queued and immediate paths so they layer instead of overlap.
+// The 8-argument signature is intentional — these are the per-toast
+// layout values that genuinely differ between the queued and fire-and-
+// forget call sites. A struct wrapper would just rename the same data.
+#[allow(clippy::too_many_arguments)]
+fn spawn_toast_node<B: Bundle>(
+    commands: &mut Commands,
+    bundle: B,
+    message: String,
+    variant: ToastVariant,
+    bottom_pct: Val,
+    left_pct: Val,
+    width_pct: Val,
+    padding: UiRect,
+) -> Entity {
     commands
         .spawn((
-            ToastOverlay,
-            ToastTimer(duration_secs),
+            bundle,
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Percent(25.0),
-                top: Val::Percent(42.0),
-                width: Val::Percent(50.0),
-                padding: UiRect::axes(VAL_SPACE_4, VAL_SPACE_3),
+                left: left_pct,
+                bottom: bottom_pct,
+                width: width_pct,
+                padding,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
+            BackgroundColor(BG_ELEVATED),
+            BorderColor::all(variant.border_color()),
+            ZIndex(Z_TOAST),
         ))
         .with_children(|b| {
             b.spawn((
                 Text::new(message),
                 TextFont {
-                    font_size: 32.0,
+                    font_size: TYPE_BODY_LG,
                     ..default()
                 },
-                TextColor(ACCENT_PRIMARY),
+                TextColor(TEXT_PRIMARY),
             ));
-        });
+        })
+        .id()
 }
 
 #[cfg(test)]
@@ -701,6 +818,41 @@ mod tests {
     #[test]
     fn anim_speed_fast_is_less_than_normal() {
         assert!(anim_speed_to_secs(&AnimSpeed::Fast) < anim_speed_to_secs(&AnimSpeed::Normal));
+    }
+
+    /// Pin every `ToastVariant` to its design-system border colour.
+    /// A future palette swap that touches `STATE_INFO`, `STATE_WARNING`,
+    /// `STATE_DANGER`, or `ACCENT_SECONDARY` flows through this mapping
+    /// automatically; this test guards against accidental remappings.
+    #[test]
+    fn toast_variant_border_colors_match_design_tokens() {
+        assert_eq!(ToastVariant::Info.border_color(), STATE_INFO);
+        assert_eq!(ToastVariant::Warning.border_color(), STATE_WARNING);
+        assert_eq!(ToastVariant::Error.border_color(), STATE_DANGER);
+        assert_eq!(ToastVariant::Celebration.border_color(), ACCENT_SECONDARY);
+    }
+
+    /// Every `ToastVariant` resolves to a unique border colour so a
+    /// careless rebinding (e.g. accidentally setting `Warning` to the
+    /// same hue as `Info`) fails loudly. Pure check — does not run a
+    /// Bevy app.
+    #[test]
+    fn toast_variant_border_colors_are_distinct() {
+        let colors = [
+            ToastVariant::Info.border_color(),
+            ToastVariant::Warning.border_color(),
+            ToastVariant::Error.border_color(),
+            ToastVariant::Celebration.border_color(),
+        ];
+        for i in 0..colors.len() {
+            for j in (i + 1)..colors.len() {
+                assert_ne!(
+                    format!("{:?}", colors[i]),
+                    format!("{:?}", colors[j]),
+                    "variants {i} and {j} resolved to the same border colour",
+                );
+            }
+        }
     }
 
     #[test]
