@@ -19,7 +19,7 @@ use crate::settings_plugin::SettingsResource;
 use crate::layout::HUD_BAND_HEIGHT;
 use crate::ui_theme::{
     scaled_duration, ACCENT_PRIMARY, ACCENT_SECONDARY, BG_ELEVATED, BG_ELEVATED_HI,
-    BG_ELEVATED_PRESSED, BG_HUD_BAND, BORDER_SUBTLE, MOTION_SCORE_PULSE_SECS,
+    BG_ELEVATED_PRESSED, BG_HUD_BAND, BORDER_SUBTLE, HighContrastBorder, MOTION_SCORE_PULSE_SECS,
     MOTION_STREAK_FLOURISH_SECS, RADIUS_MD, RADIUS_SM, STATE_DANGER, STATE_INFO, STATE_SUCCESS,
     STATE_WARNING, STREAK_FLOURISH_PEAK_SCALE, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
     TYPE_BODY_LG, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3,
@@ -715,6 +715,7 @@ fn spawn_action_button<M: Component>(
         },
         BackgroundColor(ACTION_BTN_IDLE),
         BorderColor::all(BORDER_SUBTLE),
+        HighContrastBorder::with_default(BORDER_SUBTLE),
     ))
     .with_children(|b| {
         b.spawn((Text::new(label), font.clone(), TextColor(TEXT_PRIMARY)));

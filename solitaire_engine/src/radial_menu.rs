@@ -56,7 +56,8 @@ use crate::events::MoveRequestEvent;
 use crate::layout::{Layout, LayoutResource};
 use crate::pause_plugin::PausedResource;
 use crate::resources::{DragState, GameStateResource};
-use crate::ui_theme::{ACCENT_PRIMARY, BORDER_STRONG, BORDER_SUBTLE, STATE_SUCCESS};
+use crate::settings_plugin::SettingsResource;
+use crate::ui_theme::{ACCENT_PRIMARY, BORDER_STRONG, BORDER_SUBTLE, BORDER_SUBTLE_HC, STATE_SUCCESS};
 
 /// Sprite-space `Transform.z` for radial-menu overlay sprites.
 ///
@@ -533,8 +534,17 @@ fn radial_handle_release_or_cancel(
 
 /// Despawns and respawns the radial overlay sprites every frame the
 /// state is `Active`; despawns them when the state returns to `Idle`.
+///
+/// Reads [`SettingsResource`] so the focused-icon outline can boost to
+/// [`BORDER_SUBTLE_HC`] under high-contrast mode. Per-frame respawn is
+/// the simplest place to fold HC in: this is the only system that
+/// owns the rim sprite, so there's no parallel paint path to fight.
+/// ([`HighContrastBorder`](crate::ui_theme::HighContrastBorder) doesn't
+/// apply because the rim is a `Sprite`, not a UI node with
+/// `BorderColor`, and the entities don't persist across frames.)
 fn radial_redraw_overlay(
     state: Res<RightClickRadialState>,
+    settings: Option<Res<SettingsResource>>,
     mut commands: Commands,
     existing_icons: Query<Entity, With<RadialIcon>>,
     existing_centres: Query<Entity, With<RadialCentre>>,
@@ -569,13 +579,12 @@ fn radial_redraw_overlay(
         Transform::from_xyz(centre.x, centre.y, Z_RADIAL_MENU + 0.01),
     ));
 
+    let high_contrast = settings.as_ref().is_some_and(|s| s.0.high_contrast_mode);
     for (i, (_pile, anchor)) in legal_destinations.iter().enumerate() {
         let focused = *hovered_index == Some(i);
         let scale = if focused { RADIAL_HOVER_SCALE } else { 1.0 };
         let fill = if focused { STATE_SUCCESS } else { ACCENT_PRIMARY };
-        // Hovered icon gets a strong yellow rim; resting icons get a
-        // muted purple rim so the focused one reads as the obvious target.
-        let outline = if focused { BORDER_STRONG } else { BORDER_SUBTLE };
+        let outline = radial_rim_outline(focused, high_contrast);
 
         commands
             .spawn((
@@ -603,6 +612,27 @@ fn radial_redraw_overlay(
                     Transform::from_xyz(0.0, 0.0, -0.01),
                 ));
             });
+    }
+}
+
+/// Pure decision logic for the radial-icon rim outline colour.
+///
+/// Resting icons always carry [`BORDER_SUBTLE`] so the focused icon
+/// reads as the obvious target. Under high-contrast mode the focused
+/// rim boosts to [`BORDER_SUBTLE_HC`] (`#a0a0a0`) instead of
+/// [`BORDER_STRONG`] (`#505050`) — naive marker substitution via
+/// [`HighContrastBorder`](crate::ui_theme::HighContrastBorder) would
+/// invert the hierarchy because the resting colour
+/// (`#353535`) is darker than `BORDER_STRONG`. This shape keeps the
+/// focused rim *more* visible under HC, not less.
+///
+/// Factored out as a pure function so the truth-table is unit-testable
+/// without spinning up the per-frame respawn system.
+fn radial_rim_outline(focused: bool, high_contrast: bool) -> Color {
+    match (focused, high_contrast) {
+        (true, true) => BORDER_SUBTLE_HC,
+        (true, false) => BORDER_STRONG,
+        (false, _) => BORDER_SUBTLE,
     }
 }
 
@@ -939,5 +969,34 @@ mod tests {
             RightClickRadialState::Idle,
             "face-down cards must not open the radial"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // radial_rim_outline — accessibility / high-contrast truth table
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rim_resting_uses_subtle_outline_without_hc() {
+        assert_eq!(radial_rim_outline(false, false), BORDER_SUBTLE);
+    }
+
+    #[test]
+    fn rim_focused_uses_strong_outline_without_hc() {
+        assert_eq!(radial_rim_outline(true, false), BORDER_STRONG);
+    }
+
+    #[test]
+    fn rim_focused_boosts_to_subtle_hc_under_hc() {
+        assert_eq!(radial_rim_outline(true, true), BORDER_SUBTLE_HC);
+    }
+
+    #[test]
+    fn rim_resting_stays_subtle_under_hc_to_preserve_hierarchy() {
+        // Naive marker substitution would also flip the resting outline
+        // to BORDER_SUBTLE_HC, which is *lighter* than BORDER_STRONG —
+        // that would invert the focused/resting hierarchy. Holding the
+        // resting colour at BORDER_SUBTLE keeps the focused icon the
+        // obvious target under HC.
+        assert_eq!(radial_rim_outline(false, true), BORDER_SUBTLE);
     }
 }

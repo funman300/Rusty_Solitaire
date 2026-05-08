@@ -372,6 +372,7 @@ pub fn spawn_modal_button<M: Component>(
             },
             BackgroundColor(idle_bg(variant)),
             BorderColor::all(BORDER_SUBTLE),
+            HighContrastBorder::with_default(BORDER_SUBTLE),
         ))
         .with_children(|b| {
             b.spawn((Text::new(label.into()), font_label, TextColor(label_color)));
