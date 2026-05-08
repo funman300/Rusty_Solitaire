@@ -14,8 +14,20 @@ use crate::layout::{compute_layout, Layout, LayoutResource, LayoutSystem};
 #[cfg(test)]
 use crate::layout::TABLE_COLOUR;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
+use crate::ui_theme::TEXT_PRIMARY;
 #[cfg(test)]
 use solitaire_data::Theme;
+
+/// Default tint applied to every empty-pile marker sprite. Pure white
+/// at 8% alpha — soft enough that the marker reads as a "hint of a
+/// slot" rather than a panel, but visible against every felt
+/// background.
+///
+/// Re-exported as the source of truth for `cursor_plugin::MARKER_DEFAULT`,
+/// which used to duplicate the literal alongside a "kept in sync" doc
+/// comment. Pulling both call sites through this const makes drift a
+/// compile error instead of a stale comment.
+pub const PILE_MARKER_DEFAULT_COLOUR: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
 
 /// Holds pre-loaded [`Handle<Image>`]s for the 5 selectable table backgrounds.
 ///
@@ -218,7 +230,7 @@ pub fn suit_symbol(suit: &Suit) -> &'static str {
 }
 
 fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
-    let marker_colour = Color::srgba(1.0, 1.0, 1.0, 0.08);
+    let marker_colour = PILE_MARKER_DEFAULT_COLOUR;
     let marker_size = layout.card_size;
     let font_size = layout.card_size.x * 0.28;
 
@@ -254,7 +266,7 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
                 b.spawn((
                     Text2d::new("K"),
                     TextFont { font_size, ..default() },
-                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.35)),
+                    TextColor(TEXT_PRIMARY.with_alpha(0.35)),
                     Transform::from_xyz(0.0, 0.0, 0.1),
                 ));
             });
@@ -308,9 +320,14 @@ fn on_window_resized(
 // Task #6 — Hint pile-marker highlight
 // ---------------------------------------------------------------------------
 
-/// Gold tint applied to a `PileMarker` sprite when it is the current hint
-/// destination.
-const HINT_PILE_HIGHLIGHT_COLOUR: Color = Color::srgb(1.0, 0.85, 0.1);
+/// Gold tint applied to a `PileMarker` sprite when it is the current
+/// hint destination. Same RGB as the design-system [`STATE_WARNING`]
+/// token (`#ddb26f`) so the in-game "look here" colour is the same hue
+/// as every other warning/attention signal in the UI. Spelled as a
+/// literal because `Alpha::with_alpha` is not yet a `const` trait
+/// method on stable; the tracking test below pins the RGB to
+/// `STATE_WARNING` so a future palette swap can't drift the two apart.
+const HINT_PILE_HIGHLIGHT_COLOUR: Color = Color::srgb(0.867, 0.698, 0.435);
 
 /// Listens for `HintVisualEvent` and tints the matching `PileMarker` entity
 /// gold for 2 s, storing the original colour in `HintPileHighlight` so it can
@@ -480,11 +497,25 @@ mod tests {
     /// default pile marker colour so the player can see which pile is highlighted.
     #[test]
     fn hint_pile_highlight_colour_is_distinct_from_default() {
-        let default = Color::srgba(1.0, 1.0, 1.0, 0.08); // PILE_MARKER_DEFAULT_COLOUR
         assert_ne!(
-            HINT_PILE_HIGHLIGHT_COLOUR, default,
+            HINT_PILE_HIGHLIGHT_COLOUR, PILE_MARKER_DEFAULT_COLOUR,
             "HINT_PILE_HIGHLIGHT_COLOUR must differ from the default pile marker colour"
         );
+    }
+
+    /// `HINT_PILE_HIGHLIGHT_COLOUR` is spelled as a literal because
+    /// `Alpha::with_alpha` is not a `const` trait method on stable.
+    /// This test pins its RGB to the design-system `STATE_WARNING`
+    /// token so a future palette swap that updates the token but
+    /// forgets the hint highlight fails loudly here.
+    #[test]
+    fn hint_pile_highlight_rgb_tracks_state_warning_token() {
+        use crate::ui_theme::STATE_WARNING;
+        let hint = HINT_PILE_HIGHLIGHT_COLOUR.to_srgba();
+        let warning = STATE_WARNING.to_srgba();
+        assert!((hint.red - warning.red).abs() < 1e-6);
+        assert!((hint.green - warning.green).abs() < 1e-6);
+        assert!((hint.blue - warning.blue).abs() < 1e-6);
     }
 
     /// A freshly-created HintPileHighlight has a positive timer countdown.
@@ -492,7 +523,7 @@ mod tests {
     fn hint_pile_highlight_timer_starts_positive() {
         let h = HintPileHighlight {
             timer: 2.0,
-            original_color: Color::srgba(1.0, 1.0, 1.0, 0.08),
+            original_color: PILE_MARKER_DEFAULT_COLOUR,
         };
         assert!(
             h.timer > 0.0,
@@ -529,17 +560,22 @@ mod tests {
         );
     }
 
-    /// The gold hint colour must have a strong yellow component (r ≥ 0.9, g ≥ 0.8,
-    /// b ≤ 0.3) to be clearly visible as a "destination" indicator.
+    /// The hint colour must read as "gold-ish" — red dominant, green
+    /// close behind, blue noticeably lower — so a player intuitively
+    /// associates the highlight with attention/warning. Bounds are
+    /// loose enough to accommodate the Terminal palette's muted gold
+    /// (`STATE_WARNING`, `#ddb26f`) while still rejecting a stray
+    /// red, green, or neutral grey if someone refactors badly.
+    /// Exact-RGB tracking lives in
+    /// `hint_pile_highlight_rgb_tracks_state_warning_token`.
     #[test]
     fn hint_pile_highlight_colour_is_gold() {
-        // Extract linear components.  srgb(1.0, 0.85, 0.1) is the expected gold.
-        // We test the channel values rather than exact equality so future tweaks
-        // to the shade do not break the test, as long as the colour remains golden.
         let Srgba { red, green, blue, .. } = HINT_PILE_HIGHLIGHT_COLOUR.to_srgba();
-        assert!(red >= 0.9, "gold hint colour must have red ≥ 0.9, got {red}");
-        assert!(green >= 0.7, "gold hint colour must have green ≥ 0.7, got {green}");
-        assert!(blue <= 0.3, "gold hint colour must have blue ≤ 0.3, got {blue}");
+        assert!(red >= 0.7, "gold hint colour must have red ≥ 0.7, got {red}");
+        assert!(green >= 0.5, "gold hint colour must have green ≥ 0.5, got {green}");
+        assert!(blue <= 0.6, "gold hint colour must have blue ≤ 0.6, got {blue}");
+        assert!(red > blue, "gold hint colour must be warmer than cool, got r={red} b={blue}");
+        assert!(green > blue, "gold hint colour must be warmer than cool, got g={green} b={blue}");
     }
 
     #[test]

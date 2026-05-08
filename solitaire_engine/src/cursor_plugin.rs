@@ -41,14 +41,16 @@ use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 use crate::card_plugin::{RightClickHighlight, TABLEAU_FAN_FRAC};
 use crate::layout::{Layout, LayoutResource};
 use crate::resources::{DragState, GameStateResource};
-use crate::table_plugin::PileMarker;
+use crate::table_plugin::{PileMarker, PILE_MARKER_DEFAULT_COLOUR};
 use crate::ui_theme::{
     DROP_TARGET_FILL, DROP_TARGET_OUTLINE, DROP_TARGET_OUTLINE_PX, Z_DROP_OVERLAY,
 };
 
-/// Semi-transparent white that `table_plugin` uses for idle pile markers.
-/// Kept in sync with the `marker_colour` constant there.
-const MARKER_DEFAULT: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
+/// Idle pile-marker tint — re-exported from `table_plugin` so the
+/// "valid drop" toggle in this plugin and the marker spawn in
+/// `table_plugin` cannot drift apart. Was previously a duplicated
+/// literal kept in sync via doc comment.
+const MARKER_DEFAULT: Color = PILE_MARKER_DEFAULT_COLOUR;
 
 /// Lime tint applied to pile markers that are valid drop targets during
 /// a drag. Same RGB as the design-system [`STATE_SUCCESS`] token at 55%
