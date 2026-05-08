@@ -143,6 +143,58 @@ extension is incidental. (Same shape as the "RUSTY SOLITAIRE"
 wordmark deviation noted under `cacb19c` — the mockup leaked the
 repo name; the actual product is "Solitaire Quest".)
 
+### `54005d5` `feat(engine): add GAME #YYYY-DDD caption beneath the replay headline`
+
+Adds the right-anchored game-identifier piece of the replay-overlay
+mockup, adapted to live *under* the existing "▌ replay" headline as
+a `TYPE_CAPTION` (11 px) / `TEXT_SECONDARY` subtitle. Format is
+`GAME #{year}-{ordinal:03}` (e.g. `GAME #2026-122` for a replay
+recorded 2026-05-02) — year + chrono ordinal gives a compact,
+monotonically-increasing identifier matching the mockup's
+`GAME #2024-127` motif. New `ReplayOverlayGameCaption` marker, new
+pure helper `format_game_caption(state) -> Option<String>` (None
+for Inactive / Completed since the replay is consumed in those
+branches; spawn-time fall-through to empty string).
+
+**Layout impact:** `BANNER_HEIGHT` bumped 48 → 60 px so the new
+left column (headline + 2 px gap + caption ≈ 39 px content) fits
+under the scrub bar with room to spare. +12 px banner mass is the
+deliberate cost of the new content; no other plugin observes
+`BANNER_HEIGHT` so the change is local.
+
+Two new tests (1180 → 1182): `format_game_caption_covers_state_corners`
+pins the three branches plus the zero-pad-to-3-digits invariant
+for early-January ordinals; `overlay_game_caption_shows_replay_date`
+drives `ReplayPlaybackState` end-to-end.
+
+### `e080b49` `feat(engine): restyle replay progress text as Terminal MOVE chip`
+
+Closes the centre-text half of the replay-overlay enrichments. The
+plain "Move N of M" text becomes a 1px `ACCENT_PRIMARY`-bordered
+chip containing "MOVE N/M" — uppercase + slash separator reads as
+a Terminal output line and matches the floating-chip motif in
+`docs/ui-mockups/replay-overlay-mobile.html`. The chip lives
+in-banner rather than floating above the focused card (the
+screen-takeover treatment that requires plumbing cursor → card
+identity remains deferred).
+
+**Implementation note:** `BorderColor` in Bevy 0.18 is a per-side
+struct, not a tuple — `BorderColor::all(ACCENT_PRIMARY)` is the
+correct constructor. Worth pinning for next time we touch a
+border-painted UI surface. The `ReplayOverlayProgressText` marker
+stays on the inner Text rather than the new chip Node so
+`update_progress_text` keeps repainting unchanged — a deliberate
+"markers belong on the entity that updates change" choice.
+
+Test count unchanged (1182); `overlay_progress_text_reflects_cursor`
+swapped its assertion from "Move 5 of 10" to "MOVE 5/10".
+
+This pair (`54005d5` + `e080b49`) closes Option C from the
+SESSION_HANDOFF Resume prompt's banner-local enrichments. Floating-
+chip-above-focused-card and the full screen-takeover redesign
+remain — both data-layer or cross-plugin and intentionally still
+open.
+
 ## What shipped in v0.20.0 (frozen at `41a009a`)
 
 ### Terminal visual-identity port
@@ -253,17 +305,18 @@ reads from it, so swapping the palette is now a one-file edit:
   skipped this because a per-element pulse fights the global
   `SplashFadable` fade timeline. Either layer the pulse on top
   of the fade (multiply alphas) or accept the static cursor.
-- **Replay-overlay enrichments beyond the scrub bar.** The scrub
-  bar (`c84d9f4`) and the `▌ replay` cursor-block label
-  (`6204db8`) are the *minimum* of the mockup
-  (`docs/ui-mockups/replay-overlay-mobile.html`). Tractable
-  banner additions still open: a right-aligned `GAME #N · MOVES`
-  caption (mirrors the `▌replay.tsx` left-aligned filename motif),
-  a `MOVE 47/87` chip floating above the focused card during
-  playback (would need to thread the cursor through to the card
-  layer). The full mockup's screen-takeover treatment — mini-
-  tableau preview, playback controls, move-log scroll, WIN MOVE
-  marker on the scrub bar — is a multi-session redesign with
+- **Replay-overlay enrichments beyond the scrub bar.** Banner-local
+  pieces of the mockup (`docs/ui-mockups/replay-overlay-mobile.html`)
+  all shipped: scrub bar (`c84d9f4`), `▌ replay` cursor-block label
+  (`6204db8`), `GAME #YYYY-DDD` caption (`54005d5`), `MOVE N/M`
+  chip restyle (`e080b49`). What's still open are the cross-plugin
+  / data-layer pieces: a `MOVE N/M` chip *floating above the
+  focused card* during playback (would need to thread the cursor
+  through to the card layer — `update_progress_text` writes the
+  banner chip but the card-position lookup belongs in `card_plugin`).
+  The full mockup's screen-takeover treatment — mini-tableau
+  preview, playback controls, move-log scroll, WIN MOVE marker on
+  the scrub bar — is a multi-session redesign with
   data-layer impact (move-log scroller; the WIN MOVE marker
   needs a `win_move_index` field on `Replay` that doesn't yet
   exist). Banner-overlay behaviour is intentionally preserved
@@ -375,7 +428,8 @@ boot-screen port, c84d9f4 replay scrub-bar finish, 6204db8 replay
 banner ▌ cursor-block label, plus any handoff edits since).
 
 State: HEAD locally — see `git rev-parse HEAD`. Working tree is
-clean. 1180 tests pass, clippy clean.
+clean. All workspace tests pass (~1180+; check with
+`cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -402,12 +456,14 @@ DECISION TO ASK THE PLAYER FIRST:
      tiled-pattern asset or shader; pulse needs to layer on top
      of the SplashFadable timeline). Pure polish; no behaviour
      change.
-  C. Replay-overlay enrichments beyond the scrub bar. Tractable
-     banner additions still open: a right-aligned
-     `GAME #N · MOVES` caption, a `MOVE 47/87` chip floating
-     above the focused card during playback. Stops short of the
-     screen-takeover redesign (move-log scroll, mini tableau,
-     WIN MOVE marker — multi-session, data-layer impact).
+  C. *Closed by `54005d5` + `e080b49`.* Banner-local replay-overlay
+     pieces all shipped (scrub bar, ▌ label, GAME caption, MOVE
+     chip). Remaining are cross-plugin (floating MOVE chip above
+     the focused card — needs cursor → card-position plumbing) or
+     multi-session (full screen-takeover redesign — move-log
+     scroll, mini tableau, WIN MOVE marker, data-layer impact).
+     Either belongs in its own decision tree the next time replay
+     work surfaces.
   D. Card-face artwork regeneration. Generate Terminal-aesthetic
      card PNGs (dark face, light suit pips), then migrate
      CARD_FACE_COLOUR / RED_SUIT_COLOUR / BLACK_SUIT_COLOUR /
