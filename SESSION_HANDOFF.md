@@ -1,7 +1,8 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — **v0.21.2 cut and tagged at `f23df3b`**,
-working tree clean, all post-tag work pushed to origin.
+**Last updated:** 2026-05-08 — v0.21.2 cut and tagged at `f23df3b`;
+post-cut Toast Warning wiring at `279e23d`. Working tree clean,
+all post-tag work pushed to origin.
 
 v0.21.2 is a patch release for the post-v0.21.1 polish work:
 extends accessibility (full HC chrome rollout across 8 surfaces;
@@ -18,24 +19,38 @@ resume.
 ## Status at pause
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `f23df3b`; any post-cut docs edits ride on top of that.
+  `f23df3b`; post-cut docs edits and the Toast Warning wiring
+  (`279e23d`) ride on top of that.
 - **HEAD on origin:** matches local. v0.21.2 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1195 passing / 0 failing** across the workspace
-  (net +3 from v0.21.1's 1192 baseline). Detail in
-  `CHANGELOG.md` § [0.21.2] § Stats.
+- **Tests:** **1203 passing / 0 failing** across the workspace
+  (net +8 from the v0.21.2 cut: 7 unit tests covering
+  `compute_expiry_warning_minutes` thresholds + 1 in-Bevy
+  idempotence test for `check_daily_expiry_warning`).
 - **Tags on origin:** `v0.9.0` through `v0.21.2`. v0.21.2 is on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
   `04f9bf9`; v0.20.0 stays on `41a009a`.
 
 ## Since the v0.21.2 cut
 
-No threads in flight. Working tree clean as of 2026-05-08. New
-work since the cut would land here as commit narratives; for
-the v0.21.2 contents themselves, see `CHANGELOG.md` § [0.21.2].
+- **`279e23d` — Toast Warning variant wired.** First in-engine
+  consumer of `ToastVariant::Warning`: a 4 s amber-bordered
+  toast that fires once per daily-challenge date when the
+  player is within 30 min of UTC midnight reset and hasn't yet
+  completed today's challenge. Mirrors the v0.21.2 Toast Error
+  pattern — a domain message (`WarningToastEvent(String)`) is
+  the contract between the daily plugin and the animation
+  plugin's spawn handler. Suppression decided by a pure helper
+  (`compute_expiry_warning_minutes`) that's exhaustively tested
+  without an `App`. After this commit every `ToastVariant`
+  (Info / Warning / Error / Celebration) has at least one real
+  driver — the variant enum is fully load-bearing.
+
+For the v0.21.2 contents themselves, see `CHANGELOG.md` §
+[0.21.2].
 
 ## Open punch list
 
@@ -83,12 +98,13 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   `Text2d` entity sibling to the banner overlay; uses the same
   `LayoutResource` pile coordinates so it survives window
   resizes without UI/camera math.
-- **Toast Warning variant wiring.** `ToastVariant::Warning`
-  (gold) still has no in-engine consumer post-v0.21.2. Most
-  likely candidate driver: a daily-challenge-expiry warning
-  when < 30 minutes from midnight UTC reset and the player
-  hasn't completed the challenge. Needs a ticking-timer system
-  + comparison against daily-challenge state.
+- *Toast Warning variant wiring — closed 2026-05-08 by `279e23d`.*
+  Daily-challenge-expiry toast fires once per `daily.date` when
+  within 30 min of UTC midnight reset and today is incomplete.
+  `ToastVariant` is now fully load-bearing (every variant has at
+  least one real driver). Future Warning drivers can either reuse
+  the generic `WarningToastEvent(String)` carrier or add their
+  own domain message + `animation_plugin` handler.
 - *Toast Error variant wiring — closed 2026-05-08 by `68d50b5`.*
   `MoveRejectedEvent` now fires a 2-second pink-bordered
   "Invalid move" toast as the third leg of the
@@ -217,11 +233,13 @@ Working directory: <Rusty_Solitaire clone path on this machine>.
 Branch: master. v0.21.2 is tagged at f23df3b (cut 2026-05-08, a
 patch release rolling up accessibility extensions, replay polish,
 and the first real `ToastVariant::Error` consumer). v0.21.1 stays
-at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
-CHANGELOG.md § [0.21.2] for full detail.
+at daa655a, v0.21.0 at 04f9bf9. Working tree clean. Toast Warning
+variant wired post-cut at `279e23d` — every `ToastVariant` now has
+at least one real driver. See CHANGELOG.md § [0.21.2] + the
+"Since the v0.21.2 cut" section above for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. All workspace tests
-pass (1195+; check with `cargo test --workspace`), clippy clean.
+pass (1203+; check with `cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -250,18 +268,12 @@ DECISION TO ASK THE PLAYER FIRST:
      marker on the scrub bar (needs new `Replay::win_move_index`
      field), playback controls. The smaller floating-MOVE-chip
      piece of B already shipped in v0.21.2 (`2fb2d63`).
-  C. Toast Warning variant wiring — pick a real driver. Most
-     likely candidate: a daily-challenge-expiry warning when
-     < 30 minutes from midnight UTC reset and the player hasn't
-     completed the challenge. Needs a ticking-timer system +
-     daily-challenge state comparison. (Toast Error already
-     wired in v0.21.2 for invalid-move feedback.)
-  D. Phase 8 (sync) — local storage scaffolding, self-hosted
+  C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
      up several Phase Android dependencies (Keystore,
      ClipboardManager).
-  E. HC + reduce-motion for dynamic-paint sites — v0.21.2
+  D. HC + reduce-motion for dynamic-paint sites — v0.21.2
      finished HC for *static-border* surfaces (8 tagged); the
      dynamic-paint sites (HUD action buttons, modal buttons,
      radial menu rim) stay un-tagged because their existing
@@ -292,5 +304,5 @@ WORKFLOW NOTES:
     a "this does X" doc comment, verify the code actually does
     X and add a test if not. Two layers, two checks.
 
-OPEN AT THE START: ask which of A–E. Don't pick unilaterally.
+OPEN AT THE START: ask which of A–D. Don't pick unilaterally.
 ```
