@@ -1,23 +1,21 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-07 — v0.20.0 cut and tagged at `41a009a`,
-several post-cut commits sit on top of the tag (see `git log
---oneline origin/master..HEAD` for the live list), working tree is
-clean.
+**Last updated:** 2026-05-08 — v0.20.0 cut and tagged at `41a009a`,
+all post-cut commits pushed to origin (HEAD = `dd101b3`), working
+tree clean.
 The cut itself shipped two through-lines: a full **Terminal visual-
 identity port** (token system, modal scaffold, gameplay-feedback,
 toasts, table / card chrome, splash cursor) and the **Android
 persistence shim** that closes the `dirs::data_dir() = None` pitfall
-flagged in CLAUDE.md §10. Since the cut, four more pieces landed:
-the rules-based desktop-adaptation spec (closes the spec gap
-exposed when we noticed 23 of 24 mockups were mobile-only), the
-splash boot-screen port (full mockup-spec splash with header, boot
-log, progress bar, palette swatches, version footer + the
-`SplashFadable` scaffold refactor), the replay-overlay scrub bar
-(1 px cyan fill at the bottom of the banner, mirroring
-cursor / total), and the replay banner label port to the
-`▌ replay` cursor-block treatment that aligns it with the splash
-boot-screen idiom.
+flagged in CLAUDE.md §10. Since the cut, the post-tag work split
+into two arcs: (1) splash boot-screen port + replay-overlay
+banner enrichments + desktop-adaptation spec — closing Resume-prompt
+Options B and C (see "Since the v0.20.0 cut" entries below); and
+(2) **the card-face artwork regeneration arc — Option D, closed
+2026-05-08** — full Terminal cards rendering on every face, plus
+three follow-up fixes that surfaced during sign-off (default-theme
+SVG override, table backgrounds, top-bar overlap), plus a
+glyph-orientation tweak (no 180° inverted-corner rotation).
 
 ## Status at pause
 
@@ -25,22 +23,21 @@ boot-screen idiom.
   entry below names the latest substantive commit; this status line
   intentionally avoids hard-coding the SHA so a docs-only edit
   doesn't immediately stale the handoff.
-- **HEAD on origin:** `41a009a` (the v0.20.0 cut). Local master is
-  ahead of origin by the post-cut commits enumerated under "Since
-  the v0.20.0 cut" below; run `git log --oneline origin/master..HEAD`
-  for the live count. Decide whether to roll these into
-  v0.20.1 / v0.21.0-candidates before pushing.
+- **HEAD on origin:** matches local. All post-cut commits pushed
+  through `dd101b3`. Decide whether to roll the post-tag work
+  into v0.20.1 / v0.21.0-candidates the next time a release is cut.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1180 passing / 0 failing** across the workspace.
-  Up from 1176 at the v0.20.0 cut: the splash boot-screen port
-  added two (`splash_renders_terminal_boot_screen_content`,
-  `fadables_start_transparent_and_reach_full_alpha`) and the
-  replay scrub-bar finish added two more
-  (`scrub_pct_covers_state_corners`,
-  `overlay_scrub_fill_tracks_cursor`).
+- **Tests:** **1184 passing / 0 failing** across the workspace.
+  Net delta from the 1180 baseline: splash polish added two
+  (`build_scanline_image_has_expected_2x2_rgba_bytes`,
+  `scanline_overlay_spawns_and_fades_with_splash`); the
+  card-face migration added one (`card_face_svg_pin` integration
+  test) and consolidated two (`face_colour` CBM tests folded
+  into `text_colour` CBM tests, net −2 then +1 from pin);
+  call it +4 net.
 - **Tags on origin:** `v0.9.0` through `v0.20.0`. v0.20.0 is on
   `41a009a`.
 
@@ -266,6 +263,77 @@ This pair (`29136d8` + `a27cf5a`) closes Option B from the
 SESSION_HANDOFF Resume prompt — both splash polish pieces now
 shipped.
 
+### `5623368`…`dd101b3` — Option D card-face migration arc
+
+Closed 2026-05-08 across nine commits. The full Terminal card
+artwork now renders end-to-end. Detail breakdown lives in the
+"Visual-identity follow-ups" punch-list entry below; the short
+version:
+
+- Migration plan + pipeline tooling: `5623368` (plan doc),
+  `3a4bb63` (single-card PoC proving the `usvg`/`resvg` pipeline
+  at per-card grain), `babe5cc` (full
+  `solitaire_engine/examples/card_face_generator.rs` example
+  emitting 52 faces + 5 backs into `assets/cards/`), `48b28d2`
+  (the `card_face_svg_pin` integration test pinning rasteriser
+  output via inline FNV-1a hashing of raw RGBA8 bytes — the
+  pin's bootstrap pattern, "empty `EXPECTED` → run → paste",
+  is the maintenance interface for future intentional changes).
+- Lockstep step 4+5: `e8bf9d7`. New PNG bytes + the 5
+  `card_plugin` constants (`CARD_FACE_COLOUR`,
+  `RED_SUIT_COLOUR`, `BLACK_SUIT_COLOUR`,
+  `CARD_FACE_COLOUR_RED_CBM` → `RED_SUIT_COLOUR_CBM`,
+  `card_back_colour`) + signature shifts in one commit.
+  `face_colour` deleted — Terminal face is uniformly
+  `CARD_FACE_COLOUR` regardless of CBM, so the function
+  collapsed to a constant. `text_colour` gained a
+  `color_blind: bool` parameter (red→cyan suit-glyph swap when
+  CBM is on). Four `face_colour` CBM tests folded into two
+  `text_colour` CBM tests in lockstep.
+- Three follow-ups that surfaced during sign-off, all from the
+  same "fallback path the migration walked past" pattern:
+  `a14200a` regenerated the embedded **default-theme SVGs** at
+  `solitaire_engine/assets/themes/default/*.svg`; those bytes
+  `include_bytes!()`-embed into the binary and override
+  `assets/cards/*.png` at startup, so the PNG migration alone
+  didn't change what production rendered. `8719f77`
+  regenerated `assets/backgrounds/bg_*.png` to flat Terminal
+  near-black (5 solid-colour PNGs via a new
+  `solitaire_engine/examples/background_generator.rs` example).
+  `ae84dc1` cleared the **top-bar overlap** at portrait/narrow
+  window widths by swapping the action-button row's hardcoded
+  `font_size: 16.0` to `TYPE_BODY` (a typography-migration
+  miss) and stepping horizontal padding from `VAL_SPACE_3`
+  to `VAL_SPACE_2`.
+- Glyph-rendering fix: `af414b6`. The bundled `FiraMono`
+  doesn't carry usable U+2660-2666 glyphs at the requested
+  size — `usvg` was silently substituting tiny "tofu" marks.
+  Switched suit glyphs from `<text>` elements to inline SVG
+  `<path>` elements via a new `suit_path_d` helper. Path-based
+  rendering bypasses the font system entirely; same bytes on
+  every machine, no fontdb dependency, no substitution risk.
+  Same path data renders correctly whether filled (♥ ♠) or
+  outlined (♦ ♣ — the always-on color-blind glyph
+  differentiation).
+- Glyph-orientation tweak: `dd101b3`. Removed the 180° rotation
+  from the bottom-right large suit glyph at user request. Both
+  glyphs now render upright. `design-system.md` § Game Cards
+  line 220 updated in lockstep — the deliberate deviation from
+  the traditional inverted-corner-indicator convention is
+  documented in the spec, not just the code.
+
+The pin test fired exactly twice during this arc (once for the
+text→path switch, once for the unrotation) and rebaselined
+cleanly each time via the empty-then-paste pattern. The 5
+`back_*` hashes stayed identical across both rebaselines —
+secondary signal that the FNV-1a fingerprinting is purely
+deterministic on rasteriser output.
+
+This arc closes Option D from the SESSION_HANDOFF Resume prompt
+and effectively completes the Terminal visual-identity port —
+only the toast warning/error variant slots remain wired-but-
+unused.
+
 ## What shipped in v0.20.0 (frozen at `41a009a`)
 
 ### Terminal visual-identity port
@@ -356,16 +424,51 @@ reads from it, so swapping the palette is now a one-file edit:
 
 ### Visual-identity follow-ups (opened by v0.20.0's port)
 
-- **Card-face / suit / card-back artwork regeneration.** The
-  Terminal spec calls for dark `#1a1a1a` cards with light suit
+- *Card-face / suit / card-back artwork regeneration — closed
+  2026-05-08 by the commit chain `5623368` → `dd101b3`.* The
+  Terminal spec called for dark `#1a1a1a` cards with light suit
   pips (pink for hearts/diamonds, foreground gray for spades/
-  clubs); the runtime path still renders the legacy white-card
-  PNG artwork. The fallback constants in `card_plugin`
-  (`CARD_FACE_COLOUR`, `RED_SUIT_COLOUR`, `BLACK_SUIT_COLOUR`,
-  `CARD_FACE_COLOUR_RED_CBM`, `card_back_colour` palette) are
-  intentionally unmigrated and should swap in lockstep with the
-  artwork. Largest visible payoff remaining in the visual-
-  identity arc.
+  clubs). Closed across nine commits over two arcs:
+  - **Plan + tooling (`5623368`–`48b28d2`):** migration plan
+    doc, single-card PoC, full `card_face_generator` example
+    (52 faces + 5 backs into `assets/cards/`), and the
+    `card_face_svg_pin` integration test pinning rasteriser
+    output via FNV-1a so future `usvg`/`resvg` upgrades surface
+    as test failures rather than silent visual drift.
+  - **Lockstep step 4+5 (`e8bf9d7`):** PNGs + the 5 `card_plugin`
+    constants + signature shifts in one commit.
+    `CARD_FACE_COLOUR_RED_CBM` renamed to `RED_SUIT_COLOUR_CBM`
+    and repurposed from a face-tint to a suit-glyph swap (the
+    Terminal face is uniform `CARD_FACE_COLOUR` regardless of
+    CBM; CBM only swaps red suits to cyan in the glyph itself).
+    `face_colour` deleted, `text_colour` gained a `color_blind`
+    parameter.
+  - **Three follow-ups that surfaced during sign-off:**
+    `a14200a` regenerated the **default-theme SVGs** at
+    `solitaire_engine/assets/themes/default/*.svg` — those
+    `include_bytes!()`-embed into the binary and override
+    `assets/cards/*.png` at runtime, so the PNG migration alone
+    didn't change what production rendered. `8719f77`
+    regenerated `assets/backgrounds/bg_*.png` to flat Terminal
+    near-black (5 solid-colour PNGs via a new
+    `background_generator` example). `ae84dc1` cleared the
+    **top-bar overlap** at portrait/narrow window widths by
+    swapping the action-button row's hardcoded `font_size: 16.0`
+    to `TYPE_BODY` and stepping horizontal padding from
+    `VAL_SPACE_3` to `VAL_SPACE_2`.
+  - **Glyph-rendering fix (`af414b6`):** suit glyphs render as
+    inline SVG paths (not `<text>`) because the bundled
+    `FiraMono` doesn't carry usable U+2660-2666 at the
+    requested size — `usvg` was silently substituting tiny
+    "tofu" marks. Path-based rendering bypasses the font system
+    entirely; same bytes on every machine. The pin test
+    rebaselined cleanly via the empty-then-paste pattern.
+  - **Glyph-orientation tweak (`dd101b3`):** removed the 180°
+    rotation from the bottom-right large suit glyph at user
+    request — both glyphs now render in the same upright
+    orientation. `design-system.md` § Game Cards line 220
+    updated in lockstep to document the deliberate deviation
+    from the traditional inverted-corner-indicator convention.
 - *Splash boot-loader scanline overlay — closed by `a27cf5a`.*
   Runtime-generated 2 × 2 RGBA8 texture tiled via
   `NodeImageMode::Tiled`; per-pixel alpha × tint alpha gives
@@ -489,12 +592,14 @@ commits into v0.20.1).
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.20.0 is tagged at 41a009a; several post-cut
-commits sit on top locally and have NOT been pushed yet — run
-`git log --oneline origin/master..HEAD` for the live list (current
-substantives: 39b8496 desktop-adaptation spec, cacb19c splash
-boot-screen port, c84d9f4 replay scrub-bar finish, 6204db8 replay
-banner ▌ cursor-block label, plus any handoff edits since).
+Branch: master. v0.20.0 is tagged at 41a009a; the post-cut work
+through dd101b3 is pushed to origin (Options B, C, D all closed).
+Run `git log --oneline 41a009a..HEAD` to see what landed since the
+tag — substantives: desktop-adaptation spec, splash boot-screen
+port, replay-overlay banner enrichments, and the full card-face
+artwork arc (52 faces + 5 backs as Terminal SVG-rasterised PNGs,
+default-theme SVGs in lockstep, table backgrounds flattened,
+top-bar layout fix, glyph orientation upright).
 
 State: HEAD locally — see `git rev-parse HEAD`. Working tree is
 clean. All workspace tests pass (~1180+; check with
@@ -531,11 +636,18 @@ DECISION TO ASK THE PLAYER FIRST:
      scroll, mini tableau, WIN MOVE marker, data-layer impact).
      Either belongs in its own decision tree the next time replay
      work surfaces.
-  D. Card-face artwork regeneration. Generate Terminal-aesthetic
-     card PNGs (dark face, light suit pips), then migrate
-     CARD_FACE_COLOUR / RED_SUIT_COLOUR / BLACK_SUIT_COLOUR /
-     CARD_FACE_COLOUR_RED_CBM in lockstep. Largest visible
-     payoff remaining in the visual-identity arc. Multi-session.
+  D. *Closed 2026-05-08 by `5623368`…`dd101b3`.* The full
+     card-face / suit / card-back / default-theme / table-
+     background / top-bar / glyph-orientation arc landed across
+     nine commits. Terminal cards rendering on every face (dark
+     `#1a1a1a` background, pink/gray suit glyphs as inline SVG
+     paths, scanline-pattern cyan-accent backs); both rendering
+     paths (`assets/cards/*.png` and the bundled-default theme
+     SVGs at `solitaire_engine/assets/themes/default/*.svg`) in
+     lockstep; pin test (`card_face_svg_pin`) guards against
+     future rasteriser drift. Visual-identity arc effectively
+     complete — only the toast warning/error variant slots
+     remain wired-but-unused.
   E. App icon round — re-run artwork/Icon Export.html (the
      export PNGs are not currently in `artwork/`), then wire
      Window::icon + generate .icns / .ico. Half-day task. No
