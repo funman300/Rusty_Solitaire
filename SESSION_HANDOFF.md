@@ -1,73 +1,45 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — v0.21.2 cut and tagged at `f23df3b`;
-post-cut work shipped: Toast Warning (`279e23d`) and the HC
-dynamic-paint rollout (`c153363`). Working tree clean, all
-post-tag work pushed to origin.
+**Last updated:** 2026-05-08 — **v0.21.3 cut and tagged at
+`3d92a91`**, working tree clean, all post-tag work pushed to
+origin.
 
-v0.21.2 is a patch release for the post-v0.21.1 polish work:
-extends accessibility (full HC chrome rollout across 8 surfaces;
-splash reduce-motion gating on scanline + cursor pulse), adds a
-floating MOVE chip above the destination card during replay
-playback, and lights up the first real consumer of
-`ToastVariant::Error` (a "Invalid move" toast as the third leg
-of the existing audio + visual rejection-feedback stool).
+v0.21.3 is a patch release with one through-line: **accessibility
+arc closure**. v0.21.2 explicitly carved out "dynamic-paint sites"
+(HUD action buttons, modal buttons, radial menu rim) on the
+assumption that their existing paint cycles would race the
+central `update_high_contrast_borders` system. v0.21.3 walks the
+actual code, finds the carve-out was over-cautious, and closes
+it. Bonus: the first real consumer of `ToastVariant::Warning`
+also lands here, making the `ToastVariant` enum fully load-bearing
+(every variant has at least one driver).
 
-Full v0.21.2 detail lives in `CHANGELOG.md` § [0.21.2]. This
+Full v0.21.3 detail lives in `CHANGELOG.md` § [0.21.3]. This
 file from here on focuses on what's *open* post-cut and how to
 resume.
 
 ## Status at pause
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `f23df3b`; post-cut work (`279e23d` Toast Warning, `c153363`
-  HC dynamic-paint rollout) rides on top of that.
-- **HEAD on origin:** matches local. v0.21.2 is fully on origin.
+  `3d92a91`; any post-cut docs edits ride on top of that.
+- **HEAD on origin:** matches local. v0.21.3 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
 - **Tests:** **1207 passing / 0 failing** across the workspace
-  (net +12 from the v0.21.2 cut: 8 from Toast Warning wiring;
-  4 from the radial-rim HC truth-table).
-- **Tags on origin:** `v0.9.0` through `v0.21.2`. v0.21.2 is on
-  `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
-  `04f9bf9`; v0.20.0 stays on `41a009a`.
+  (net +12 from v0.21.2's 1195 baseline). Detail in
+  `CHANGELOG.md` § [0.21.3] § Stats.
+- **Tags on origin:** `v0.9.0` through `v0.21.3`. v0.21.3 is on
+  `3d92a91`; v0.21.2 stays on `f23df3b`; v0.21.1 stays on
+  `daa655a`; v0.21.0 stays on `04f9bf9`; v0.20.0 stays on
+  `41a009a`.
 
-## Since the v0.21.2 cut
+## Since the v0.21.3 cut
 
-- **`279e23d` — Toast Warning variant wired.** First in-engine
-  consumer of `ToastVariant::Warning`: a 4 s amber-bordered
-  toast that fires once per daily-challenge date when the
-  player is within 30 min of UTC midnight reset and hasn't yet
-  completed today's challenge. Mirrors the v0.21.2 Toast Error
-  pattern — a domain message (`WarningToastEvent(String)`) is
-  the contract between the daily plugin and the animation
-  plugin's spawn handler. Suppression decided by a pure helper
-  (`compute_expiry_warning_minutes`) that's exhaustively tested
-  without an `App`. After this commit every `ToastVariant`
-  (Info / Warning / Error / Celebration) has at least one real
-  driver — the variant enum is fully load-bearing.
-- **`c153363` — HC rollout to the dynamic-paint sites.** Closes
-  the v0.21.2 carve-out. Re-reading the code revealed only one
-  of three "dynamic-paint" sites was actually a border-paint
-  cycle — HUD action buttons and modal buttons paint
-  *backgrounds* dynamically with static borders, so they take
-  the existing `HighContrastBorder` marker pattern cleanly. The
-  radial menu rim is the only true dynamic-painter (full
-  per-frame respawn of `Sprite` entities); HC is folded into
-  the spawn there with a pure helper (`radial_rim_outline`)
-  that boosts the *focused* rim to `BORDER_SUBTLE_HC` under HC
-  rather than `BORDER_STRONG` — naive marker substitution would
-  invert the focused-vs-resting hierarchy because
-  `BORDER_SUBTLE_HC` (#a0a0a0) is lighter than `BORDER_STRONG`
-  (#505050). After this commit, every UI surface in the v0.21.x
-  accessibility arc either carries the marker or has HC folded
-  into its own spawn cycle. No "un-tagged because race-risk"
-  surfaces remain.
-
-For the v0.21.2 contents themselves, see `CHANGELOG.md` §
-[0.21.2].
+No threads in flight. Working tree clean as of 2026-05-08. New
+work since the cut would land here as commit narratives; for
+the v0.21.3 contents themselves, see `CHANGELOG.md` § [0.21.3].
 
 ## Open punch list
 
@@ -252,22 +224,20 @@ into a v0.21.1 / v0.22.0 cut.
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.21.2 is tagged at f23df3b (cut 2026-05-08, a
-patch release rolling up accessibility extensions, replay polish,
-and the first real `ToastVariant::Error` consumer). v0.21.1 stays
-at daa655a, v0.21.0 at 04f9bf9. Working tree clean. Post-cut
-work shipped: Toast Warning variant (`279e23d`) and the HC
-dynamic-paint rollout (`c153363`) — accessibility arc is fully
-closed, every `ToastVariant` has at least one real driver. See
-CHANGELOG.md § [0.21.2] + the "Since the v0.21.2 cut" section
-above for full detail.
+Branch: master. v0.21.3 is tagged at 3d92a91 (cut 2026-05-08, a
+patch release rolling up the accessibility-arc closure: HC reaches
+the previously-carved-out dynamic-paint sites, and the first real
+consumer of `ToastVariant::Warning` lands as the daily-challenge
+expiry toast). v0.21.2 stays at f23df3b, v0.21.1 at daa655a,
+v0.21.0 at 04f9bf9. Working tree clean. See CHANGELOG.md §
+[0.21.3] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. All workspace tests
 pass (1207+; check with `cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
-  2. CHANGELOG.md        — [0.21.2] section is the most recent cut
+  2. CHANGELOG.md        — [0.21.3] section is the most recent cut
   3. CLAUDE.md           — unified-3.0 rule set
   4. CLAUDE_SPEC.md      — formal architecture spec
   5. ARCHITECTURE.md     — crate responsibilities + data flow
