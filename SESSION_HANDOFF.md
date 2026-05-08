@@ -35,12 +35,18 @@ resume.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1243 passing / 0 failing** across the workspace
+- **Tests:** **1250 total / 1249 passing / 1 pre-existing
+  time-dependent flake** across the workspace
   (1228 in v0.21.4 + 4 from `fe68861`'s scrub-notch tests + 4
   from `d322abf`'s notch-label tests + 4 from `1873b3f`'s
   keybind-footer tests + 3 from `90e24d9`'s ESC-accelerator
-  tests). Detail in `CHANGELOG.md` § [0.21.4] § Stats; post-cut
-  delta tracked here.
+  tests + 1 from `23902cd`'s HC-marker test + 6 from
+  `e5c4f51`'s arrow-keyboard tests). The flake is
+  `daily_challenge_plugin::tests::check_system_fires_warning_event_only_once_per_day`
+  — fails when wall-clock UTC is within 30 minutes of midnight
+  (the daily-expiry warning window the test asserts against).
+  Verified pre-existing. Detail in `CHANGELOG.md` § [0.21.4]
+  § Stats; post-cut delta tracked here.
 - **Tags on origin:** `v0.9.0` through `v0.21.4`. v0.21.4 is on
   `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
@@ -110,6 +116,48 @@ resume.
   in lockstep with the wiring; the only-wired-keybinds
   discipline holds. 3 new tests + 1 updated helper-pin test;
   1240 → 1243.
+- **`23902cd` — `feat(replay): HC-mode coverage for
+  keybind-footer top border`.** Tag the footer's border-carrying
+  Node with `HighContrastBorder::with_default(BORDER_SUBTLE)` so
+  the existing `apply_high_contrast_borders` system bumps the
+  1 px top border from `#505050` → `#a0a0a0` under HC mode.
+  Footer text colours don't need bumps —
+  `TEXT_SECONDARY` (`#a0a0a0`) is already at `BORDER_SUBTLE_HC`
+  luminance by design (no `TEXT_SECONDARY_HC` constant exists).
+  The 1 px scrub track, notch ticks, and WIN MOVE marker render
+  via `BackgroundColor` (not `BorderColor`) so the marker
+  doesn't apply — HC coverage for those would need a
+  settings-aware paint system (precedent: `radial_rim_outline`
+  in `radial_menu`) and is deferred. 1 new test; 1243 → 1244.
+- **`e5c4f51` — `feat(replay): wire ← / → keyboard accelerators
+  for paused stepping`.** New `step_backwards_replay_playback`
+  in `replay_playback.rs` decrements the cursor and dispatches
+  `UndoRequestEvent`; the game's `handle_undo` reads it next
+  frame to reverse its most-recent move — hooking the existing
+  undo system rather than replaying forward from cursor 0
+  (every replay-applied move pushes to the undo stack the same
+  way a player move would, so undo is the right reversal
+  primitive). Both arrow keys are paused-only via the same
+  destructure-gate pattern the forward step uses. Footer hint
+  extended in lockstep:
+  `[SPACE] pause/resume · [ESC] stop · [← →] step`. Footer
+  reads "step" not the mockup's "scrub" — single-move step is
+  what's wired; continuous scrub would need a key-held event
+  source. `ReplayOverlayPlugin` gains
+  `add_message::<UndoRequestEvent>()` defensively. 6 new tests
+  (2 hint pins + 4 keyboard scenarios) + 1 updated helper-pin
+  test; 1244 → 1250 total tests, 1249 passing.
+
+**Pre-existing flake noted (verified):**
+`daily_challenge_plugin::tests::
+check_system_fires_warning_event_only_once_per_day` is
+time-dependent — fails when wall-clock UTC is within 30
+minutes of midnight (the daily-expiry warning window the test
+asserts against). Verified pre-existing by stashing all
+changes and re-running before commit — failure persisted. Same
+shape as the `winnable_seed_search` flake from earlier in the
+session. Will pass deterministically when UTC isn't in the
+warning window. Not introduced by recent work.
 
 Banner geometry is now mutable — every prior B-2 commit fit
 inside fixed 60 px space, but the notch-labels commit
@@ -118,30 +166,33 @@ child" precedent and the keybind-footer commit applied it
 again. The next sub-pieces need significantly more vertical
 room and follow the same shape.
 
-Next finite step on B-2: choices are
-1. **Wire ← / → for prev/next move** — needs a "step
-   backwards" path in `replay_playback`, which currently only
-   supports forward stepping. Backwards stepping is non-trivial:
-   the `Replay` carries the move list but no intermediate game
-   states, so rewinding means either replaying-from-start to
-   `cursor - 1` or hooking into the game's undo system. New
-   state plumbing either way. Footer hint would extend to
-   `[SPACE] pause/resume · [ESC] stop · [← →] step` in
-   lockstep with the wiring.
-2. **Move-log scroller / mini-tableau preview** — both need
-   a much larger banner-height grow (effectively the takeover
+Next finite step on B-2: keyboard accelerator coverage is now
+complete (`Space` / `Esc` / `←` / `→`). Remaining choices:
+1. **HC-mode coverage for the scrub-track / notch ticks /
+   WIN MOVE marker.** These render via `BackgroundColor` (not
+   `BorderColor`) so `HighContrastBorder` doesn't apply.
+   Pattern would mirror `radial_menu::radial_rim_outline` —
+   per-frame paint reading `Settings::high_contrast_mode`.
+   Small commit, accessibility-progressing.
+2. **Continuous scrub on key-held ← / →** instead of
+   single-move step. Needs a key-held event source (or
+   accumulator timer in the keyboard handler). Medium scope;
+   matches the mockup's `[← →] scrub` terminology.
+3. **Move-log scroller / mini-tableau preview** — both need a
+   much larger banner-height grow (effectively the takeover
    container itself). Bigger arcs; the natural place to land
    the layout reflow that turns the banner into a takeover.
-3. **HC-mode coverage for the new banner pieces** — labels
-   and footer texts currently use `TEXT_SECONDARY`; under HC
-   mode they should bump to `TEXT_PRIMARY` (or use the
-   `HighContrastBorder` marker pattern for the 1 px borders).
-   Small accessibility polish.
+4. **Cut a v0.21.5 patch release** rolling up the four
+   post-cut commits (`fe68861`, `d322abf`, `1873b3f`,
+   `90e24d9`, `23902cd`, `e5c4f51`) under the through-line
+   "replay-overlay scrubbing affordances + accessibility."
+   Coherent narrative; six commits is a normal-sized patch
+   bundle for this project.
 
-Recommended order: option 3 (HC polish) is the smallest next
-step and keeps the cadence; option 1 (← / →) is the right
-medium-scope next-feature; option 2 is the multi-session arc
-that closes B-2.
+Recommended order: option 4 (cut release) is a clean next
+boundary — six commits with a clear through-line is the right
+size to bundle. Option 1 (HC paint for decorative pieces) is
+the smallest next-feature commit if continuing past the cut.
 
 ## Open punch list
 
@@ -187,20 +238,25 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   post-v0.21.4 in `fe68861` — first decoration step toward the
   takeover layout. Percentage labels under each notch shipped
   post-v0.21.4 in `d322abf` — first **layout-changing** commit
-  (banner 60 → 76 px to make room for a 16 px label row).
-  Keybind-hint footer (vim-style mode line + `[SPACE]
-  pause/resume`) shipped post-v0.21.4 in `1873b3f` (banner
-  76 → 92 px). ESC accelerator wiring (with cross-plugin gate
-  in `pause_plugin::toggle_pause`) shipped post-v0.21.4 in
-  `90e24d9`; footer hint extended to
-  `[SPACE] pause/resume · [ESC] stop` in lockstep. Banner
-  geometry is now mutable. What still needs to land: ← / →
-  scrub keys (needs new backwards-step path), HC-mode
-  coverage for the new banner pieces (labels + footer
-  texts), then the bigger pieces — a move-log scroller and a
-  mini-tableau preview — both screen-takeover-only pieces
-  that need a much larger banner height grow (effectively the
-  takeover container itself). Multi-session.
+  (banner 60 → 76 px). Keybind-hint footer shipped in `1873b3f`
+  (banner 76 → 92 px — vim-style mode line + `[SPACE]
+  pause/resume`). ESC accelerator wiring (with cross-plugin
+  gate in `pause_plugin::toggle_pause`) shipped in `90e24d9`.
+  HC-mode coverage for the footer's top border shipped in
+  `23902cd`. ← / → keyboard accelerators for paused stepping
+  shipped in `e5c4f51` (hooks the existing undo system for
+  backwards step; footer extended to
+  `[SPACE] pause/resume · [ESC] stop · [← →] step`). Banner
+  geometry is mutable; keyboard accelerator coverage is
+  complete. What still needs to land: HC-mode coverage for
+  the scrub-track / notches / WIN MOVE marker (they render
+  via `BackgroundColor` so the `HighContrastBorder` marker
+  doesn't apply — needs a settings-aware paint), continuous
+  scrub on key-held ← / → (vs single-step), then the bigger
+  pieces — a move-log scroller and a mini-tableau preview —
+  both screen-takeover-only pieces that need a much larger
+  banner height grow (effectively the takeover container
+  itself). Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -353,11 +409,13 @@ v0.21.1 at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
 CHANGELOG.md § [0.21.4] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Post-cut HEAD is
-`90e24d9` (four carved-out commits on top of v0.21.4 — scrub-bar
+`e5c4f51` (six carved-out commits on top of v0.21.4 — scrub-bar
 notches `fe68861`, notch labels `d322abf`, keybind-hint footer
-`1873b3f`, ESC accelerator + pause-modal gate `90e24d9`). All
-workspace tests pass (1243; check with `cargo test --workspace`),
-clippy clean.
+`1873b3f`, ESC accelerator + pause-modal gate `90e24d9`, HC
+marker for footer border `23902cd`, ← / → keyboard accelerators
+`e5c4f51`). Workspace tests: 1250 total / 1249 passing / 1
+pre-existing time-dependent flake (clock-near-midnight; verified
+not introduced by recent work). Clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -385,25 +443,30 @@ DECISION TO ASK THE PLAYER FIRST:
      work. Three sub-pieces shipped in v0.21.4: WIN MOVE
      marker (data field + UI) and pause / step / Space
      playback controls. The smaller floating-MOVE-chip piece
-     shipped in v0.21.2 (`2fb2d63`). Post-v0.21.4: quarter-
-     mark scrub notches shipped in `fe68861` (5 ticks at
-     0/25/50/75/100 %); percentage labels under each notch
-     shipped in `d322abf` (banner 60 → 76 px — first layout
-     change); keybind-hint footer shipped in `1873b3f`
-     (banner 76 → 92 px — vim-style mode line + `[SPACE]
-     pause/resume`); ESC accelerator wiring shipped in
-     `90e24d9` (cross-plugin gate in `pause_plugin`; footer
-     extended to `[SPACE] pause/resume · [ESC] stop`).
-     Banner geometry is now mutable. Natural next finite
-     steps:
-     1. **HC-mode coverage** for the new banner pieces
-        (labels + footer texts use `TEXT_SECONDARY`; under
-        HC they should bump). Smallest next step.
-     2. **Wire ← / → for prev/next move.** Needs a
-        backwards-step path in `replay_playback` — either
-        replay-from-start or hook into the game's undo
-        system. Medium-scope next-feature.
-     3. **Move-log scroller / mini-tableau preview** — both
+     shipped in v0.21.2 (`2fb2d63`). Post-v0.21.4: scrub
+     notches `fe68861`, notch labels `d322abf` (banner
+     60 → 76 px), keybind-hint footer `1873b3f` (banner
+     76 → 92 px), ESC accelerator + cross-plugin gate
+     `90e24d9`, HC-mode coverage for the footer top border
+     `23902cd`, and ← / → keyboard accelerators for paused
+     stepping `e5c4f51` (hooks the game's undo system for
+     backwards step; footer extended to
+     `[SPACE] pause/resume · [ESC] stop · [← →] step`).
+     Keyboard accelerator coverage is complete. Natural next
+     finite steps:
+     1. **Cut a v0.21.5 patch release** rolling up the six
+        post-cut commits under "replay-overlay scrubbing
+        affordances + accessibility." Coherent narrative;
+        clean release boundary.
+     2. **HC-mode coverage** for the scrub-track / notches /
+        WIN MOVE marker (render via `BackgroundColor` not
+        `BorderColor`, so `HighContrastBorder` doesn't apply
+        — needs a settings-aware paint, precedent
+        `radial_rim_outline`). Small commit.
+     3. **Continuous scrub on key-held ← / →** instead of
+        single-step. Needs a key-held event source. Matches
+        the mockup's `[← →] scrub` terminology.
+     4. **Move-log scroller / mini-tableau preview** — both
         need a much larger banner-height grow (effectively
         the takeover container itself). Multi-session arcs
         that close B-2.
