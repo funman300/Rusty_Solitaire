@@ -35,10 +35,11 @@ resume.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1236 passing / 0 failing** across the workspace
+- **Tests:** **1240 passing / 0 failing** across the workspace
   (1228 in v0.21.4 + 4 from `fe68861`'s scrub-notch tests + 4
-  from `d322abf`'s notch-label tests). Detail in `CHANGELOG.md`
-  § [0.21.4] § Stats; post-cut delta tracked here.
+  from `d322abf`'s notch-label tests + 4 from `1873b3f`'s
+  keybind-footer tests). Detail in `CHANGELOG.md` § [0.21.4]
+  § Stats; post-cut delta tracked here.
 - **Tags on origin:** `v0.9.0` through `v0.21.4`. v0.21.4 is on
   `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
@@ -79,20 +80,46 @@ resume.
   offset). Label colour is `TEXT_SECONDARY` (mockup's
   `BORDER_SUBTLE` reads as too low-contrast at 12 px against
   `BG_ELEVATED_HI`). 4 new tests; 1232 → 1236.
+- **`1873b3f` — `feat(replay): add keybind-hint footer to
+  overlay banner`.** Second layout-changing commit in B-2's arc.
+  Banner grew from 76 → 92 px to fit a 16 px footer row at the
+  bottom edge with a vim-style mode line on the left
+  (`▌ NORMAL │ replay`) and a keybind-hint on the right
+  (`[SPACE] pause/resume`). Surfaces the existing Space
+  accelerator visually so CLAUDE.md §3.3's UI-first contract
+  holds for keyboard accelerators too. Footer lists *only
+  wired* keybinds — future commits that wire ESC for stop or
+  ← / → for prev/next will extend the right-hand text in
+  lockstep. Two pure helpers (`keybind_footer_mode_text`,
+  `keybind_footer_hint_text`) keep the static text testable;
+  shared `font_handle_for_labels` clone covers both label and
+  footer text spawns. 1px top border in `BORDER_SUBTLE`
+  separates the footer from the labels row. 4 new tests;
+  1236 → 1240.
 
 Banner geometry is now mutable — every prior B-2 commit fit
-inside fixed 60 px space, but the labels commit established the
-"grow the container, add a new flex-column child" precedent. The
-next sub-pieces need significantly more vertical room and follow
-the same shape.
+inside fixed 60 px space, but the notch-labels commit
+established the "grow the container, add a new flex-column
+child" precedent and the keybind-footer commit applied it
+again. The next sub-pieces need significantly more vertical
+room and follow the same shape.
 
-Next finite step on B-2: a **keybind-hint footer** at the bottom
-of the banner (e.g. `[SPACE] pause`). Tiny scope — surfaces the
-existing Space accelerator visually (UI-first §3.3). Or jump
-straight to the move-log card / mini-tableau preview, both of
-which need a much larger banner-height grow (effectively the
-takeover container itself). Footer keeps the cadence small;
-move-log/preview is the bigger arc.
+Next finite step on B-2: choices are
+1. **Wire ESC for stop** + extend the keybind-footer text to
+   `[SPACE] pause/resume · [ESC] stop`. Small, single-axis
+   commit. UI-first contract for the existing Stop button gets
+   a keyboard accelerator; the footer carrying only-wired
+   keybinds means the text update is in lockstep.
+2. **Wire ← / → for prev/next move** — needs a "step
+   backwards" path in `replay_playback`, which currently only
+   supports forward stepping. Bigger; new state plumbing.
+3. **Move-log scroller / mini-tableau preview** — both need
+   a much larger banner-height grow (effectively the takeover
+   container itself). Bigger arcs.
+
+Recommended order: ESC (option 1) next as the smallest
+cadence-preserving step, then either ← / → or move-log/preview
+depending on appetite.
 
 ## Open punch list
 
@@ -139,12 +166,15 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   takeover layout. Percentage labels under each notch shipped
   post-v0.21.4 in `d322abf` — first **layout-changing** commit
   (banner 60 → 76 px to make room for a 16 px label row).
-  Banner geometry is now mutable. What still needs to land: a
-  keybind-hint footer (small carve-out) and the bigger pieces —
-  a move-log scroller and a mini-tableau preview — both
-  screen-takeover-only pieces that need a much larger banner
-  height grow (effectively the takeover container itself).
-  Multi-session.
+  Keybind-hint footer (vim-style mode line + `[SPACE]
+  pause/resume`) shipped post-v0.21.4 in `1873b3f` (banner
+  76 → 92 px). Banner geometry is now mutable. What still
+  needs to land: ESC accelerator wiring (small) + ← / →
+  scrub keys (needs new backwards-step path), then the
+  bigger pieces — a move-log scroller and a mini-tableau
+  preview — both screen-takeover-only pieces that need a
+  much larger banner height grow (effectively the takeover
+  container itself). Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -297,10 +327,10 @@ v0.21.1 at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
 CHANGELOG.md § [0.21.4] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Post-cut HEAD is
-`d322abf` (two carved-out commits on top of v0.21.4 — scrub-bar
-notches `fe68861`, then notch labels `d322abf`). All workspace
-tests pass (1236; check with `cargo test --workspace`), clippy
-clean.
+`1873b3f` (three carved-out commits on top of v0.21.4 — scrub-
+bar notches `fe68861`, notch labels `d322abf`, keybind-hint
+footer `1873b3f`). All workspace tests pass (1240; check with
+`cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -330,17 +360,21 @@ DECISION TO ASK THE PLAYER FIRST:
      playback controls. The smaller floating-MOVE-chip piece
      shipped in v0.21.2 (`2fb2d63`). Post-v0.21.4: quarter-
      mark scrub notches shipped in `fe68861` (5 ticks at
-     0/25/50/75/100 %), and percentage labels under each
-     notch shipped in `d322abf` (banner grew 60 → 76 px to
-     accommodate a 16 px label row — first layout change in
-     the arc, banner geometry is now mutable). The natural
-     next finite step is a **keybind-hint footer** at the
-     bottom of the banner (e.g. `[SPACE] pause`) — small
-     carve-out that surfaces the existing Space accelerator
-     visually (UI-first §3.3). After that: move-log scroller
-     and mini-tableau preview, both screen-takeover-only
-     pieces that need a much larger banner-height grow
-     (effectively the takeover container itself). Mockup at
+     0/25/50/75/100 %); percentage labels under each notch
+     shipped in `d322abf` (banner 60 → 76 px — first layout
+     change); keybind-hint footer shipped in `1873b3f`
+     (banner 76 → 92 px — vim-style mode line on the left,
+     `[SPACE] pause/resume` on the right). Banner geometry
+     is now mutable. The natural next finite step is to
+     **wire ESC for stop** and extend the footer text to
+     `[SPACE] pause/resume · [ESC] stop` — small, single-
+     axis, surfaces another keyboard accelerator alongside
+     the existing Stop button. After that: ← / → for
+     prev/next move (needs new backwards-step path in
+     `replay_playback`), then move-log scroller and mini-
+     tableau preview — both screen-takeover-only pieces that
+     need a much larger banner-height grow (effectively the
+     takeover container itself). Mockup at
      `docs/ui-mockups/replay-overlay-mobile.html`.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
