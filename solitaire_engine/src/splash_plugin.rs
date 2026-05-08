@@ -219,12 +219,27 @@ fn spawn_splash(
 
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
 
+    // Settings is borrowed twice — once for the first_run_complete
+    // gate above, once here for the reduce-motion gate. The borrow
+    // above already happened (and was let-go via the `settings.as_deref()`
+    // pattern's auto-drop), so this re-read is safe.
+    let reduce_motion = settings.is_some_and(|s| s.0.reduce_motion_mode);
+
     // Generate the scanline texture handle up-front (when the asset
     // store is available — always true in production; opt-out under
     // bare `MinimalPlugins` test fixtures so existing tests that
     // don't init `Assets<Image>` keep working with the rest of the
-    // splash content unchanged).
-    let scanline_handle = images.map(|mut images| images.add(build_scanline_image()));
+    // splash content unchanged). Also skipped when reduce-motion is
+    // on — the scanline overlay is the "CRT scanline effect" the
+    // design-system spec calls out as non-essential motion under
+    // reduce-motion (`design-system.md` §Accessibility #3). Without
+    // it the boot screen still reads as terminal-themed; the
+    // scanlines are decorative.
+    let scanline_handle = if reduce_motion {
+        None
+    } else {
+        images.map(|mut images| images.add(build_scanline_image()))
+    };
 
     commands
         .spawn((
@@ -712,15 +727,29 @@ fn cursor_pulse_factor(age: Duration, period: f32, min: f32) -> f32 {
 ///
 /// No-op when no `SplashRoot` exists (the splash has already
 /// despawned, or we're under a test fixture that doesn't spawn one).
+///
+/// Under `Settings::reduce_motion_mode`, the per-frame pulse
+/// multiplier is skipped — the cursor still fades in / out with
+/// the global splash alpha (essential timing) but doesn't blink
+/// (decorative motion). Spec at `design-system.md` §Accessibility
+/// (#3): reduce-motion suppresses non-essential motion only;
+/// fade-in / fade-out timelines stay intact because the splash
+/// itself would otherwise hard-cut on/off, which is jarring.
 fn pulse_splash_cursor(
     roots: Query<&SplashAge, With<SplashRoot>>,
+    settings: Option<Res<SettingsResource>>,
     mut pulses: Query<(&SplashFadableBg, &mut BackgroundColor), With<SplashCursorPulse>>,
 ) {
     let Some(age) = roots.iter().next() else {
         return;
     };
     let global = splash_alpha(age.0).unwrap_or(0.0);
-    let pulse = cursor_pulse_factor(age.0, MOTION_PULSE_PERIOD_SECS, PULSE_ALPHA_MIN);
+    let reduce_motion = settings.is_some_and(|s| s.0.reduce_motion_mode);
+    let pulse = if reduce_motion {
+        1.0
+    } else {
+        cursor_pulse_factor(age.0, MOTION_PULSE_PERIOD_SECS, PULSE_ALPHA_MIN)
+    };
     let combined = (global * pulse).clamp(0.0, 1.0);
     for (fadable, mut bg) in &mut pulses {
         let mut c = fadable.base_color;
@@ -951,6 +980,46 @@ mod tests {
             count_splash_roots(&mut app),
             1,
             "SplashRoot must spawn for first-run players (first_run_complete = false)"
+        );
+    }
+
+    #[test]
+    fn splash_skips_scanline_overlay_under_reduce_motion() {
+        // The CRT scanline overlay is decorative motion that
+        // `Settings::reduce_motion_mode` suppresses per the
+        // design-system spec (§Accessibility #3). The splash
+        // root itself still spawns — the cursor still fades in
+        // and out (essential timing), but the scanline overlay
+        // node is omitted entirely.
+        use solitaire_data::Settings;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(bevy::asset::AssetPlugin::default())
+            .init_asset::<bevy::image::Image>()
+            .add_plugins(SplashPlugin);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<ButtonInput<MouseButton>>();
+        app.insert_resource(SettingsResource(Settings {
+            first_run_complete: false,
+            reduce_motion_mode: true,
+            ..Settings::default()
+        }));
+        app.update();
+        // The splash root spawns (essential motion intact)
+        assert_eq!(
+            count_splash_roots(&mut app),
+            1,
+            "splash should still spawn under reduce-motion — only the scanline + pulse are gated",
+        );
+        // The scanline overlay is gone
+        let scanline_count = app
+            .world_mut()
+            .query::<&SplashScanlineOverlay>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            scanline_count, 0,
+            "scanline overlay must NOT spawn under reduce-motion",
         );
     }
 
