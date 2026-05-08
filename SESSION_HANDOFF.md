@@ -35,9 +35,10 @@ resume.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1228 passing / 0 failing** across the workspace
-  (net +21 from v0.21.3's 1207 baseline). Detail in
-  `CHANGELOG.md` § [0.21.4] § Stats.
+- **Tests:** **1232 passing / 0 failing** across the workspace
+  (1228 in v0.21.4 + 4 from `fe68861`'s scrub-notch tests).
+  Detail in `CHANGELOG.md` § [0.21.4] § Stats; post-cut delta
+  tracked here.
 - **Tags on origin:** `v0.9.0` through `v0.21.4`. v0.21.4 is on
   `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
@@ -49,9 +50,25 @@ resume.
 
 ## Since the v0.21.4 cut
 
-No threads in flight. Working tree clean as of 2026-05-08. New
-work since the cut would land here as commit narratives; for
-the v0.21.4 contents themselves, see `CHANGELOG.md` § [0.21.4].
+- **`fe68861` — `feat(replay): add quarter-mark notches to scrub
+  bar`.** First finite step toward B-2's screen-takeover layout.
+  Five 1px vertical ticks at 0/25/50/75/100 % give the player
+  visual anchor points without needing to mentally bisect the
+  bar. Pure helper `scrub_notch_positions()` returns the fixed
+  array; spawn loop lives next to the WIN MOVE marker spawn so
+  the lifecycles match. Notches paint in `BORDER_SUBTLE`
+  (matches unfilled-track colour) and rely on extending past the
+  1px track (5px tall, anchored 2px above track top) for
+  visibility — same trick the WIN MOVE marker uses. Spawned
+  *after* the WIN MOVE marker so a notch and the marker landing
+  on the same percentage paint the marker on top. Mirrors the
+  notch ladder in `docs/ui-mockups/replay-overlay-mobile.html`.
+  4 new tests; 1228 → 1232.
+
+Next finite step on B-2: percentage labels (`0%`, `25%`, …)
+under each notch — needs the banner height to grow from 60 px to
+~76 px to accommodate ~10 px of label space, so it's a real
+layout change rather than another decoration commit.
 
 ## Open punch list
 
@@ -92,11 +109,15 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   shipped in v0.21.2 (`2fb2d63`). The WIN MOVE scrub-bar marker
   shipped post-v0.21.3 in `ab857bb` (data field) + `52befa6`
   (UI). Playback controls (pause / resume / step + Space
-  accelerator) shipped post-v0.21.3 in `fbe48ac`. What still
-  needs to land: a move-log scroller and a mini-tableau
-  preview — both screen-takeover-only pieces that need a
-  larger layout reflow than the existing banner can carry.
-  Multi-session.
+  accelerator) shipped post-v0.21.3 in `fbe48ac`. Quarter-mark
+  scrub notches (5 ticks at 0/25/50/75/100 %) shipped
+  post-v0.21.4 in `fe68861` — first decoration step toward the
+  takeover layout. What still needs to land: percentage labels
+  under each notch (forces the banner to grow from 60 px to
+  ~76 px so it's a real layout change), then a move-log scroller
+  and a mini-tableau preview — both screen-takeover-only pieces
+  that need a larger layout reflow than the existing banner can
+  carry. Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -248,8 +269,10 @@ marker possible). v0.21.3 stays at 3d92a91, v0.21.2 at f23df3b,
 v0.21.1 at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
 CHANGELOG.md § [0.21.4] for full detail.
 
-State: HEAD locally — see `git rev-parse HEAD`. All workspace tests
-pass (1228+; check with `cargo test --workspace`), clippy clean.
+State: HEAD locally — see `git rev-parse HEAD`. Post-cut HEAD is
+`fe68861` (one carved-out commit on top of v0.21.4 — scrub-bar
+notches). All workspace tests pass (1232; check with
+`cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -277,16 +300,16 @@ DECISION TO ASK THE PLAYER FIRST:
      work. Three sub-pieces shipped in v0.21.4: WIN MOVE
      marker (data field + UI) and pause / step / Space
      playback controls. The smaller floating-MOVE-chip piece
-     shipped in v0.21.2 (`2fb2d63`). What still needs to
-     land: a move-log scroller and a mini-tableau preview —
-     both layout-heavy pieces that need more vertical real
-     estate than the current banner-only overlay carries, so
-     the natural next finite step is the **screen-takeover
-     layout itself** (mockup at
-     `docs/ui-mockups/replay-overlay-mobile.html`). That's
-     the single multi-session arc the remaining work groups
-     under — once the takeover layout lands, the scroller and
-     preview can each be small carved-out commits.
+     shipped in v0.21.2 (`2fb2d63`). Post-v0.21.4: quarter-
+     mark scrub notches shipped in `fe68861` (5 ticks at
+     0/25/50/75/100 %). The natural next finite step is
+     **percentage labels under each notch** — small but
+     forces the banner height to grow from 60 px to ~76 px,
+     making it the first real layout change in the arc.
+     After that: move-log scroller and mini-tableau preview,
+     both screen-takeover-only pieces that need more vertical
+     real estate than the banner can carry. Mockup at
+     `docs/ui-mockups/replay-overlay-mobile.html`.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
