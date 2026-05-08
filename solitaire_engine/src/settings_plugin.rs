@@ -125,6 +125,14 @@ struct BackgroundText;
 #[derive(Component, Debug)]
 struct ColorBlindText;
 
+/// Marks the `Text` node showing the current high-contrast mode state.
+#[derive(Component, Debug)]
+struct HighContrastText;
+
+/// Marks the `Text` node showing the current reduce-motion mode state.
+#[derive(Component, Debug)]
+struct ReduceMotionText;
+
 /// Marks the `Text` node showing the live tooltip-delay value.
 #[derive(Component, Debug)]
 struct TooltipDelayText;
@@ -201,6 +209,14 @@ enum SettingsButton {
     ReplayMoveIntervalUp,
     ToggleTheme,
     ToggleColorBlind,
+    /// Toggle the [`Settings::high_contrast_mode`] flag — boosts
+    /// foreground / suit-red glyphs to higher-luminance variants per
+    /// `design-system.md` §Accessibility (#2).
+    ToggleHighContrast,
+    /// Toggle the [`Settings::reduce_motion_mode`] flag — suppresses
+    /// non-essential motion (card-slide animations become instant
+    /// snaps) per `design-system.md` §Accessibility (#3).
+    ToggleReduceMotion,
     /// Toggle the [`Settings::winnable_deals_only`] flag. When on, new
     /// random Classic-mode deals are filtered through
     /// [`solitaire_core::solver::try_solve`] until one is provably
@@ -255,6 +271,11 @@ impl SettingsButton {
             // Cosmetic section
             SettingsButton::ToggleTheme => 55,
             SettingsButton::ToggleColorBlind => 60,
+            // Accessibility-section toggles sit alongside Color-blind so
+            // tab-walk visits all three a11y flags in the same vertical
+            // run before continuing to the picker rows.
+            SettingsButton::ToggleHighContrast => 61,
+            SettingsButton::ToggleReduceMotion => 62,
             // Picker rows — every swatch in a row shares the row's
             // priority so entity-index tiebreaking yields left → right.
             SettingsButton::SelectCardBack(_) => 70,
@@ -342,6 +363,8 @@ impl Plugin for SettingsPlugin {
                     update_background_text,
                     update_anim_speed_text,
                     update_color_blind_text,
+                    update_high_contrast_text,
+                    update_reduce_motion_text,
                     update_tooltip_delay_text,
                     update_time_bonus_multiplier_text,
                     update_replay_move_interval_text,
@@ -602,6 +625,30 @@ fn update_color_blind_text(
     }
 }
 
+fn update_high_contrast_text(
+    settings: Res<SettingsResource>,
+    mut text_nodes: Query<&mut Text, With<HighContrastText>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut text_nodes {
+        **text = on_off_label(settings.0.high_contrast_mode);
+    }
+}
+
+fn update_reduce_motion_text(
+    settings: Res<SettingsResource>,
+    mut text_nodes: Query<&mut Text, With<ReduceMotionText>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut text_nodes {
+        **text = on_off_label(settings.0.reduce_motion_mode);
+    }
+}
+
 /// Refreshes the live "Winnable deals only" toggle value in the
 /// Gameplay section whenever `SettingsResource` changes (button click,
 /// hand-edited `settings.json` reload, etc.).
@@ -720,12 +767,14 @@ fn handle_settings_buttons(
     path: Res<SettingsStoragePath>,
     mut changed: MessageWriter<SettingsChangedEvent>,
     mut manual_sync: MessageWriter<ManualSyncRequestEvent>,
-    mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
-    mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
-    mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
-    mut theme_text: Query<&mut Text, (With<ThemeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<AnimSpeedText>, Without<ColorBlindText>)>,
-    mut anim_speed_text: Query<&mut Text, (With<AnimSpeedText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<ColorBlindText>)>,
-    mut color_blind_text: Query<&mut Text, (With<ColorBlindText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>)>,
+    mut sfx_text: Query<&mut Text, (With<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>, Without<HighContrastText>, Without<ReduceMotionText>)>,
+    mut music_text: Query<&mut Text, (With<MusicVolumeText>, Without<SfxVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>, Without<HighContrastText>, Without<ReduceMotionText>)>,
+    mut draw_text: Query<&mut Text, (With<DrawModeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>, Without<HighContrastText>, Without<ReduceMotionText>)>,
+    mut theme_text: Query<&mut Text, (With<ThemeText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<AnimSpeedText>, Without<ColorBlindText>, Without<HighContrastText>, Without<ReduceMotionText>)>,
+    mut anim_speed_text: Query<&mut Text, (With<AnimSpeedText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<ColorBlindText>, Without<HighContrastText>, Without<ReduceMotionText>)>,
+    mut color_blind_text: Query<&mut Text, (With<ColorBlindText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<HighContrastText>, Without<ReduceMotionText>)>,
+    mut high_contrast_text: Query<&mut Text, (With<HighContrastText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>, Without<ReduceMotionText>)>,
+    mut reduce_motion_text: Query<&mut Text, (With<ReduceMotionText>, Without<SfxVolumeText>, Without<MusicVolumeText>, Without<DrawModeText>, Without<ThemeText>, Without<AnimSpeedText>, Without<ColorBlindText>, Without<HighContrastText>)>,
 ) {
     for (interaction, button) in &interaction_query {
         if *interaction != Interaction::Pressed {
@@ -879,6 +928,22 @@ fn handle_settings_buttons(
                     **t = color_blind_label(settings.0.color_blind_mode);
                 }
             }
+            SettingsButton::ToggleHighContrast => {
+                settings.0.high_contrast_mode = !settings.0.high_contrast_mode;
+                persist(&path, &settings.0);
+                changed.write(SettingsChangedEvent(settings.0.clone()));
+                if let Ok(mut t) = high_contrast_text.single_mut() {
+                    **t = on_off_label(settings.0.high_contrast_mode);
+                }
+            }
+            SettingsButton::ToggleReduceMotion => {
+                settings.0.reduce_motion_mode = !settings.0.reduce_motion_mode;
+                persist(&path, &settings.0);
+                changed.write(SettingsChangedEvent(settings.0.clone()));
+                if let Ok(mut t) = reduce_motion_text.single_mut() {
+                    **t = on_off_label(settings.0.reduce_motion_mode);
+                }
+            }
             SettingsButton::ToggleWinnableDealsOnly => {
                 settings.0.winnable_deals_only = !settings.0.winnable_deals_only;
                 persist(&path, &settings.0);
@@ -948,6 +1013,14 @@ fn theme_label(theme: &Theme) -> String {
 }
 
 fn color_blind_label(enabled: bool) -> String {
+    if enabled { "ON".into() } else { "OFF".into() }
+}
+
+/// Generic ON/OFF label shared by the high-contrast and reduce-
+/// motion accessibility toggles. Same format as
+/// [`color_blind_label`] / [`winnable_deals_only_label`] —
+/// keeping all simple boolean toggle rows visually uniform.
+fn on_off_label(enabled: bool) -> String {
     if enabled { "ON".into() } else { "OFF".into() }
 }
 
@@ -1384,6 +1457,24 @@ fn spawn_settings_panel(
                 color_blind_label(settings.color_blind_mode),
                 SettingsButton::ToggleColorBlind,
                 "Show shape glyphs alongside suit colors. Suit-blind friendly.",
+                font_res,
+            );
+            toggle_row(
+                body,
+                "High Contrast",
+                HighContrastText,
+                on_off_label(settings.high_contrast_mode),
+                SettingsButton::ToggleHighContrast,
+                "Boosts foreground + suit-red glyphs to higher-luminance variants for low-vision readers and low-quality displays.",
+                font_res,
+            );
+            toggle_row(
+                body,
+                "Reduce Motion",
+                ReduceMotionText,
+                on_off_label(settings.reduce_motion_mode),
+                SettingsButton::ToggleReduceMotion,
+                "Skips card-slide animations and other non-essential motion. Cards snap instantly to their target.",
                 font_res,
             );
             if theme_overrides_back {
