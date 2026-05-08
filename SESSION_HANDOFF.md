@@ -35,11 +35,12 @@ resume.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1240 passing / 0 failing** across the workspace
+- **Tests:** **1243 passing / 0 failing** across the workspace
   (1228 in v0.21.4 + 4 from `fe68861`'s scrub-notch tests + 4
   from `d322abf`'s notch-label tests + 4 from `1873b3f`'s
-  keybind-footer tests). Detail in `CHANGELOG.md` § [0.21.4]
-  § Stats; post-cut delta tracked here.
+  keybind-footer tests + 3 from `90e24d9`'s ESC-accelerator
+  tests). Detail in `CHANGELOG.md` § [0.21.4] § Stats; post-cut
+  delta tracked here.
 - **Tags on origin:** `v0.9.0` through `v0.21.4`. v0.21.4 is on
   `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
@@ -96,6 +97,19 @@ resume.
   footer text spawns. 1px top border in `BORDER_SUBTLE`
   separates the footer from the labels row. 4 new tests;
   1236 → 1240.
+- **`90e24d9` — `feat(replay): wire ESC accelerator for stop,
+  gate pause modal`.** ESC during an active replay now stops it
+  (mirrors the Stop button click). New `handle_stop_keyboard`
+  system in `replay_overlay.rs` parallels `handle_pause_keyboard`
+  in shape. Cross-plugin coordination via `pause_plugin::toggle_pause`:
+  added a fourth defer-if check
+  (`replay_state.is_some_and(|s| s.is_playing())`) right after
+  `other_modal_scrims` and before `selection`. Symmetric to the
+  existing modal-stack defer pattern. Footer hint extended from
+  `[SPACE] pause/resume` → `[SPACE] pause/resume · [ESC] stop`
+  in lockstep with the wiring; the only-wired-keybinds
+  discipline holds. 3 new tests + 1 updated helper-pin test;
+  1240 → 1243.
 
 Banner geometry is now mutable — every prior B-2 commit fit
 inside fixed 60 px space, but the notch-labels commit
@@ -105,21 +119,29 @@ again. The next sub-pieces need significantly more vertical
 room and follow the same shape.
 
 Next finite step on B-2: choices are
-1. **Wire ESC for stop** + extend the keybind-footer text to
-   `[SPACE] pause/resume · [ESC] stop`. Small, single-axis
-   commit. UI-first contract for the existing Stop button gets
-   a keyboard accelerator; the footer carrying only-wired
-   keybinds means the text update is in lockstep.
-2. **Wire ← / → for prev/next move** — needs a "step
+1. **Wire ← / → for prev/next move** — needs a "step
    backwards" path in `replay_playback`, which currently only
-   supports forward stepping. Bigger; new state plumbing.
-3. **Move-log scroller / mini-tableau preview** — both need
+   supports forward stepping. Backwards stepping is non-trivial:
+   the `Replay` carries the move list but no intermediate game
+   states, so rewinding means either replaying-from-start to
+   `cursor - 1` or hooking into the game's undo system. New
+   state plumbing either way. Footer hint would extend to
+   `[SPACE] pause/resume · [ESC] stop · [← →] step` in
+   lockstep with the wiring.
+2. **Move-log scroller / mini-tableau preview** — both need
    a much larger banner-height grow (effectively the takeover
-   container itself). Bigger arcs.
+   container itself). Bigger arcs; the natural place to land
+   the layout reflow that turns the banner into a takeover.
+3. **HC-mode coverage for the new banner pieces** — labels
+   and footer texts currently use `TEXT_SECONDARY`; under HC
+   mode they should bump to `TEXT_PRIMARY` (or use the
+   `HighContrastBorder` marker pattern for the 1 px borders).
+   Small accessibility polish.
 
-Recommended order: ESC (option 1) next as the smallest
-cadence-preserving step, then either ← / → or move-log/preview
-depending on appetite.
+Recommended order: option 3 (HC polish) is the smallest next
+step and keeps the cadence; option 1 (← / →) is the right
+medium-scope next-feature; option 2 is the multi-session arc
+that closes B-2.
 
 ## Open punch list
 
@@ -168,13 +190,17 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   (banner 60 → 76 px to make room for a 16 px label row).
   Keybind-hint footer (vim-style mode line + `[SPACE]
   pause/resume`) shipped post-v0.21.4 in `1873b3f` (banner
-  76 → 92 px). Banner geometry is now mutable. What still
-  needs to land: ESC accelerator wiring (small) + ← / →
-  scrub keys (needs new backwards-step path), then the
-  bigger pieces — a move-log scroller and a mini-tableau
-  preview — both screen-takeover-only pieces that need a
-  much larger banner height grow (effectively the takeover
-  container itself). Multi-session.
+  76 → 92 px). ESC accelerator wiring (with cross-plugin gate
+  in `pause_plugin::toggle_pause`) shipped post-v0.21.4 in
+  `90e24d9`; footer hint extended to
+  `[SPACE] pause/resume · [ESC] stop` in lockstep. Banner
+  geometry is now mutable. What still needs to land: ← / →
+  scrub keys (needs new backwards-step path), HC-mode
+  coverage for the new banner pieces (labels + footer
+  texts), then the bigger pieces — a move-log scroller and a
+  mini-tableau preview — both screen-takeover-only pieces
+  that need a much larger banner height grow (effectively the
+  takeover container itself). Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -327,10 +353,11 @@ v0.21.1 at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
 CHANGELOG.md § [0.21.4] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Post-cut HEAD is
-`1873b3f` (three carved-out commits on top of v0.21.4 — scrub-
-bar notches `fe68861`, notch labels `d322abf`, keybind-hint
-footer `1873b3f`). All workspace tests pass (1240; check with
-`cargo test --workspace`), clippy clean.
+`90e24d9` (four carved-out commits on top of v0.21.4 — scrub-bar
+notches `fe68861`, notch labels `d322abf`, keybind-hint footer
+`1873b3f`, ESC accelerator + pause-modal gate `90e24d9`). All
+workspace tests pass (1243; check with `cargo test --workspace`),
+clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -363,19 +390,24 @@ DECISION TO ASK THE PLAYER FIRST:
      0/25/50/75/100 %); percentage labels under each notch
      shipped in `d322abf` (banner 60 → 76 px — first layout
      change); keybind-hint footer shipped in `1873b3f`
-     (banner 76 → 92 px — vim-style mode line on the left,
-     `[SPACE] pause/resume` on the right). Banner geometry
-     is now mutable. The natural next finite step is to
-     **wire ESC for stop** and extend the footer text to
-     `[SPACE] pause/resume · [ESC] stop` — small, single-
-     axis, surfaces another keyboard accelerator alongside
-     the existing Stop button. After that: ← / → for
-     prev/next move (needs new backwards-step path in
-     `replay_playback`), then move-log scroller and mini-
-     tableau preview — both screen-takeover-only pieces that
-     need a much larger banner-height grow (effectively the
-     takeover container itself). Mockup at
-     `docs/ui-mockups/replay-overlay-mobile.html`.
+     (banner 76 → 92 px — vim-style mode line + `[SPACE]
+     pause/resume`); ESC accelerator wiring shipped in
+     `90e24d9` (cross-plugin gate in `pause_plugin`; footer
+     extended to `[SPACE] pause/resume · [ESC] stop`).
+     Banner geometry is now mutable. Natural next finite
+     steps:
+     1. **HC-mode coverage** for the new banner pieces
+        (labels + footer texts use `TEXT_SECONDARY`; under
+        HC they should bump). Smallest next step.
+     2. **Wire ← / → for prev/next move.** Needs a
+        backwards-step path in `replay_playback` — either
+        replay-from-start or hook into the game's undo
+        system. Medium-scope next-feature.
+     3. **Move-log scroller / mini-tableau preview** — both
+        need a much larger banner-height grow (effectively
+        the takeover container itself). Multi-session arcs
+        that close B-2.
+     Mockup at `docs/ui-mockups/replay-overlay-mobile.html`.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
