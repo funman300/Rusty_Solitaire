@@ -22,7 +22,8 @@ use crate::card_plugin::CardEntity;
 use crate::challenge_plugin::ChallengeAdvancedEvent;
 use crate::daily_challenge_plugin::{DailyChallengeCompletedEvent, DailyGoalAnnouncementEvent};
 use crate::events::{
-    AchievementUnlockedEvent, GameWonEvent, InfoToastEvent, MoveRejectedEvent, XpAwardedEvent,
+    AchievementUnlockedEvent, GameWonEvent, InfoToastEvent, MoveRejectedEvent, WarningToastEvent,
+    XpAwardedEvent,
 };
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
@@ -164,6 +165,7 @@ impl Plugin for AnimationPlugin {
             .add_message::<SettingsChangedEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<MoveRejectedEvent>()
+            .add_message::<WarningToastEvent>()
             .add_message::<XpAwardedEvent>()
             .init_resource::<EffectiveSlideDuration>()
             .init_resource::<ToastQueue>()
@@ -186,6 +188,7 @@ impl Plugin for AnimationPlugin {
                     handle_auto_complete_toast,
                     handle_xp_awarded_toast,
                     handle_move_rejected_toast,
+                    handle_warning_toast,
                     tick_toasts,
                     (enqueue_toasts, drive_toast_display).chain(),
                 )
@@ -648,6 +651,23 @@ fn handle_move_rejected_toast(
             2.0,
             ToastVariant::Error,
         );
+    }
+}
+
+/// Spawns a 4-second amber-bordered Warning toast for every incoming
+/// [`WarningToastEvent`]. First in-engine consumer of
+/// [`ToastVariant::Warning`] — exercises the variant's amber accent and
+/// the design-system "act soon" semantic.
+///
+/// Mirrors [`handle_move_rejected_toast`] but reads a generic carrier
+/// event (not a domain-specific one) because Warning has multiple
+/// candidate drivers and the call-site knows the message wording.
+fn handle_warning_toast(
+    mut commands: Commands,
+    mut events: MessageReader<WarningToastEvent>,
+) {
+    for ev in events.read() {
+        spawn_toast(&mut commands, ev.0.clone(), 4.0, ToastVariant::Warning);
     }
 }
 

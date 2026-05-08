@@ -14,13 +14,13 @@
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use solitaire_data::{daily_seed_for, save_progress_to};
 use solitaire_sync::ChallengeGoal;
 
 use crate::events::{
     GameWonEvent, InfoToastEvent, NewGameRequestEvent, StartDailyChallengeRequestEvent,
-    XpAwardedEvent,
+    WarningToastEvent, XpAwardedEvent,
 };
 use crate::game_plugin::GameMutation;
 use crate::progress_plugin::{ProgressResource, ProgressStoragePath, ProgressUpdate};
@@ -29,6 +29,11 @@ use crate::sync_plugin::SyncProviderResource;
 
 /// Bonus XP awarded for completing today's daily challenge.
 pub const DAILY_BONUS_XP: u64 = 100;
+
+/// Minutes before UTC midnight at which the daily-challenge expiry warning
+/// fires. The reset is global (UTC), so the warning is global too — local
+/// midnight may be hours away or already past.
+pub const DAILY_EXPIRY_WARNING_MINUTES: i64 = 30;
 
 /// The active daily challenge — date + RNG seed for that date's deal,
 /// plus optional goal metadata fetched from the server.
@@ -74,6 +79,16 @@ pub struct DailyChallengeCompletedEvent {
 #[derive(Resource, Default)]
 struct DailyChallengeTask(Option<Task<Option<ChallengeGoal>>>);
 
+/// Tracks which `DailyChallengeResource::date` the expiry-warning toast has
+/// already fired for, so the toast spawns at most once per day.
+///
+/// `None` until the first warning fires; thereafter holds the date the
+/// warning was shown for. When `daily.date` advances (a new local day rolls
+/// over while the app stays open), this becomes stale and the next warning
+/// can fire.
+#[derive(Resource, Default, Debug)]
+struct DailyExpiryWarningShown(Option<NaiveDate>);
+
 /// Fetches today's daily challenge seed and goal from the sync server on startup and tracks completion.
 /// Fires `DailyChallengeCompletedEvent` when the player wins a matching game.
 pub struct DailyChallengePlugin;
@@ -82,18 +97,21 @@ impl Plugin for DailyChallengePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(DailyChallengeResource::for_today())
             .init_resource::<DailyChallengeTask>()
+            .init_resource::<DailyExpiryWarningShown>()
             .add_message::<DailyChallengeCompletedEvent>()
             .add_message::<DailyGoalAnnouncementEvent>()
             .add_message::<GameWonEvent>()
             .add_message::<NewGameRequestEvent>()
             .add_message::<StartDailyChallengeRequestEvent>()
+            .add_message::<WarningToastEvent>()
             .add_message::<XpAwardedEvent>()
             .add_systems(Startup, fetch_server_challenge)
             .add_systems(Update, poll_server_challenge)
             // record/award after the base ProgressUpdate so we don't fight
             // ProgressPlugin's add_xp on the same frame.
             .add_systems(Update, handle_daily_completion.after(ProgressUpdate))
-            .add_systems(Update, handle_start_daily_request.before(GameMutation));
+            .add_systems(Update, handle_start_daily_request.before(GameMutation))
+            .add_systems(Update, check_daily_expiry_warning);
     }
 }
 
@@ -213,6 +231,71 @@ fn handle_start_daily_request(
         .clone()
         .unwrap_or_else(|| "Daily Challenge".to_string());
     announce.write(DailyGoalAnnouncementEvent(desc));
+}
+
+/// Pure decision logic for the daily-challenge expiry warning. Returns the
+/// integer minutes-until-UTC-midnight if a warning toast should fire on this
+/// frame, or `None` if any suppression condition holds.
+///
+/// Suppression rules (in order):
+/// 1. Player has already completed today's daily challenge.
+/// 2. The warning has already fired for `daily_date`.
+/// 3. UTC midnight is more than [`DAILY_EXPIRY_WARNING_MINUTES`] away.
+/// 4. UTC midnight has already passed for the current calendar day (the
+///    minutes-remaining is negative — happens for at most one frame at the
+///    rollover boundary).
+///
+/// Factored out so the threshold/clock behavior is unit-testable without an
+/// `App`.
+fn compute_expiry_warning_minutes(
+    daily_date: NaiveDate,
+    last_completed: Option<NaiveDate>,
+    last_shown: Option<NaiveDate>,
+    now_utc: DateTime<Utc>,
+    threshold_mins: i64,
+) -> Option<i64> {
+    if last_completed == Some(daily_date) {
+        return None;
+    }
+    if last_shown == Some(daily_date) {
+        return None;
+    }
+    let next_midnight = (now_utc.date_naive() + Duration::days(1))
+        .and_hms_opt(0, 0, 0)?
+        .and_utc();
+    let mins_remaining = (next_midnight - now_utc).num_minutes();
+    if !(0..=threshold_mins).contains(&mins_remaining) {
+        return None;
+    }
+    Some(mins_remaining)
+}
+
+/// Each-frame check for the daily-challenge expiry warning. Fires a single
+/// [`WarningToastEvent`] when the player is within
+/// [`DAILY_EXPIRY_WARNING_MINUTES`] of UTC midnight reset and hasn't yet
+/// completed today's challenge.
+///
+/// Idempotent — `DailyExpiryWarningShown` ensures the toast spawns at most
+/// once per `daily.date`.
+fn check_daily_expiry_warning(
+    daily: Res<DailyChallengeResource>,
+    progress: Res<ProgressResource>,
+    mut shown: ResMut<DailyExpiryWarningShown>,
+    mut warning: MessageWriter<WarningToastEvent>,
+) {
+    let Some(mins) = compute_expiry_warning_minutes(
+        daily.date,
+        progress.0.daily_challenge_last_completed,
+        shown.0,
+        Utc::now(),
+        DAILY_EXPIRY_WARNING_MINUTES,
+    ) else {
+        return;
+    };
+    shown.0 = Some(daily.date);
+    warning.write(WarningToastEvent(format!(
+        "Daily challenge expires in {mins} min"
+    )));
 }
 
 #[cfg(test)]
@@ -384,5 +467,142 @@ mod tests {
         assert_eq!(r.goal_description.as_deref(), Some("Win without undo"));
         assert_eq!(r.target_score, Some(1_000));
         assert_eq!(r.max_time_secs, Some(300));
+    }
+
+    // -----------------------------------------------------------------------
+    // Daily-expiry warning toast (compute_expiry_warning_minutes + system)
+    // -----------------------------------------------------------------------
+
+    fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    /// Construct a UTC `DateTime` at the given calendar position. Used to
+    /// drive the pure helper through every threshold edge.
+    fn utc_at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
+        ymd(y, m, d).and_hms_opt(h, min, 0).unwrap().and_utc()
+    }
+
+    #[test]
+    fn warning_fires_inside_threshold_when_incomplete_and_unseen() {
+        // 23:50 UTC, 10 min until reset, < 30 min threshold.
+        let now = utc_at(2026, 5, 8, 23, 50);
+        let mins = compute_expiry_warning_minutes(ymd(2026, 5, 8), None, None, now, 30);
+        assert_eq!(mins, Some(10));
+    }
+
+    #[test]
+    fn warning_fires_at_exact_threshold_boundary() {
+        // 23:30 UTC, exactly 30 min remaining — the inclusive boundary.
+        let now = utc_at(2026, 5, 8, 23, 30);
+        let mins = compute_expiry_warning_minutes(ymd(2026, 5, 8), None, None, now, 30);
+        assert_eq!(mins, Some(30));
+    }
+
+    #[test]
+    fn warning_suppressed_outside_threshold() {
+        // 23:00 UTC, 60 min remaining — outside the 30 min window.
+        let now = utc_at(2026, 5, 8, 23, 0);
+        let mins = compute_expiry_warning_minutes(ymd(2026, 5, 8), None, None, now, 30);
+        assert_eq!(mins, None);
+    }
+
+    #[test]
+    fn warning_suppressed_when_already_completed_today() {
+        // 23:50 UTC inside threshold, but today is already done.
+        let now = utc_at(2026, 5, 8, 23, 50);
+        let mins = compute_expiry_warning_minutes(
+            ymd(2026, 5, 8),
+            Some(ymd(2026, 5, 8)),
+            None,
+            now,
+            30,
+        );
+        assert_eq!(mins, None);
+    }
+
+    #[test]
+    fn warning_suppressed_when_yesterdays_completion_is_stale() {
+        // Yesterday's completion is irrelevant — we want to warn about today.
+        let now = utc_at(2026, 5, 8, 23, 50);
+        let mins = compute_expiry_warning_minutes(
+            ymd(2026, 5, 8),
+            Some(ymd(2026, 5, 7)),
+            None,
+            now,
+            30,
+        );
+        assert_eq!(mins, Some(10));
+    }
+
+    #[test]
+    fn warning_suppressed_when_already_shown_for_this_date() {
+        let now = utc_at(2026, 5, 8, 23, 50);
+        let mins = compute_expiry_warning_minutes(
+            ymd(2026, 5, 8),
+            None,
+            Some(ymd(2026, 5, 8)),
+            now,
+            30,
+        );
+        assert_eq!(mins, None);
+    }
+
+    #[test]
+    fn warning_fires_when_last_shown_was_yesterday() {
+        // Player kept the app open across a midnight rollover. Stale
+        // "shown" date doesn't suppress today's warning.
+        let now = utc_at(2026, 5, 8, 23, 50);
+        let mins = compute_expiry_warning_minutes(
+            ymd(2026, 5, 8),
+            None,
+            Some(ymd(2026, 5, 7)),
+            now,
+            30,
+        );
+        assert_eq!(mins, Some(10));
+    }
+
+    #[test]
+    fn check_system_fires_warning_event_only_once_per_day() {
+        // The pure helper is exhaustively tested above. This test verifies
+        // the system that consumes it correctly stores the "shown" date so
+        // the WarningToastEvent fires at most once per `daily.date`, even
+        // when the system runs many frames in a row inside the threshold.
+        //
+        // The system reads `Utc::now()` directly, so we can't pin the clock.
+        // Instead, we simulate the post-warning state by pre-populating
+        // `DailyExpiryWarningShown` with `daily.date` and asserting nothing
+        // fires; then we verify the symmetric "completed today" suppression.
+        let mut app = headless_app();
+        let today = app.world().resource::<DailyChallengeResource>().date;
+
+        // Pre-mark warning as already shown for today.
+        app.world_mut()
+            .resource_mut::<DailyExpiryWarningShown>()
+            .0 = Some(today);
+        app.update();
+        let events = app.world().resource::<Messages<WarningToastEvent>>();
+        let mut cursor = events.get_cursor();
+        assert!(
+            cursor.read(events).next().is_none(),
+            "no warning fires when DailyExpiryWarningShown already covers today"
+        );
+
+        // Reset shown, mark today as completed.
+        app.world_mut()
+            .resource_mut::<DailyExpiryWarningShown>()
+            .0 = None;
+        app.world_mut()
+            .resource_mut::<ProgressResource>()
+            .0
+            .daily_challenge_last_completed = Some(today);
+        app.update();
+        let events = app.world().resource::<Messages<WarningToastEvent>>();
+        let mut cursor = events.get_cursor();
+        assert!(
+            cursor.read(events).next().is_none(),
+            "no warning fires when today is already completed"
+        );
     }
 }

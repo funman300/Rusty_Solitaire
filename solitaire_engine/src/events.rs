@@ -212,6 +212,21 @@ pub struct SyncCompleteEvent(pub Result<SyncResponse, String>);
 #[derive(Message, Debug, Clone)]
 pub struct InfoToastEvent(pub String);
 
+/// Generic warning toast message. Spawns a fire-and-forget
+/// [`ToastVariant::Warning`](crate::animation_plugin::ToastVariant) toast.
+///
+/// Distinct from [`InfoToastEvent`] in two ways:
+/// 1. **Variant.** Warning carries the design-system warning border accent,
+///    not the neutral info accent — so the player can distinguish "you might
+///    want to act" from "here's some neutral information".
+/// 2. **No queue.** Warnings are alerts, not a stream. Each event spawns its
+///    own toast immediately rather than waiting for the info queue to drain.
+///
+/// First in-engine driver: daily-challenge expiry warning fired by
+/// `daily_challenge_plugin` when < 30 min from UTC midnight reset.
+#[derive(Message, Debug, Clone)]
+pub struct WarningToastEvent(pub String);
+
 /// Fired by `ProgressPlugin` immediately after awarding XP for a win so the
 /// animation layer can display a "+N XP" toast alongside the win cascade.
 #[derive(Message, Debug, Clone, Copy)]
