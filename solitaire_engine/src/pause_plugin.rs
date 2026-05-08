@@ -30,6 +30,7 @@ use crate::events::{
 use crate::font_plugin::FontResource;
 use crate::game_plugin::{GameOverScreen, GameStatePath};
 use crate::progress_plugin::ProgressResource;
+use crate::replay_playback::ReplayPlaybackState;
 use crate::resources::{DragState, GameStateResource};
 use crate::selection_plugin::{SelectionKeySet, SelectionState};
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource, SettingsStoragePath};
@@ -154,6 +155,7 @@ fn toggle_pause(
     mut drag: Option<ResMut<DragState>>,
     mut changed: MessageWriter<StateChangedEvent>,
     selection: Option<Res<SelectionState>>,
+    replay_state: Option<Res<ReplayPlaybackState>>,
 ) {
     let PauseModalQueries {
         pause_screens: screens,
@@ -182,6 +184,15 @@ fn toggle_pause(
     // (`button_clicked`) is gated too; clicking Pause while another
     // modal is up is almost always an accident.
     if !other_modal_scrims.is_empty() {
+        return;
+    }
+    // If a replay is currently playing, let `replay_overlay::handle_stop_keyboard`
+    // own the Esc press — that handler stops the replay. Without this guard a
+    // single Esc both stops the replay AND opens the pause modal on top of the
+    // (now empty) board, leaving the player on a screen they didn't ask for.
+    // The HUD-button path is gated too; clicking Pause while watching a replay
+    // is almost always an accident.
+    if replay_state.is_some_and(|s| s.is_playing()) {
         return;
     }
     // If a card is currently selected, let SelectionPlugin handle this Escape

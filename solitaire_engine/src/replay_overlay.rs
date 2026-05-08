@@ -286,6 +286,7 @@ impl Plugin for ReplayOverlayPlugin {
                     handle_pause_button,
                     handle_step_button,
                     handle_pause_keyboard,
+                    handle_stop_keyboard,
                     handle_stop_button,
                 )
                     .chain(),
@@ -776,11 +777,12 @@ fn keybind_footer_mode_text() -> &'static str {
 /// Pure helper — returns the keybind-hint text shown on the right
 /// side of the keybind-hint footer row. Lists only the keys that
 /// are *actually wired* today: the Space accelerator for
-/// pause/resume. Future commits that wire ESC for stop or ← / → for
-/// scrub will extend this string — the footer never lists
-/// unimplemented keybinds (would lie to users).
+/// pause/resume and the ESC accelerator for stop. Future commits
+/// that wire ← / → for prev/next move will extend this string —
+/// the footer never lists unimplemented keybinds (would lie to
+/// users).
 fn keybind_footer_hint_text() -> &'static str {
-    "[SPACE] pause/resume"
+    "[SPACE] pause/resume \u{00B7} [ESC] stop" // · separator
 }
 
 /// Pure helper — returns the WIN MOVE marker's left-edge position as
@@ -1081,6 +1083,37 @@ fn handle_pause_keyboard(
         return;
     }
     toggle_pause_replay_playback(&mut state);
+}
+
+/// Watches `Esc` for the keyboard stop accelerator. UI-first
+/// contract from CLAUDE.md §3.3 is satisfied by the on-screen
+/// Stop button; this is the optional accelerator.
+///
+/// Cross-plugin coordination: `pause_plugin::toggle_pause` also
+/// listens for `Esc` and would otherwise open the pause modal on
+/// the same press. The conflict is resolved by `toggle_pause`
+/// gating itself on `ReplayPlaybackState::is_playing()` —
+/// symmetrical to the existing `forfeit_screens` /
+/// `other_modal_scrims` defer-if pattern in that system. So during
+/// an active replay this handler owns the `Esc` press and the
+/// pause modal stays closed.
+///
+/// No-op when the playback isn't `Playing` (the resource may still
+/// exist as `Inactive` or `Completed`; only `Playing` means a
+/// replay is on screen for the player to stop).
+fn handle_stop_keyboard(
+    mut commands: Commands,
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mut state: ResMut<ReplayPlaybackState>,
+) {
+    let Some(keys) = keys else { return };
+    if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    if !state.is_playing() {
+        return;
+    }
+    stop_replay_playback(&mut commands, &mut state);
 }
 
 // ---------------------------------------------------------------------------
@@ -1916,8 +1949,8 @@ mod tests {
         );
         assert_eq!(
             keybind_footer_hint_text(),
-            "[SPACE] pause/resume",
-            "hint text must list only wired keybinds (Space → pause/resume)",
+            "[SPACE] pause/resume \u{00B7} [ESC] stop",
+            "hint text must list both wired keybinds (Space → pause/resume, Esc → stop) separated by a middle dot",
         );
     }
 
@@ -2165,6 +2198,82 @@ mod tests {
             }
             other => panic!("expected Playing, got {other:?}"),
         }
+    }
+
+    /// Pressing Esc while a replay is playing resets the state to
+    /// `Inactive` (same end-state as clicking the Stop button).
+    /// Mirrors `space_keyboard_toggles_paused_flag` for the stop
+    /// accelerator.
+    #[test]
+    fn esc_keyboard_stops_active_replay() {
+        let mut app = headless_app();
+        // The keyboard handler reads `Option<Res<ButtonInput<KeyCode>>>`
+        // and no-ops when missing — provide it for this test.
+        app.init_resource::<ButtonInput<KeyCode>>();
+        set_state(&mut app, running_state(5, 0));
+        app.update();
+        assert_eq!(overlay_root_count(&mut app), 1);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+
+        assert!(
+            matches!(
+                app.world().resource::<ReplayPlaybackState>(),
+                ReplayPlaybackState::Inactive
+            ),
+            "Esc must reset state to Inactive while replay is Playing",
+        );
+
+        // One more tick — `react_to_state_change` despawns the overlay
+        // in response to the state going Inactive.
+        app.update();
+        assert_eq!(
+            overlay_root_count(&mut app),
+            0,
+            "overlay must despawn the frame after Esc stops the replay",
+        );
+    }
+
+    /// Esc is a no-op when the replay isn't `Playing` — covers
+    /// `Inactive` (no replay attached) and `Completed` (auto-clear
+    /// underway). The handler must stay quiet so the global Esc
+    /// listeners (pause modal, etc.) own those frames.
+    #[test]
+    fn esc_keyboard_is_noop_when_not_playing() {
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        // Resource defaults to Inactive — no replay attached.
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+
+        // State stays Inactive — no spurious mutation.
+        assert!(matches!(
+            app.world().resource::<ReplayPlaybackState>(),
+            ReplayPlaybackState::Inactive
+        ));
+    }
+
+    /// The keybind-footer hint text now lists both wired
+    /// accelerators (Space + Esc). Lock the format so a future edit
+    /// that drops one or the other has to also update this test.
+    #[test]
+    fn keybind_footer_hint_lists_space_and_esc() {
+        let hint = keybind_footer_hint_text();
+        assert!(
+            hint.contains("[SPACE]"),
+            "hint must surface the Space accelerator; got {hint:?}",
+        );
+        assert!(
+            hint.contains("[ESC]"),
+            "hint must surface the Esc accelerator; got {hint:?}",
+        );
     }
 
     #[test]
