@@ -28,7 +28,10 @@ use chrono::Datelike;
 
 use crate::font_plugin::FontResource;
 use crate::layout::LayoutResource;
-use crate::replay_playback::{stop_replay_playback, ReplayPlaybackState};
+use crate::events::{DrawRequestEvent, MoveRequestEvent};
+use crate::replay_playback::{
+    step_replay_playback, stop_replay_playback, toggle_pause_replay_playback, ReplayPlaybackState,
+};
 use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
@@ -111,6 +114,24 @@ pub struct ReplayFloatingProgressChip;
 #[derive(Component, Debug)]
 pub struct ReplayStopButton;
 
+/// Marker on the Pause / Resume button. Click handler queries for this
+/// and calls [`toggle_pause_replay_playback`] on each press. The
+/// button's label text is repainted in lockstep by
+/// `update_pause_button_label` so it always reflects the action the
+/// next click will perform ("Pause" while running, "Resume" while
+/// paused).
+#[derive(Component, Debug)]
+pub struct ReplayPauseButton;
+
+/// Marker on the Step button. Click handler queries for this and
+/// calls [`step_replay_playback`] — only meaningful when paused
+/// (clicks while running are no-ops because the tick loop would race
+/// the manual advance). The button stays visually present but
+/// unresponsive while the playback is running so the player has a
+/// stable layout to scan.
+#[derive(Component, Debug)]
+pub struct ReplayStepButton;
+
 /// Marker on the small caption sitting below the "▌ replay"
 /// headline. Carries `GAME #YYYY-DDD` (year + chrono ordinal) while a
 /// replay is playing — a compact, monotonically-increasing identifier
@@ -177,18 +198,30 @@ impl Plugin for ReplayOverlayPlugin {
         // Putting Stop last means a click in frame N is observed by
         // `react_to_state_change` in frame N+1, which then despawns the
         // overlay in response — a clean state-driven loop.
-        app.add_systems(
-            Update,
-            (
-                react_to_state_change,
-                update_banner_label,
-                update_progress_text,
-                update_floating_progress_chip,
-                update_scrub_fill,
-                handle_stop_button,
-            )
-                .chain(),
-        );
+        // Step-button handler dispatches into the same canonical move
+        // / draw events that the tick loop fires. Register them
+        // defensively here so this plugin can run under
+        // `MinimalPlugins` without the playback plugin attached;
+        // `add_message` is idempotent so the duplicate registration
+        // in production (alongside `replay_playback`) is harmless.
+        app.add_message::<MoveRequestEvent>()
+            .add_message::<DrawRequestEvent>()
+            .add_systems(
+                Update,
+                (
+                    react_to_state_change,
+                    update_banner_label,
+                    update_progress_text,
+                    update_floating_progress_chip,
+                    update_scrub_fill,
+                    update_pause_button_label,
+                    handle_pause_button,
+                    handle_step_button,
+                    handle_pause_keyboard,
+                    handle_stop_button,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -374,6 +407,27 @@ fn spawn_overlay(
                         ..default()
                     })
                     .with_children(|wrap| {
+                        // Pause / Resume label is set from the current
+                        // state so a freshly-spawned overlay (which
+                        // currently always starts unpaused) reads
+                        // "Pause". `update_pause_button_label`
+                        // repaints it whenever the state changes.
+                        spawn_modal_button(
+                            wrap,
+                            ReplayPauseButton,
+                            pause_button_label(state),
+                            None,
+                            ButtonVariant::Tertiary,
+                            font_res,
+                        );
+                        spawn_modal_button(
+                            wrap,
+                            ReplayStepButton,
+                            "Step",
+                            None,
+                            ButtonVariant::Tertiary,
+                            font_res,
+                        );
                         spawn_modal_button(
                             wrap,
                             ReplayStopButton,
@@ -670,8 +724,21 @@ fn format_progress(state: &ReplayPlaybackState) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Stop button handler
+// Playback-control button handlers
 // ---------------------------------------------------------------------------
+
+/// Pure helper — returns the label the Pause / Resume button should
+/// carry for the given state. "Pause" while running, "Resume" while
+/// paused, empty otherwise (the button is despawned with the rest of
+/// the overlay tree on transitions to `Inactive` / `Completed`, so
+/// the empty branch only fires for one frame around state changes).
+fn pause_button_label(state: &ReplayPlaybackState) -> &'static str {
+    match state {
+        ReplayPlaybackState::Playing { paused: true, .. } => "Resume",
+        ReplayPlaybackState::Playing { paused: false, .. } => "Pause",
+        ReplayPlaybackState::Inactive | ReplayPlaybackState::Completed => "",
+    }
+}
 
 /// Watches the Stop button for `Interaction::Pressed` transitions. On a
 /// click, calls [`stop_replay_playback`] which resets the state to
@@ -686,6 +753,82 @@ fn handle_stop_button(
         return;
     }
     stop_replay_playback(&mut commands, &mut state);
+}
+
+/// Watches the Pause / Resume button for `Interaction::Pressed`
+/// transitions. On a click, toggles the `paused` flag via
+/// [`toggle_pause_replay_playback`]. The label repaint happens in
+/// [`update_pause_button_label`] on the same frame the state mutation
+/// flushes.
+fn handle_pause_button(
+    mut state: ResMut<ReplayPlaybackState>,
+    buttons: Query<&Interaction, (With<ReplayPauseButton>, Changed<Interaction>)>,
+) {
+    if !buttons.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    toggle_pause_replay_playback(&mut state);
+}
+
+/// Watches the Step button for `Interaction::Pressed` transitions. On
+/// a click, advances exactly one move via [`step_replay_playback`].
+/// No-op while playback is unpaused (would race the tick loop) — the
+/// guard lives inside `step_replay_playback`.
+fn handle_step_button(
+    mut state: ResMut<ReplayPlaybackState>,
+    mut moves_writer: MessageWriter<MoveRequestEvent>,
+    mut draws_writer: MessageWriter<DrawRequestEvent>,
+    buttons: Query<&Interaction, (With<ReplayStepButton>, Changed<Interaction>)>,
+) {
+    if !buttons.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    step_replay_playback(&mut state, &mut moves_writer, &mut draws_writer);
+}
+
+/// Repaints the Pause / Resume button's label whenever
+/// [`ReplayPlaybackState`] changes. Walks from the marked button
+/// entity to its single child [`Text`] so the spawn path doesn't need
+/// a second marker on the inner node.
+fn update_pause_button_label(
+    state: Res<ReplayPlaybackState>,
+    buttons: Query<&Children, With<ReplayPauseButton>>,
+    mut texts: Query<&mut Text>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    let label = pause_button_label(&state);
+    if label.is_empty() {
+        // Overlay is mid-teardown; the button entity will despawn
+        // this frame anyway. Skip the repaint to avoid touching a
+        // doomed entity.
+        return;
+    }
+    for children in &buttons {
+        for child in children.iter() {
+            if let Ok(mut text) = texts.get_mut(child) {
+                text.0 = label.to_string();
+                break;
+            }
+        }
+    }
+}
+
+/// Watches `Space` for the keyboard pause / resume accelerator.
+/// UI-first contract from CLAUDE.md §3.3 is satisfied by the on-
+/// screen Pause / Resume button; this is the optional accelerator.
+/// No-op when the playback isn't `Playing` (e.g. while a modal is
+/// open and the player is using `Space` for something else).
+fn handle_pause_keyboard(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mut state: ResMut<ReplayPlaybackState>,
+) {
+    let Some(keys) = keys else { return };
+    if !keys.just_pressed(KeyCode::Space) {
+        return;
+    }
+    toggle_pause_replay_playback(&mut state);
 }
 
 // ---------------------------------------------------------------------------
@@ -788,6 +931,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -811,6 +955,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 5,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -831,6 +976,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -887,6 +1033,7 @@ mod tests {
                 replay: synthetic_replay(5),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -923,6 +1070,7 @@ mod tests {
                 replay: synthetic_replay(3),
                 cursor: 1,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -950,6 +1098,7 @@ mod tests {
                 replay: synthetic_replay(7),
                 cursor: 7,
                 secs_to_next: 0.0,
+                paused: false,
             },
         );
         app.update();
@@ -1003,6 +1152,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             }),
             0.0,
         );
@@ -1011,6 +1161,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 5,
                 secs_to_next: 0.5,
+                paused: false,
             }),
             50.0,
         );
@@ -1019,6 +1170,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 10,
                 secs_to_next: 0.5,
+                paused: false,
             }),
             100.0,
         );
@@ -1053,6 +1205,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 5,
                 secs_to_next: 0.5,
+                paused: false,
             }),
             Some("GAME #2026-122".to_string()),
         );
@@ -1066,6 +1219,7 @@ mod tests {
                 replay: early_january,
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             }),
             Some("GAME #2026-005".to_string()),
         );
@@ -1083,6 +1237,7 @@ mod tests {
                 replay: synthetic_replay(10),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -1114,6 +1269,7 @@ mod tests {
                 replay: synthetic_replay(8),
                 cursor: 2,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -1129,6 +1285,7 @@ mod tests {
                 replay: synthetic_replay(8),
                 cursor: 6,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -1178,6 +1335,7 @@ mod tests {
             replay: synthetic_replay(10),
             cursor: 0,
             secs_to_next: 0.5,
+            paused: false,
         };
         assert_eq!(win_move_marker_pct(&state), None);
     }
@@ -1191,6 +1349,7 @@ mod tests {
             replay: synthetic_replay(10).with_win_move_index(Some(9)),
             cursor: 0,
             secs_to_next: 0.5,
+            paused: false,
         };
         assert_eq!(win_move_marker_pct(&state), Some(90.0));
     }
@@ -1203,6 +1362,7 @@ mod tests {
             replay: synthetic_replay(5).with_win_move_index(Some(99)),
             cursor: 0,
             secs_to_next: 0.5,
+            paused: false,
         };
         assert_eq!(win_move_marker_pct(&state), Some(100.0));
     }
@@ -1216,6 +1376,7 @@ mod tests {
                 replay: synthetic_replay(8).with_win_move_index(Some(7)),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -1236,6 +1397,7 @@ mod tests {
                 replay: synthetic_replay(8),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -1255,6 +1417,7 @@ mod tests {
                 replay: synthetic_replay(8).with_win_move_index(Some(7)),
                 cursor: 0,
                 secs_to_next: 0.5,
+                paused: false,
             },
         );
         app.update();
@@ -1267,5 +1430,168 @@ mod tests {
             0,
             "marker must despawn with the rest of the overlay tree"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // pause_button_label + pause / step click handlers + keyboard accelerator
+    // -----------------------------------------------------------------------
+
+    /// Read the current text content of the unique pause / resume button.
+    fn pause_button_text(app: &mut App) -> String {
+        let world = app.world_mut();
+        let mut button_q = world.query_filtered::<&Children, With<ReplayPauseButton>>();
+        let children: Vec<Entity> = button_q
+            .iter(world)
+            .next()
+            .map(|c| c.iter().collect())
+            .unwrap_or_default();
+        let mut text_q = world.query::<&Text>();
+        for child in children {
+            if let Ok(text) = text_q.get(world, child) {
+                return text.0.clone();
+            }
+        }
+        String::new()
+    }
+
+    /// Find the unique entity carrying the given button marker.
+    fn unique_button<M: Component>(app: &mut App) -> Entity {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<Entity, With<M>>();
+        q.iter(world).next().expect("button entity must exist")
+    }
+
+    fn pressed_paused_state(replay_len: usize, cursor: usize) -> ReplayPlaybackState {
+        ReplayPlaybackState::Playing {
+            replay: synthetic_replay(replay_len),
+            cursor,
+            secs_to_next: 0.5,
+            paused: true,
+        }
+    }
+
+    fn running_state(replay_len: usize, cursor: usize) -> ReplayPlaybackState {
+        ReplayPlaybackState::Playing {
+            replay: synthetic_replay(replay_len),
+            cursor,
+            secs_to_next: 0.5,
+            paused: false,
+        }
+    }
+
+    #[test]
+    fn pause_button_label_reads_pause_when_running() {
+        assert_eq!(pause_button_label(&running_state(5, 0)), "Pause");
+    }
+
+    #[test]
+    fn pause_button_label_reads_resume_when_paused() {
+        assert_eq!(pause_button_label(&pressed_paused_state(5, 0)), "Resume");
+    }
+
+    #[test]
+    fn pause_button_label_is_empty_off_state() {
+        assert_eq!(pause_button_label(&ReplayPlaybackState::Inactive), "");
+        assert_eq!(pause_button_label(&ReplayPlaybackState::Completed), "");
+    }
+
+    #[test]
+    fn pause_button_text_swaps_when_state_pauses() {
+        let mut app = headless_app();
+        set_state(&mut app, running_state(5, 0));
+        app.update();
+        assert_eq!(pause_button_text(&mut app), "Pause");
+
+        set_state(&mut app, pressed_paused_state(5, 0));
+        app.update();
+        assert_eq!(
+            pause_button_text(&mut app),
+            "Resume",
+            "label must repaint to Resume on the frame the state pauses"
+        );
+    }
+
+    #[test]
+    fn pause_button_click_toggles_paused_flag() {
+        let mut app = headless_app();
+        set_state(&mut app, running_state(5, 0));
+        app.update();
+
+        let button = unique_button::<ReplayPauseButton>(&mut app);
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { paused, .. } => {
+                assert!(*paused, "click must flip running → paused");
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn step_button_click_advances_cursor_while_paused() {
+        let mut app = headless_app();
+        set_state(&mut app, pressed_paused_state(5, 0));
+        app.update();
+
+        let button = unique_button::<ReplayStepButton>(&mut app);
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, paused, .. } => {
+                assert_eq!(*cursor, 1, "step must advance the cursor by exactly one");
+                assert!(*paused, "step must leave the paused flag untouched");
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn step_button_click_is_noop_while_running() {
+        let mut app = headless_app();
+        set_state(&mut app, running_state(5, 0));
+        app.update();
+
+        let button = unique_button::<ReplayStepButton>(&mut app);
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, paused, .. } => {
+                assert_eq!(*cursor, 0, "running-step must not race the tick loop");
+                assert!(!*paused);
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn space_keyboard_toggles_paused_flag() {
+        let mut app = headless_app();
+        // The keyboard handler reads `Option<Res<ButtonInput<KeyCode>>>`
+        // and no-ops when missing — provide it for this test.
+        app.init_resource::<ButtonInput<KeyCode>>();
+        set_state(&mut app, running_state(5, 0));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { paused, .. } => {
+                assert!(*paused, "Space must toggle running → paused");
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
     }
 }

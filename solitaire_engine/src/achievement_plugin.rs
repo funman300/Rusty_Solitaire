@@ -1445,6 +1445,7 @@ mod tests {
                 replay: dummy_replay(),
                 cursor: 0,
                 secs_to_next: 0.0,
+                paused: false,
             };
         app.update();
         assert!(
@@ -1480,6 +1481,7 @@ mod tests {
                 replay: dummy_replay(),
                 cursor: 0,
                 secs_to_next: 0.0,
+                paused: false,
             };
         app.update();
 
@@ -1512,6 +1514,7 @@ mod tests {
                 replay: dummy_replay(),
                 cursor: 0,
                 secs_to_next: 0.0,
+                paused: false,
             };
         app.update();
         *app.world_mut().resource_mut::<ReplayPlaybackState>() =
@@ -1534,6 +1537,7 @@ mod tests {
                 replay: dummy_replay(),
                 cursor: 0,
                 secs_to_next: 0.0,
+                paused: false,
             };
         app.update();
         *app.world_mut().resource_mut::<ReplayPlaybackState>() =
@@ -1559,6 +1563,7 @@ mod tests {
                 replay: dummy_replay(),
                 cursor: 0,
                 secs_to_next: 0.0,
+                paused: false,
             };
         app.update();
         *app.world_mut().resource_mut::<ReplayPlaybackState>() =

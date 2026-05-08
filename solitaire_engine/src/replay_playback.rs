@@ -119,6 +119,15 @@ pub enum ReplayPlaybackState {
         cursor: usize,
         /// Seconds remaining until the next move is dispatched.
         secs_to_next: f32,
+        /// `true` while playback is paused — `tick_replay_playback`
+        /// skips the `secs_to_next` decrement entirely while this is
+        /// set, so the cursor and the timer freeze together. The
+        /// overlay stays mounted (`is_playing()` still returns
+        /// `true`) so the player can see the paused state and the
+        /// Resume / Step controls. Stepping while paused fires the
+        /// next move directly via [`step_replay_playback`] and
+        /// leaves the paused flag untouched.
+        paused: bool,
     },
     /// The replay finished playing back. The overlay swaps the banner
     /// label to "Replay complete" until [`auto_clear_completed_replay`]
@@ -194,6 +203,7 @@ pub fn start_replay_playback(
         replay,
         cursor: 0,
         secs_to_next: REPLAY_MOVE_INTERVAL_SECS,
+        paused: false,
     };
 }
 
@@ -217,6 +227,61 @@ pub fn stop_replay_playback(
     state: &mut ResMut<ReplayPlaybackState>,
 ) {
     **state = ReplayPlaybackState::Inactive;
+}
+
+/// Toggle the `paused` flag on the active playback. No-op when not
+/// `Playing` (i.e. `Inactive` or `Completed`) — pause has no meaning
+/// in those states. Returns the new paused value, or `None` if the
+/// state wasn't `Playing`.
+pub fn toggle_pause_replay_playback(state: &mut ResMut<ReplayPlaybackState>) -> Option<bool> {
+    if let ReplayPlaybackState::Playing { paused, .. } = state.as_mut() {
+        *paused = !*paused;
+        Some(*paused)
+    } else {
+        None
+    }
+}
+
+/// Advance playback by exactly one move. Only meaningful while paused
+/// — when called on an unpaused playback it would race the
+/// `tick_replay_playback` loop. Returns `true` when a move was fired,
+/// `false` when no-op (state isn't `Playing { paused: true }` or the
+/// cursor is already at the end of the move list).
+///
+/// Stepping the last move transitions the state to `Completed` on
+/// the next `tick_replay_playback` frame — same end-of-list path the
+/// normal advance loop takes.
+pub fn step_replay_playback(
+    state: &mut ResMut<ReplayPlaybackState>,
+    moves_writer: &mut MessageWriter<MoveRequestEvent>,
+    draws_writer: &mut MessageWriter<DrawRequestEvent>,
+) -> bool {
+    let ReplayPlaybackState::Playing {
+        replay,
+        cursor,
+        paused: true,
+        ..
+    } = state.as_mut()
+    else {
+        return false;
+    };
+    if *cursor >= replay.moves.len() {
+        return false;
+    }
+    match &replay.moves[*cursor] {
+        ReplayMove::Move { from, to, count } => {
+            moves_writer.write(MoveRequestEvent {
+                from: from.clone(),
+                to: to.clone(),
+                count: *count,
+            });
+        }
+        ReplayMove::StockClick => {
+            draws_writer.write(DrawRequestEvent);
+        }
+    }
+    *cursor += 1;
+    true
 }
 
 /// Tick system. Runs every frame; only does work when
@@ -249,28 +314,36 @@ fn tick_replay_playback(
         replay,
         cursor,
         secs_to_next,
+        paused,
     } = state.as_mut()
     {
-        *secs_to_next -= dt;
-        while *secs_to_next <= 0.0 && *cursor < replay.moves.len() {
-            match &replay.moves[*cursor] {
-                ReplayMove::Move { from, to, count } => {
-                    moves_writer.write(MoveRequestEvent {
-                        from: from.clone(),
-                        to: to.clone(),
-                        count: *count,
-                    });
+        // While paused, the cursor and the timer freeze together —
+        // skip the decrement entirely so resuming starts the next
+        // move from a full `secs_to_next` window. Stepping (handled
+        // separately) fires moves directly without touching this
+        // path.
+        if !*paused {
+            *secs_to_next -= dt;
+            while *secs_to_next <= 0.0 && *cursor < replay.moves.len() {
+                match &replay.moves[*cursor] {
+                    ReplayMove::Move { from, to, count } => {
+                        moves_writer.write(MoveRequestEvent {
+                            from: from.clone(),
+                            to: to.clone(),
+                            count: *count,
+                        });
+                    }
+                    ReplayMove::StockClick => {
+                        draws_writer.write(DrawRequestEvent);
+                    }
                 }
-                ReplayMove::StockClick => {
-                    draws_writer.write(DrawRequestEvent);
-                }
+                *cursor += 1;
+                *secs_to_next += interval;
             }
-            *cursor += 1;
-            *secs_to_next += interval;
-        }
 
-        if *cursor >= replay.moves.len() {
-            transition_to_completed = true;
+            if *cursor >= replay.moves.len() {
+                transition_to_completed = true;
+            }
         }
     }
 
