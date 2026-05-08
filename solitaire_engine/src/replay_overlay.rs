@@ -61,20 +61,29 @@ pub const Z_REPLAY_OVERLAY: i32 = Z_DROP_OVERLAY as i32 + 5;
 /// gameplay surface visible underneath, tall enough to comfortably fit
 /// the headline-sized "▌ replay" label stacked above the
 /// `TYPE_CAPTION` "GAME #YYYY-DDD" subtitle (the left column needs
-/// ~26 + 2 + 11 = 39 px of inner content; banner = scrub (1) + label
-/// row (16) + vertical padding (16) + content gives 76 with a few px
-/// headroom).
+/// ~26 + 2 + 11 = 39 px of inner content; banner = top row (59
+/// flex-grow) + scrub track (1) + label row (16) + footer (16)
+/// gives 92).
 ///
-/// Grew from 60 → 76 in the scrub-notch-labels commit to make room
-/// for the percentage labels (`0%` / `25%` / … / `100%`) under each
-/// notch on the scrub track.
-const BANNER_HEIGHT: f32 = 76.0;
+/// Growth history:
+/// - 60 → 76 in the scrub-notch-labels commit to make room for the
+///   `0%` / … / `100%` percentage labels under each notch.
+/// - 76 → 92 in the keybind-footer commit to make room for the
+///   vim-style mode line + keybind-hint footer at the bottom.
+const BANNER_HEIGHT: f32 = 92.0;
 
 /// Height of the label row that sits below the 1px scrub track and
 /// carries the `0%` / `25%` / `50%` / `75%` / `100%` notch labels.
 /// 16 px is enough for `TYPE_CAPTION` text (12 px font + 4 px breathing
 /// room above the bottom edge).
 const SCRUB_LABEL_ROW_HEIGHT: f32 = 16.0;
+
+/// Height of the keybind-hint footer that sits below the notch-label
+/// row. Carries a vim-style mode indicator on the left and a
+/// keybind-hint on the right (`[SPACE] pause/resume`). 16 px matches
+/// `SCRUB_LABEL_ROW_HEIGHT` for visual symmetry — `TYPE_CAPTION` text
+/// (12 px) + 4 px breathing room.
+const KEYBIND_FOOTER_HEIGHT: f32 = 16.0;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
@@ -217,6 +226,21 @@ pub struct ReplayOverlayScrubNotch;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayScrubNotchLabel;
 
+/// Marker on the keybind-hint footer row at the bottom edge of the
+/// banner. Carries two `Text` children: a vim-style mode indicator
+/// (`▌ NORMAL │ replay`) on the left and the keybind hint
+/// (`[SPACE] pause/resume`) on the right. 1 px top border in
+/// [`BORDER_SUBTLE`] separates it from the notch-label row above.
+///
+/// Surfaces the existing Space-key accelerator visually so the
+/// UI-first contract from CLAUDE.md §3.3 (every player action has
+/// a visible UI control) holds for keyboard accelerators too.
+/// Future commits that wire ESC for stop or ← / → for scrub will
+/// extend the right-hand text in lockstep — the footer always
+/// reflects what's actually wired, never aspirational.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayKeybindFooter;
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -325,11 +349,14 @@ fn spawn_overlay(
     // the original `font_handle`. Cheap — Bevy's `Handle<Font>` is
     // `Arc`-backed, the clone bumps a refcount.
     let font_handle_for_floating = font_handle.clone();
-    // Second clone for the scrub-bar label row inside the outer
-    // banner closure. The inner top-row closure consumes the
-    // original `font_handle` for the progress-chip text, so by the
-    // time the outer closure reaches the label-row spawn the
-    // original is gone.
+    // Second clone for the scrub-bar label row and keybind footer
+    // inside the outer banner closure. The inner top-row closure
+    // consumes the original `font_handle` for the progress-chip
+    // text, so by the time the outer closure reaches the
+    // label-row / footer spawns the original is gone.
+    // `font_handle_for_labels` is `.clone()`'d (never moved) inside
+    // the labels closure, so it's still alive for the footer
+    // spawn afterwards — single shared clone covers both.
     let font_handle_for_labels = font_handle.clone();
 
     let banner_label = if state.is_completed() {
@@ -630,6 +657,49 @@ fn spawn_overlay(
                         ));
                     }
                 });
+
+            // Fourth banner row: keybind-hint footer. Vim-style
+            // mode line on the left (`▌ NORMAL │ replay`), keybind
+            // hint on the right (`[SPACE] pause/resume`), 1px top
+            // border in BORDER_SUBTLE separating it from the
+            // labels row above. Surfaces the existing Space
+            // accelerator visually so CLAUDE.md §3.3's UI-first
+            // contract holds for keyboard accelerators too.
+            banner
+                .spawn((
+                    ReplayOverlayKeybindFooter,
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(KEYBIND_FOOTER_HEIGHT),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::horizontal(VAL_SPACE_4),
+                        border: UiRect::top(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor::all(BORDER_SUBTLE),
+                ))
+                .with_children(|footer| {
+                    footer.spawn((
+                        Text::new(keybind_footer_mode_text()),
+                        TextFont {
+                            font: font_handle_for_labels.clone(),
+                            font_size: TYPE_CAPTION,
+                            ..default()
+                        },
+                        TextColor(TEXT_SECONDARY),
+                    ));
+                    footer.spawn((
+                        Text::new(keybind_footer_hint_text()),
+                        TextFont {
+                            font: font_handle_for_labels.clone(),
+                            font_size: TYPE_CAPTION,
+                            ..default()
+                        },
+                        TextColor(TEXT_SECONDARY),
+                    ));
+                });
         });
 
     // Floating progress chip — a 2D world-space `Text2d` rendered
@@ -691,6 +761,26 @@ fn scrub_notch_positions() -> [f32; 5] {
 /// `100%` → `MAX`) rather than at visual review.
 fn scrub_notch_labels() -> [&'static str; 5] {
     ["0%", "25%", "50%", "75%", "100%"]
+}
+
+/// Pure helper — returns the vim-style mode indicator text shown on
+/// the left side of the keybind-hint footer row. `▌ NORMAL │ replay`
+/// matches the `▌replay.tsx` motif from the splash boot-screen and
+/// the screen-takeover mockup. The cursor block (`▌`) matches the
+/// banner-label prefix; "NORMAL" is the vim mode (mockup parity);
+/// "replay" identifies the surface.
+fn keybind_footer_mode_text() -> &'static str {
+    "\u{258C} NORMAL \u{2502} replay" // ▌ NORMAL │ replay
+}
+
+/// Pure helper — returns the keybind-hint text shown on the right
+/// side of the keybind-hint footer row. Lists only the keys that
+/// are *actually wired* today: the Space accelerator for
+/// pause/resume. Future commits that wire ESC for stop or ← / → for
+/// scrub will extend this string — the footer never lists
+/// unimplemented keybinds (would lie to users).
+fn keybind_footer_hint_text() -> &'static str {
+    "[SPACE] pause/resume"
 }
 
 /// Pure helper — returns the WIN MOVE marker's left-edge position as
@@ -1781,6 +1871,133 @@ mod tests {
             scrub_notch_label_count(&mut app),
             0,
             "labels must despawn with the rest of the overlay tree",
+        );
+    }
+
+    fn keybind_footer_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayKeybindFooter>()
+            .iter(app.world())
+            .count()
+    }
+
+    /// Returns every `Text` rendered as a descendant of the
+    /// keybind-footer row. Used to assert the mode + hint texts
+    /// appear inside the footer without requiring per-text markers.
+    fn keybind_footer_text_set(app: &mut App) -> Vec<String> {
+        let world = app.world_mut();
+        // Find the footer entity, then walk its descendants for `Text`.
+        let mut footer_q = world.query_filtered::<Entity, With<ReplayOverlayKeybindFooter>>();
+        let Some(footer) = footer_q.iter(world).next() else {
+            return Vec::new();
+        };
+        let mut child_q = world.query::<&Children>();
+        let Ok(children) = child_q.get(world, footer) else {
+            return Vec::new();
+        };
+        let child_entities: Vec<Entity> = children.iter().collect();
+        let mut text_q = world.query::<&Text>();
+        child_entities
+            .into_iter()
+            .filter_map(|e| text_q.get(world, e).ok().map(|t| t.0.clone()))
+            .collect()
+    }
+
+    /// Pure-helper guards for the static text strings. Pin both
+    /// helpers so a future refactor that reformats the mode line
+    /// or extends the hint with un-wired keybinds fails at the
+    /// helper test rather than at visual review.
+    #[test]
+    fn keybind_footer_helpers_carry_expected_text() {
+        assert_eq!(
+            keybind_footer_mode_text(),
+            "\u{258C} NORMAL \u{2502} replay",
+            "mode line must read as the cursor-block + NORMAL + bar + replay motif",
+        );
+        assert_eq!(
+            keybind_footer_hint_text(),
+            "[SPACE] pause/resume",
+            "hint text must list only wired keybinds (Space → pause/resume)",
+        );
+    }
+
+    /// Footer entity spawns alongside the rest of the overlay tree
+    /// on `Inactive → Playing`. Cardinality is exactly one — the
+    /// footer is a singleton row, not a per-keybind multiple.
+    #[test]
+    fn keybind_footer_spawns_with_overlay() {
+        let mut app = headless_app();
+        app.update();
+        assert_eq!(keybind_footer_count(&mut app), 0);
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            keybind_footer_count(&mut app),
+            1,
+            "exactly one keybind-footer row must spawn with the overlay",
+        );
+    }
+
+    /// Spawned footer carries both helper strings as direct-child
+    /// `Text` content — pins the spawn-path against drift between
+    /// the helpers and the actual painted text.
+    #[test]
+    fn keybind_footer_paints_helper_strings() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        let texts = keybind_footer_text_set(&mut app);
+        assert!(
+            texts.contains(&keybind_footer_mode_text().to_string()),
+            "footer must contain the mode-line text; got {texts:?}",
+        );
+        assert!(
+            texts.contains(&keybind_footer_hint_text().to_string()),
+            "footer must contain the keybind-hint text; got {texts:?}",
+        );
+    }
+
+    /// Footer shares the overlay tree's lifecycle — it despawns on
+    /// `Playing → Inactive` along with the banner root.
+    #[test]
+    fn keybind_footer_despawns_with_overlay() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(keybind_footer_count(&mut app), 1);
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            keybind_footer_count(&mut app),
+            0,
+            "footer must despawn with the rest of the overlay tree",
         );
     }
 
