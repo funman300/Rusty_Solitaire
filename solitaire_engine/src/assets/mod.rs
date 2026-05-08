@@ -6,6 +6,7 @@
 //! (user-themes directory). Phase 3 will extend it further with custom
 //! `AssetSource` implementations for `embedded://` and `themes://`.
 
+pub mod card_face_svg;
 pub mod sources;
 pub mod svg_loader;
 pub mod user_dir;

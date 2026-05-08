@@ -1,0 +1,210 @@
+//! SVG builders for the Terminal-aesthetic card-face artwork.
+//!
+//! Used by the `card_face_generator` example to emit the 52 face PNGs +
+//! 5 back PNGs into `assets/cards/`, and by the `card_face_svg_pin`
+//! integration test to pin the rendered output against `usvg`/`resvg`
+//! drift.
+//!
+//! The numbers below are 2× the `design-system.md` § Game Cards
+//! logical sizes — the spec describes a 128 × 192 logical card and
+//! this module emits at 256 × 384.
+//!
+//! See `docs/ui-mockups/card-face-migration.md` for the full
+//! migration plan and the rationale behind the output dimensions
+//! and palette mapping.
+//!
+//! # Filled vs outlined glyphs
+//!
+//! Hearts (♥) and spades (♠) render as filled glyphs. Diamonds (♦)
+//! and clubs (♣) render as outlined glyphs (1.5 px stroke at logical
+//! scale → 3 px at output). This is the design-system's "always-on"
+//! color-blind glyph differentiation and is independent of the
+//! red/black colour split.
+
+use bevy::math::UVec2;
+use solitaire_core::card::{Rank, Suit};
+
+/// Target rasterisation size in pixels (2:3 aspect, half the default
+/// `SvgLoaderSettings` resolution).
+pub const TARGET: UVec2 = UVec2::new(256, 384);
+
+const BG_FACE: &str = "#1a1a1a"; // BG_ELEVATED — face background
+const SUIT_RED: &str = "#fb9fb1"; // hearts + diamonds
+const SUIT_DARK: &str = "#d0d0d0"; // spades + clubs (also TEXT_PRIMARY)
+
+const BACK_BG: &str = "#151515";
+const BACK_SCANLINE: &str = "#1a1a1a";
+const BACK_BORDER: &str = "#353535";
+const BACK_MONOGRAM: &str = "#505050";
+
+/// Five back-theme accent colours. Slot 0 is the canonical "Terminal"
+/// back from the design system; the other four cycle through the
+/// remaining base16-eighties accents so all 5 slots stay visually
+/// distinct without leaving the palette.
+pub const BACK_ACCENTS: [&str; 5] = [
+    "#6fc2ef", // 0 — cyan (Terminal canonical)
+    "#acc267", // 1 — lime
+    "#e1a3ee", // 2 — lavender
+    "#fb9fb1", // 3 — pink
+    "#ddb26f", // 4 — gold
+];
+
+/// Every rank in the canonical Ace → King order. Mirrors the order
+/// `card_plugin::load_card_images` uses to index `CardImageSet.faces`.
+pub const ALL_RANKS: [Rank; 13] = [
+    Rank::Ace,
+    Rank::Two,
+    Rank::Three,
+    Rank::Four,
+    Rank::Five,
+    Rank::Six,
+    Rank::Seven,
+    Rank::Eight,
+    Rank::Nine,
+    Rank::Ten,
+    Rank::Jack,
+    Rank::Queen,
+    Rank::King,
+];
+
+/// Every suit in `Clubs, Diamonds, Hearts, Spades` order — matches
+/// `card_plugin::load_card_images` so the suit index used here lines
+/// up with `CardImageSet.faces[suit]`.
+pub const ALL_SUITS: [Suit; 4] = [Suit::Clubs, Suit::Diamonds, Suit::Hearts, Suit::Spades];
+
+/// The rank component of the on-disk filename — `A`, `2`..`10`, `J`,
+/// `Q`, `K`. Matches `card_plugin::load_card_images`'s `RANK_STRS`.
+pub fn rank_filename(rank: Rank) -> &'static str {
+    match rank {
+        Rank::Ace => "A",
+        Rank::Two => "2",
+        Rank::Three => "3",
+        Rank::Four => "4",
+        Rank::Five => "5",
+        Rank::Six => "6",
+        Rank::Seven => "7",
+        Rank::Eight => "8",
+        Rank::Nine => "9",
+        Rank::Ten => "10",
+        Rank::Jack => "J",
+        Rank::Queen => "Q",
+        Rank::King => "K",
+    }
+}
+
+/// The suit component of the on-disk filename — `C`, `D`, `H`, `S`.
+/// Matches `card_plugin::load_card_images`'s `SUIT_CHARS`.
+pub fn suit_filename(suit: Suit) -> &'static str {
+    match suit {
+        Suit::Clubs => "C",
+        Suit::Diamonds => "D",
+        Suit::Hearts => "H",
+        Suit::Spades => "S",
+    }
+}
+
+#[derive(Copy, Clone)]
+enum GlyphPaint {
+    Filled,
+    /// 1.5 px stroke at logical scale → 3 px at 2× output.
+    Outlined,
+}
+
+fn suit_paint(suit: Suit) -> (&'static str, GlyphPaint) {
+    match suit {
+        Suit::Hearts => (SUIT_RED, GlyphPaint::Filled),
+        Suit::Diamonds => (SUIT_RED, GlyphPaint::Outlined),
+        Suit::Spades => (SUIT_DARK, GlyphPaint::Filled),
+        Suit::Clubs => (SUIT_DARK, GlyphPaint::Outlined),
+    }
+}
+
+fn glyph_paint_attrs(colour: &str, paint: GlyphPaint) -> String {
+    match paint {
+        GlyphPaint::Filled => format!(r#"fill="{colour}""#),
+        GlyphPaint::Outlined => {
+            format!(r#"fill="none" stroke="{colour}" stroke-width="3""#)
+        }
+    }
+}
+
+fn suit_glyph(suit: Suit) -> &'static str {
+    match suit {
+        Suit::Clubs => "&#x2663;",
+        Suit::Diamonds => "&#x2666;",
+        Suit::Hearts => "&#x2665;",
+        Suit::Spades => "&#x2660;",
+    }
+}
+
+/// Build the SVG markup for a single face card. The output is a
+/// self-contained, parsable SVG document.
+pub fn face_svg(rank: Rank, suit: Suit) -> String {
+    let (colour, paint) = suit_paint(suit);
+    let glyph = suit_glyph(suit);
+    let rank_text = rank_filename(rank);
+    let small_glyph_attrs = glyph_paint_attrs(colour, paint);
+    let large_glyph_attrs = glyph_paint_attrs(colour, paint);
+
+    // Numbers come from `design-system.md` § Game Cards, scaled 2×:
+    //   border:        1 px  → 2 px  stroke-width
+    //   corner radius: 8 px  → 16 px rx/ry
+    //   rank font:    18 px  → 36 px
+    //   small glyph:  10 px  → 20 px
+    //   large glyph:  32 px  → 64 px
+    //
+    // Inset the border by 1 px so the 2 px stroke renders fully
+    // inside the 256 × 384 pixmap rather than getting clipped.
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
+  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
+        fill="{BG_FACE}" stroke="{colour}" stroke-width="2"/>
+
+  <!-- Top-left rank + small suit glyph. -->
+  <text x="14" y="44" font-family="Fira Mono" font-size="36" font-weight="700"
+        fill="{colour}">{rank_text}</text>
+  <text x="14" y="68" font-family="Fira Mono" font-size="20"
+        {small_glyph_attrs}>{glyph}</text>
+
+  <!-- Bottom-right large suit glyph, rotated 180° about its own
+       baseline anchor so the glyph reads upside-down. -->
+  <text x="242" y="350" font-family="Fira Mono" font-size="64"
+        text-anchor="end" {large_glyph_attrs}
+        transform="rotate(180 242 332)">{glyph}</text>
+</svg>"##
+    )
+}
+
+/// Build the SVG markup for a card back with the canonical Terminal
+/// scanline pattern. `accent` swaps only the top-left badge.
+pub fn back_svg(accent: &str) -> String {
+    // Scanline tile: 1 px line + 1 px gap at logical scale → 2 px +
+    // 2 px at 2× output. `patternUnits="userSpaceOnUse"` so the tile
+    // size is in viewBox pixels rather than fractions of the box.
+    //
+    // Badge: 12 × 16 px logical → 24 × 32 px output, 12 px from corner.
+    // Monogram: "▌RS" in 12 px logical → 24 px output, 12 px inset.
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
+  <defs>
+    <pattern id="scanlines" x="0" y="0" width="2" height="4" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="2" height="2" fill="{BACK_SCANLINE}"/>
+    </pattern>
+  </defs>
+
+  <!-- Background fill, then scanlines on top (the scanlines stay
+       darker than BACK_BG so the "off" rows show through). -->
+  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
+        fill="{BACK_BG}" stroke="{BACK_BORDER}" stroke-width="2"/>
+  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
+        fill="url(#scanlines)"/>
+
+  <!-- Top-left accent badge (the only theme-varying element). -->
+  <rect x="12" y="12" width="24" height="32" fill="{accent}"/>
+
+  <!-- Bottom-right "▌RS" monogram in JetBrains-Mono-styled FiraMono. -->
+  <text x="244" y="368" font-family="Fira Mono" font-size="24"
+        fill="{BACK_MONOGRAM}" text-anchor="end">&#x258C;RS</text>
+</svg>"##
+    )
+}
