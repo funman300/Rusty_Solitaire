@@ -23,13 +23,14 @@
 //! [`Z_MODAL_SCRIM`]: crate::ui_theme::Z_MODAL_SCRIM
 
 use bevy::prelude::*;
+use chrono::Datelike;
 
 use crate::font_plugin::FontResource;
 use crate::replay_playback::{stop_replay_playback, ReplayPlaybackState};
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, TEXT_PRIMARY, TYPE_BODY, TYPE_HEADLINE,
-    VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
+    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -52,8 +53,11 @@ pub const Z_REPLAY_OVERLAY: i32 = Z_DROP_OVERLAY as i32 + 5;
 
 /// Total height of the banner in pixels. Thin enough to leave the
 /// gameplay surface visible underneath, tall enough to comfortably fit
-/// the headline-sized "▌ replay" label.
-const BANNER_HEIGHT: f32 = 48.0;
+/// the headline-sized "▌ replay" label stacked above the
+/// `TYPE_CAPTION` "GAME #YYYY-DDD" subtitle (the left column needs
+/// ~26 + 2 + 11 = 39 px of inner content; banner = scrub (1) +
+/// vertical padding (16) + content gives 60 with a few px headroom).
+const BANNER_HEIGHT: f32 = 60.0;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
@@ -88,6 +92,17 @@ pub struct ReplayOverlayProgressText;
 /// transition is seen.
 #[derive(Component, Debug)]
 pub struct ReplayStopButton;
+
+/// Marker on the small caption sitting below the "▌ replay"
+/// headline. Carries `GAME #YYYY-DDD` (year + chrono ordinal) while a
+/// replay is playing — a compact, monotonically-increasing identifier
+/// that mirrors the `▌replay.tsx` / `GAME #2024-127` Terminal-output
+/// motif from the mockup. The caption is empty in `Inactive` /
+/// `Completed` since the replay is consumed when transitioning out
+/// of `Playing` and the identifier is no longer recoverable from
+/// state alone.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayGameCaption;
 
 /// Marker on the cyan "fill" of the bottom-edge scrub bar. The
 /// `Node`'s `width` is rewritten every frame the cursor advances to
@@ -234,19 +249,40 @@ fn spawn_overlay(
                     ..default()
                 })
                 .with_children(|row| {
-                    // Left: "Replay" label in the cyan primary accent
-                    // (`ACCENT_PRIMARY`) so it reads unmistakably as a
-                    // non-gameplay surface.
-                    row.spawn((
-                        ReplayOverlayBannerText,
-                        Text::new(banner_label),
-                        TextFont {
-                            font: font_handle.clone(),
-                            font_size: TYPE_HEADLINE,
-                            ..default()
-                        },
-                        TextColor(ACCENT_PRIMARY),
-                    ));
+                    // Left: column with the cyan "▌ replay" headline
+                    // above and a small `GAME #YYYY-DDD` caption below.
+                    // The caption mirrors the mockup's right-anchored
+                    // game identifier but stays visually grouped with
+                    // the headline so the two pieces of "this is a
+                    // replay of game X" read as a single unit.
+                    row.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::FlexStart,
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    })
+                    .with_children(|left| {
+                        left.spawn((
+                            ReplayOverlayBannerText,
+                            Text::new(banner_label),
+                            TextFont {
+                                font: font_handle.clone(),
+                                font_size: TYPE_HEADLINE,
+                                ..default()
+                            },
+                            TextColor(ACCENT_PRIMARY),
+                        ));
+                        left.spawn((
+                            ReplayOverlayGameCaption,
+                            Text::new(format_game_caption(state).unwrap_or_default()),
+                            TextFont {
+                                font: font_handle.clone(),
+                                font_size: TYPE_CAPTION,
+                                ..default()
+                            },
+                            TextColor(TEXT_SECONDARY),
+                        ));
+                    });
 
                     // Centre: progress readout — neutral primary text
                     // colour so the eye treats it as data, not a
@@ -388,6 +424,26 @@ fn update_scrub_fill(
     let pct = scrub_pct(&state);
     for mut node in &mut q {
         node.width = Val::Percent(pct);
+    }
+}
+
+/// Pure helper — formats the `GAME #YYYY-DDD` caption for the given
+/// state. Returns `None` for `Inactive` / `Completed` (the replay is
+/// consumed when transitioning out of `Playing`, so the identifier
+/// isn't recoverable from state in those branches); spawn-time
+/// callers fall back to an empty string.
+///
+/// Year + chrono ordinal (`{year}-{ordinal:03}`) gives a compact
+/// monotonically-increasing identifier shaped like `2026-127` — same
+/// shape as the mockup's `GAME #2024-127` motif.
+fn format_game_caption(state: &ReplayPlaybackState) -> Option<String> {
+    match state {
+        ReplayPlaybackState::Playing { replay, .. } => Some(format!(
+            "GAME #{}-{:03}",
+            replay.recorded_at.year(),
+            replay.recorded_at.ordinal()
+        )),
+        ReplayPlaybackState::Inactive | ReplayPlaybackState::Completed => None,
     }
 }
 
@@ -704,6 +760,83 @@ mod tests {
                 secs_to_next: 0.5,
             }),
             100.0,
+        );
+    }
+
+    /// Read the current text content of the unique GAME-caption entity.
+    fn game_caption_text(app: &mut App) -> String {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Text, With<ReplayOverlayGameCaption>>();
+        q.iter(app.world())
+            .next()
+            .map(|t| t.0.clone())
+            .unwrap_or_default()
+    }
+
+    /// Pure-helper guard. `Inactive` / `Completed` carry no replay
+    /// reference so the caption is `None`; `Playing` formats the
+    /// recorded-date as `GAME #YYYY-DDD` with a 3-digit zero-padded
+    /// ordinal. Locks all three branches so a future refactor can't
+    /// silently regress the identifier shape.
+    #[test]
+    fn format_game_caption_covers_state_corners() {
+        assert_eq!(format_game_caption(&ReplayPlaybackState::Inactive), None);
+        assert_eq!(format_game_caption(&ReplayPlaybackState::Completed), None);
+
+        // 2026-05-02 is the 122nd day of 2026 (Jan = 31, Feb = 28,
+        // Mar = 31, Apr = 30, May 2 = 122). Synthetic_replay always
+        // uses this date so the assertion is stable.
+        assert_eq!(
+            format_game_caption(&ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 5,
+                secs_to_next: 0.5,
+            }),
+            Some("GAME #2026-122".to_string()),
+        );
+
+        // Single-digit ordinal must zero-pad to three digits — pin
+        // the format string in case someone simplifies to `{}-{}`.
+        let mut early_january = synthetic_replay(10);
+        early_january.recorded_at = NaiveDate::from_ymd_opt(2026, 1, 5).expect("valid date");
+        assert_eq!(
+            format_game_caption(&ReplayPlaybackState::Playing {
+                replay: early_january,
+                cursor: 0,
+                secs_to_next: 0.5,
+            }),
+            Some("GAME #2026-005".to_string()),
+        );
+    }
+
+    /// End-to-end: spawning the overlay paints the GAME caption with
+    /// the active replay's recorded date in `YYYY-DDD` form. Caption
+    /// is empty for `Completed` since the replay is consumed.
+    #[test]
+    fn overlay_game_caption_shows_replay_date() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(game_caption_text(&mut app), "GAME #2026-122");
+
+        // Caption empties out on Playing → Completed because
+        // `format_game_caption` returns None and the spawn-path
+        // helper falls through to `unwrap_or_default()`.
+        // The overlay itself stays spawned in `Completed`.
+        set_state(&mut app, ReplayPlaybackState::Completed);
+        app.update();
+        assert_eq!(
+            overlay_root_count(&mut app),
+            1,
+            "overlay must remain spawned while in Completed state",
         );
     }
 
