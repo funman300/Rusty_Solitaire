@@ -45,6 +45,14 @@
 //! progress-bar caption, palette label, eight palette swatches,
 //! version line).
 //!
+//! The trailing "▌ ready_" cursor pulse layers on top of the fade
+//! by carrying both [`SplashFadableBg`] and [`SplashCursorPulse`]:
+//! [`pulse_splash_cursor`] runs after [`advance_splash`] in the
+//! schedule chain and overwrites the cursor's `BackgroundColor`
+//! with `global_alpha × pulse_factor`. Multiplying keeps the pulse
+//! visually anchored to the global timeline — no fight, just a
+//! modulated signal on top of the master volume.
+//!
 //! ## Headless tests
 //!
 //! Under `MinimalPlugins + SplashPlugin`, the `Time<Virtual>` clock
@@ -87,10 +95,27 @@ impl Plugin for SplashPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_splash).add_systems(
             Update,
-            (dismiss_splash_on_input, advance_splash).chain(),
+            (
+                dismiss_splash_on_input,
+                advance_splash,
+                pulse_splash_cursor,
+            )
+                .chain(),
         );
     }
 }
+
+/// Period of the trailing "▌ ready_" pulse cursor, in seconds. ~1 s
+/// reads as a comfortable terminal-blink cadence — much faster reads
+/// as urgent (alarming on a hold-and-fade screen), much slower reads
+/// as listless. Held as a `const` rather than a token because it's
+/// splash-local: no other surface pulses on this rhythm.
+const MOTION_PULSE_PERIOD_SECS: f32 = 1.0;
+
+/// Floor for the pulse alpha multiplier. The cursor never extinguishes
+/// fully — matches a real terminal blink that dips but stays visible
+/// so the player keeps a stable focal point.
+const PULSE_ALPHA_MIN: f32 = 0.4;
 
 // ---------------------------------------------------------------------------
 // Components
@@ -127,6 +152,18 @@ struct SplashFadable {
 struct SplashFadableBg {
     base_color: Color,
 }
+
+/// Marks the trailing pulse cursor on the "▌ ready_" line. Carries
+/// `SplashFadableBg` too so it picks up the global fade-in / hold /
+/// fade-out timeline; [`pulse_splash_cursor`] runs *after*
+/// [`advance_splash`] in the chain and overwrites the
+/// `BackgroundColor` with the global alpha multiplied by a
+/// sine-driven pulse factor in `[PULSE_ALPHA_MIN..1.0]`. Multiplying
+/// (rather than the pulse system being the only writer) keeps the
+/// cursor visually anchored to the global timeline — it can't pulse
+/// at full alpha while the rest of the splash is still fading in.
+#[derive(Component, Debug)]
+struct SplashCursorPulse;
 
 // ---------------------------------------------------------------------------
 // Systems
@@ -331,10 +368,13 @@ fn spawn_check_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont, labe
 }
 
 /// "▌ ready_" line — visual signature of "boot complete, awaiting
-/// input". Static; no pulse animation in this commit (a pulse would
-/// fight the global fade timeline). The cursor glyph picks up
-/// `TEXT_PRIMARY` rather than `ACCENT_PRIMARY` so it doesn't compete
-/// with the big cyan cursor in the header.
+/// input". The leading `▌` glyph picks up `TEXT_PRIMARY` rather than
+/// `ACCENT_PRIMARY` so it doesn't compete with the big cyan cursor in
+/// the header; the *trailing* 6×12 px cyan pulse Node ([`SplashCursorPulse`])
+/// is what carries the "alive, blinking" signal called for by the
+/// mockup. The pulse's alpha is multiplied with the global fade
+/// timeline by [`pulse_splash_cursor`] so it never fights the
+/// fade-in / hold / fade-out flow.
 fn spawn_ready_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
     parent
         .spawn(Node {
@@ -350,6 +390,21 @@ fn spawn_ready_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
                 Text::new("\u{258C} ready_"), // ▌ ready_
                 line_font.clone(),
                 TextColor(transparent(TEXT_PRIMARY)),
+            ));
+            // Trailing 6×12 cyan pulse cursor. Node-with-explicit-
+            // dimensions rather than a `█` text glyph so the size
+            // doesn't drift with the line font; matches the mockup's
+            // 6×12 px spec literally. Pulse animation lives in
+            // `pulse_splash_cursor` for testability.
+            row.spawn((
+                SplashFadableBg { base_color: ACCENT_PRIMARY },
+                SplashCursorPulse,
+                Node {
+                    width: Val::Px(6.0),
+                    height: Val::Px(12.0),
+                    ..default()
+                },
+                BackgroundColor(transparent(ACCENT_PRIMARY)),
             ));
         });
 }
@@ -527,6 +582,50 @@ fn splash_alpha(age: Duration) -> Option<f32> {
     }
     // Fade-out.
     Some(((total - age_s) / fade).clamp(0.0, 1.0))
+}
+
+/// Pure helper — computes the pulse alpha multiplier for a given
+/// `age`, `period`, and `min` floor. Sine-driven smoothing in
+/// `[min..1.0]`. Returns `1.0` defensively when `period <= 0.0` so a
+/// misconfigured caller produces a steady (unmodulated) cursor rather
+/// than a divide-by-zero.
+///
+/// The phase is `age * TAU / period`, which puts the first peak at
+/// `age = period / 4` and the first trough at `age = period * 3 / 4` —
+/// both verified by the tests below.
+fn cursor_pulse_factor(age: Duration, period: f32, min: f32) -> f32 {
+    if period <= 0.0 {
+        return 1.0;
+    }
+    let phase = age.as_secs_f32() * std::f32::consts::TAU / period;
+    let normalised = (phase.sin() + 1.0) * 0.5; // map [-1, 1] → [0, 1]
+    min + normalised * (1.0 - min)
+}
+
+/// Per-frame system that overwrites the trailing pulse cursor's
+/// `BackgroundColor` with the global splash alpha multiplied by the
+/// pulse factor. Runs *after* [`advance_splash`] in the chain so the
+/// last writer wins — the cursor's tick output reflects both the
+/// fade timeline and the pulse, while the rest of the splash gets
+/// only the fade.
+///
+/// No-op when no `SplashRoot` exists (the splash has already
+/// despawned, or we're under a test fixture that doesn't spawn one).
+fn pulse_splash_cursor(
+    roots: Query<&SplashAge, With<SplashRoot>>,
+    mut pulses: Query<(&SplashFadableBg, &mut BackgroundColor), With<SplashCursorPulse>>,
+) {
+    let Some(age) = roots.iter().next() else {
+        return;
+    };
+    let global = splash_alpha(age.0).unwrap_or(0.0);
+    let pulse = cursor_pulse_factor(age.0, MOTION_PULSE_PERIOD_SECS, PULSE_ALPHA_MIN);
+    let combined = (global * pulse).clamp(0.0, 1.0);
+    for (fadable, mut bg) in &mut pulses {
+        let mut c = fadable.base_color;
+        c.set_alpha(combined);
+        bg.0 = c;
+    }
 }
 
 /// Advances every splash root's age by `time.delta()` and updates the
@@ -941,6 +1040,48 @@ mod tests {
         assert!(
             mid_text_alphas.iter().all(|a| *a >= 0.9),
             "fadable text alphas should be at full alpha during the hold; got {mid_text_alphas:?}"
+        );
+    }
+
+    /// Pure-helper guard. The pulse factor is a sine wave shifted into
+    /// `[min..1.0]`. Three corner cases are pinned:
+    ///
+    /// * Phase peak (`age = period / 4`) → factor reaches 1.0.
+    /// * Phase trough (`age = period * 3 / 4`) → factor falls to `min`.
+    /// * Defensive: a zero or negative `period` short-circuits to 1.0
+    ///   so a misconfigured caller produces a steady cursor instead
+    ///   of a divide-by-zero NaN.
+    #[test]
+    fn cursor_pulse_factor_corners() {
+        let period = 1.0_f32;
+        let min = 0.4_f32;
+
+        // Peak — sin(TAU * 0.25) = 1 → normalised = 1 → factor = 1.
+        let peak = cursor_pulse_factor(Duration::from_secs_f32(period / 4.0), period, min);
+        assert!(
+            (peak - 1.0).abs() < 1e-5,
+            "peak should reach 1.0; got {peak}"
+        );
+
+        // Trough — sin(TAU * 0.75) = -1 → normalised = 0 → factor = min.
+        let trough = cursor_pulse_factor(
+            Duration::from_secs_f32(period * 3.0 / 4.0),
+            period,
+            min,
+        );
+        assert!(
+            (trough - min).abs() < 1e-5,
+            "trough should fall to min ({min}); got {trough}"
+        );
+
+        // Defensive: zero / negative period must not divide-by-zero.
+        assert_eq!(
+            cursor_pulse_factor(Duration::from_secs_f32(0.5), 0.0, min),
+            1.0
+        );
+        assert_eq!(
+            cursor_pulse_factor(Duration::from_secs_f32(0.5), -1.0, min),
+            1.0
         );
     }
 }
