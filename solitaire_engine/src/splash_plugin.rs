@@ -1,40 +1,58 @@
 //! Launch splash overlay.
 //!
 //! On app start the engine spawns a fullscreen, high-Z overlay that
-//! reads "Solitaire Quest" in the project font for ~1.6 s
-//! (300 ms fade-in, ~1 s hold, 300 ms fade-out), then despawns. The
-//! existing deal animation plays *behind* the splash during the hold —
-//! the user sees the dealt board appear as the splash dissolves.
+//! reads the Terminal-style "boot screen" — a cyan cursor block, the
+//! "Solitaire Quest" wordmark, a short fixture boot log, a progress
+//! bar, and a footer with the design-system palette swatches and the
+//! build version. The overlay fades in over 300 ms, holds for ~1 s,
+//! then fades out for 300 ms before despawning. The deal animation
+//! plays *behind* the splash during the hold, so the player sees the
+//! dealt board appear as the splash dissolves.
 //!
 //! ## Why an overlay instead of an `AppState`
 //!
 //! Every existing plugin in this engine runs unconditionally on
-//! `Startup`/`Update`; gating them with `run_if(in_state(...))` would be
-//! a sweeping refactor for a one-off brand beat. The splash instead
-//! sits on top of `Z_SPLASH` (above tooltips, focus ring, and toasts)
-//! while the rest of the game runs normally beneath it. The handoff is
-//! intentional: the user finishes the splash and the dealt board is
-//! already there.
+//! `Startup`/`Update`; gating them with `run_if(in_state(...))` would
+//! be a sweeping refactor for a one-off brand beat. The splash
+//! instead sits on top of `Z_SPLASH` (above tooltips, focus ring,
+//! and toasts) while the rest of the game runs normally beneath it.
+//! The handoff is intentional: the user finishes the splash and the
+//! dealt board is already there.
 //!
 //! ## Dismissal
 //!
-//! Any keypress, mouse click, or touch begin shortcuts the splash to its
-//! fade-out window — never to an instant despawn, so the dissolve still
-//! plays for visual continuity. The dismiss input is **not** consumed,
-//! so a player who instinctively taps Space to "skip the intro" still
-//! gets their stock draw the moment the splash clears (Space and most
-//! other gameplay keys read `just_pressed`, which by the next tick is
-//! already false — splash dismissal happens on the same tick as the
-//! press, so downstream gameplay handlers see exactly the keystroke
-//! they would have seen with no splash).
+//! Any keypress, mouse click, or touch begin shortcuts the splash to
+//! its fade-out window — never to an instant despawn, so the dissolve
+//! still plays for visual continuity. The dismiss input is **not**
+//! consumed, so a player who instinctively taps Space to "skip the
+//! intro" still gets their stock draw the moment the splash clears
+//! (Space and most other gameplay keys read `just_pressed`, which by
+//! the next tick is already false — splash dismissal happens on the
+//! same tick as the press, so downstream gameplay handlers see
+//! exactly the keystroke they would have seen with no splash).
+//!
+//! ## Fade scaffold
+//!
+//! Every visible element on the splash carries a [`SplashFadable`]
+//! (text colour) or [`SplashFadableBg`] (background colour) marker
+//! that records its full-alpha base colour. [`advance_splash`] reads
+//! `SplashAge` once per frame, computes the current alpha, and writes
+//! `base_color` × current-alpha into every fadable. Replaces the
+//! prior per-marker queries (`SplashTitle` / `SplashSubtitle` /
+//! `SplashCursor`) which didn't scale past three children — the
+//! Terminal splash has ~15 fadable elements (cursor, title, divider,
+//! subtitle, four boot-log rows, progress-bar track + fill,
+//! progress-bar caption, palette label, eight palette swatches,
+//! version line).
 //!
 //! ## Headless tests
 //!
 //! Under `MinimalPlugins + SplashPlugin`, the `Time<Virtual>` clock
-//! clamps each tick to `max_delta` (default 250 ms) regardless of the
-//! `TimeUpdateStrategy::ManualDuration` value, so tests advance time in
-//! 200 ms ticks and call `app.update()` enough times to cross the
-//! desired threshold (same approach used by `ui_tooltip::tests`).
+//! clamps each tick to `max_delta` (default 250 ms) regardless of
+//! the `TimeUpdateStrategy::ManualDuration` value, so tests advance
+//! time in 200 ms ticks and call `app.update()` enough times to
+//! cross the desired threshold (same approach used by
+//! `ui_tooltip::tests`).
 
 use std::time::Duration;
 
@@ -44,23 +62,25 @@ use bevy::prelude::*;
 use crate::font_plugin::FontResource;
 use crate::settings_plugin::SettingsResource;
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_BASE, MOTION_SPLASH_FADE_SECS, MOTION_SPLASH_TOTAL_SECS, TEXT_SECONDARY,
-    TYPE_CAPTION, TYPE_DISPLAY, VAL_SPACE_2, Z_SPLASH,
+    ACCENT_PRIMARY, ACCENT_SECONDARY, BG_BASE, BORDER_SUBTLE, MOTION_SPLASH_FADE_SECS,
+    MOTION_SPLASH_TOTAL_SECS, STATE_DANGER, STATE_INFO, STATE_SUCCESS, STATE_WARNING,
+    TEXT_DISABLED, TEXT_PRIMARY, TYPE_CAPTION, TYPE_DISPLAY, VAL_SPACE_1, VAL_SPACE_2,
+    VAL_SPACE_3, VAL_SPACE_5, VAL_SPACE_6, VAL_SPACE_7, Z_SPLASH,
 };
 
 // ---------------------------------------------------------------------------
 // Public plugin
 // ---------------------------------------------------------------------------
 
-/// Drives the launch splash overlay. Add this plugin once at app start;
-/// the splash spawns during `Startup`, fades in/out over
+/// Drives the launch splash overlay. Add this plugin once at app
+/// start; the splash spawns during `Startup`, fades in/out over
 /// [`MOTION_SPLASH_TOTAL_SECS`], and despawns itself.
 ///
 /// The overlay is a sibling of every other UI surface — it never
 /// becomes a parent of game systems, and the deal animation runs
-/// underneath it during the hold window. Dismissal on any keypress /
-/// click / touch shortcuts the timeline into the fade-out phase rather
-/// than despawning instantly, so the dissolve always plays.
+/// underneath it during the hold window. Dismissal on any keypress
+/// / click / touch shortcuts the timeline into the fade-out phase
+/// rather than despawning instantly, so the dissolve always plays.
 pub struct SplashPlugin;
 
 impl Plugin for SplashPlugin {
@@ -90,42 +110,42 @@ pub struct SplashRoot;
 #[derive(Component, Debug, Default)]
 pub struct SplashAge(pub Duration);
 
-/// Marker on the splash title text. Used by [`advance_splash`] to write
-/// the per-frame alpha into the text colour without walking arbitrary
-/// children.
-#[derive(Component, Debug)]
-struct SplashTitle;
+/// Marks a `Text` entity whose `TextColor` should fade with the splash
+/// timeline. `base_color` is the full-alpha target colour written by
+/// [`advance_splash`]; the system multiplies its alpha by the current
+/// fade factor each tick.
+#[derive(Component, Debug, Clone, Copy)]
+struct SplashFadable {
+    base_color: Color,
+}
 
-/// Marker on the splash subtitle text (build version). Faded together
-/// with the title so the brand beat dissolves as a single layer.
-#[derive(Component, Debug)]
-struct SplashSubtitle;
-
-/// Marker on the cyan "terminal cursor" block (`▌`) painted above the
-/// title. Visual signature of the Terminal design system per
-/// `docs/ui-mockups/design-system.md` — the same `#6fc2ef` block
-/// appears on the card-back theme, on the splash, and (per spec) is
-/// the project's cursor motif. Faded together with the rest of the
-/// splash so the dissolve still reads as one layer.
-#[derive(Component, Debug)]
-struct SplashCursor;
+/// Marks a `Node` entity whose `BackgroundColor` should fade with the
+/// splash timeline. Same contract as [`SplashFadable`] but for nodes
+/// whose visible colour lives on the background, not on text — palette
+/// swatches, the progress bar track, and the progress bar fill.
+#[derive(Component, Debug, Clone, Copy)]
+struct SplashFadableBg {
+    base_color: Color,
+}
 
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
 
 /// Spawns the splash overlay at `Startup`. Builds a fullscreen scrim
-/// at full alpha (the first `advance_splash` tick will overwrite the
-/// alpha based on age), centres a "Solitaire Quest" title in
-/// [`ACCENT_PRIMARY`], and pins a small build-version line below.
+/// at alpha 0 (so the first paint is invisible — the first
+/// `advance_splash` tick lifts every fadable's alpha), composes the
+/// header / boot-log / progress / footer hierarchy, and tags every
+/// visible child with [`SplashFadable`] or [`SplashFadableBg`] so the
+/// per-frame fade has a uniform target list.
 ///
 /// **Skipped on subsequent launches.** If `SettingsResource` reports
-/// `first_run_complete == true`, the player has already seen the brand
-/// beat at least once and we go straight to gameplay — having to wait
-/// 1.6 s on every launch wears thin fast. The splash still shows on
-/// first run, after a save reset (settings.json deleted), and under
-/// `MinimalPlugins` (no `SettingsResource` registered) so the test
-/// fixture observes the same spawn it always did.
+/// `first_run_complete == true`, the player has already seen the
+/// brand beat at least once and we go straight to gameplay — having
+/// to wait 1.6 s on every launch wears thin fast. The splash still
+/// shows on first run, after a save reset (settings.json deleted),
+/// and under `MinimalPlugins` (no `SettingsResource` registered) so
+/// the test fixture observes the same spawn it always did.
 fn spawn_splash(
     mut commands: Commands,
     font_res: Option<Res<FontResource>>,
@@ -138,6 +158,42 @@ fn spawn_splash(
     }
 
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+
+    commands
+        .spawn((
+            SplashRoot,
+            SplashAge(Duration::ZERO),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                // SpaceBetween distributes the three top-level groups
+                // (header / centre / footer) so the header sits near
+                // the top, the centre column floats in the middle of
+                // the viewport, and the footer hugs the bottom edge —
+                // mirroring the mockup's `justify-between` body.
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(VAL_SPACE_5, VAL_SPACE_7),
+                ..default()
+            },
+            BackgroundColor(scrim_with_alpha(0.0)),
+            GlobalZIndex(Z_SPLASH),
+        ))
+        .with_children(|root| {
+            spawn_header_section(root, &font_handle);
+            spawn_centre_section(root, &font_handle);
+            spawn_footer_section(root, &font_handle);
+        });
+}
+
+/// Header section: cursor block, wordmark, divider, "TERMINAL EDITION"
+/// label. Stacked vertically and centre-aligned. Renders near the top
+/// of the viewport thanks to the root's `justify-between`.
+fn spawn_header_section(parent: &mut ChildSpawnerCommands, font_handle: &Handle<Font>) {
     let cursor_font = TextFont {
         font: font_handle.clone(),
         // Larger than TYPE_DISPLAY so the cursor block reads as the
@@ -152,61 +208,296 @@ fn spawn_splash(
         ..default()
     };
     let subtitle_font = TextFont {
-        font: font_handle,
+        font: font_handle.clone(),
         font_size: TYPE_CAPTION,
         ..default()
     };
 
-    // Initial alpha is 0 (fade-in starts at 0 and grows). Without this
-    // the first frame would flash full-opacity scrim before the
-    // `advance_splash` tick lerped it down — visually a pop on slower
-    // start-ups.
-    let mut initial_bg = BG_BASE;
-    initial_bg.set_alpha(0.0);
-    let mut initial_title = ACCENT_PRIMARY;
-    initial_title.set_alpha(0.0);
-    let mut initial_subtitle = TEXT_SECONDARY;
-    initial_subtitle.set_alpha(0.0);
-
-    commands
-        .spawn((
-            SplashRoot,
-            SplashAge(Duration::ZERO),
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                top: Val::Px(0.0),
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                row_gap: VAL_SPACE_2,
-                ..default()
-            },
-            BackgroundColor(initial_bg),
-            GlobalZIndex(Z_SPLASH),
-        ))
-        .with_children(|root| {
-            root.spawn((
-                SplashCursor,
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: VAL_SPACE_2,
+            margin: UiRect::top(VAL_SPACE_6),
+            ..default()
+        })
+        .with_children(|hdr| {
+            hdr.spawn((
+                SplashFadable { base_color: ACCENT_PRIMARY },
                 Text::new("\u{258C}"), // ▌ — the Terminal cursor block.
                 cursor_font,
-                TextColor(initial_title),
+                TextColor(transparent(ACCENT_PRIMARY)),
             ));
-            root.spawn((
-                SplashTitle,
+            hdr.spawn((
+                SplashFadable { base_color: TEXT_PRIMARY },
                 Text::new("Solitaire Quest"),
                 title_font,
-                TextColor(initial_title),
+                TextColor(transparent(TEXT_PRIMARY)),
             ));
-            root.spawn((
-                SplashSubtitle,
-                Text::new(format!("v{}", env!("CARGO_PKG_VERSION"))),
+            // Thin horizontal divider under the wordmark — same hue as
+            // every other 1px chrome line in the design system.
+            hdr.spawn((
+                SplashFadableBg { base_color: BORDER_SUBTLE },
+                Node {
+                    width: Val::Px(192.0),
+                    height: Val::Px(1.0),
+                    ..default()
+                },
+                BackgroundColor(transparent(BORDER_SUBTLE)),
+            ));
+            hdr.spawn((
+                SplashFadable { base_color: TEXT_DISABLED },
+                Text::new("TERMINAL EDITION"),
                 subtitle_font,
-                TextColor(initial_subtitle),
+                TextColor(transparent(TEXT_DISABLED)),
             ));
         });
+}
+
+/// Centre section: boot log + progress bar. The boot-log column is
+/// capped at 480 px on desktop per `docs/ui-mockups/desktop-adaptation.md`
+/// (otherwise 70 % of viewport width). The progress bar is capped at
+/// 720 px likewise.
+fn spawn_centre_section(parent: &mut ChildSpawnerCommands, font_handle: &Handle<Font>) {
+    let line_font = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
+
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: VAL_SPACE_5,
+            ..default()
+        })
+        .with_children(|centre| {
+            spawn_boot_log(centre, &line_font);
+            spawn_progress_bar(centre, &line_font);
+        });
+}
+
+/// Boot-log column: three lime check rows + a "▌ ready_" line. Content
+/// is fixture text, not driven from real bootstrap state — the splash
+/// is a brand beat, not a real loader. Capped at 480 px width on
+/// desktop (the design-system spec calls 70 % of mobile viewport,
+/// which would stretch oddly on a wide window).
+fn spawn_boot_log(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Start,
+            row_gap: VAL_SPACE_1,
+            width: Val::Percent(70.0),
+            max_width: Val::Px(480.0),
+            ..default()
+        })
+        .with_children(|log| {
+            for label in ["assets loaded", "theme: terminal", "progress restored"] {
+                spawn_check_row(log, line_font, label);
+            }
+            spawn_ready_row(log, line_font);
+        });
+}
+
+/// One ✓-prefixed boot-log line. The check glyph is lime
+/// (`STATE_SUCCESS`) so it reads as "complete"; the description text
+/// is `TEXT_DISABLED` (the muted gray rung) so the eye treats the
+/// list as background log noise rather than information that needs
+/// reading.
+fn spawn_check_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont, label: &str) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: VAL_SPACE_2,
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                SplashFadable { base_color: STATE_SUCCESS },
+                Text::new("\u{2713}"), // ✓
+                line_font.clone(),
+                TextColor(transparent(STATE_SUCCESS)),
+            ));
+            row.spawn((
+                SplashFadable { base_color: TEXT_DISABLED },
+                Text::new(label.to_string()),
+                line_font.clone(),
+                TextColor(transparent(TEXT_DISABLED)),
+            ));
+        });
+}
+
+/// "▌ ready_" line — visual signature of "boot complete, awaiting
+/// input". Static; no pulse animation in this commit (a pulse would
+/// fight the global fade timeline). The cursor glyph picks up
+/// `TEXT_PRIMARY` rather than `ACCENT_PRIMARY` so it doesn't compete
+/// with the big cyan cursor in the header.
+fn spawn_ready_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: VAL_SPACE_2,
+            margin: UiRect::top(VAL_SPACE_2),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                SplashFadable { base_color: TEXT_PRIMARY },
+                Text::new("\u{258C} ready_"), // ▌ ready_
+                line_font.clone(),
+                TextColor(transparent(TEXT_PRIMARY)),
+            ));
+        });
+}
+
+/// Progress bar — a 1 px tall track in `BORDER_SUBTLE` with a 100 %-
+/// width cyan fill, plus a `DONE · 247 ASSETS` caption right-aligned
+/// below. The "247" is fixture text; the bar is decorative, not a
+/// real progress signal. Capped at 720 px width on desktop.
+fn spawn_progress_bar(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            row_gap: VAL_SPACE_2,
+            width: Val::Percent(80.0),
+            max_width: Val::Px(720.0),
+            ..default()
+        })
+        .with_children(|bar| {
+            // Track.
+            bar.spawn((
+                SplashFadableBg { base_color: BORDER_SUBTLE },
+                Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(1.0),
+                    ..default()
+                },
+                BackgroundColor(transparent(BORDER_SUBTLE)),
+            ))
+            .with_children(|track| {
+                // Fill — 100 % of the track width = "complete".
+                track.spawn((
+                    SplashFadableBg { base_color: ACCENT_PRIMARY },
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(transparent(ACCENT_PRIMARY)),
+                ));
+            });
+            // Caption — right-aligned below the bar.
+            bar.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::FlexEnd,
+                ..default()
+            })
+            .with_children(|caption| {
+                caption.spawn((
+                    SplashFadable { base_color: TEXT_DISABLED },
+                    Text::new("DONE \u{00B7} 247 ASSETS"), // DONE · 247 ASSETS
+                    line_font.clone(),
+                    TextColor(transparent(TEXT_DISABLED)),
+                ));
+            });
+        });
+}
+
+/// Footer section: "BASE16-EIGHTIES" label, eight palette swatches,
+/// version line. The swatches are 12 × 12 px coloured squares, one
+/// per named token — visible signature of the design system.
+fn spawn_footer_section(parent: &mut ChildSpawnerCommands, font_handle: &Handle<Font>) {
+    let footer_font = TextFont {
+        font: font_handle.clone(),
+        font_size: TYPE_CAPTION,
+        ..default()
+    };
+
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: VAL_SPACE_3,
+            ..default()
+        })
+        .with_children(|footer| {
+            footer.spawn((
+                SplashFadable { base_color: TEXT_DISABLED },
+                Text::new("BASE16-EIGHTIES"),
+                footer_font.clone(),
+                TextColor(transparent(TEXT_DISABLED)),
+            ));
+            spawn_palette_swatch_row(footer);
+            footer.spawn((
+                SplashFadable { base_color: TEXT_DISABLED },
+                Text::new(format!("v{}", env!("CARGO_PKG_VERSION"))),
+                footer_font.clone(),
+                TextColor(transparent(TEXT_DISABLED)),
+            ));
+        });
+}
+
+/// Eight 12 × 12 px palette squares — one per named design-system
+/// token (suit-red / warning / success / info / primary / celebration
+/// / on-surface / outline). The order matches the mockup; the row is
+/// the visual signature of the palette behind the rest of the UI.
+fn spawn_palette_swatch_row(parent: &mut ChildSpawnerCommands) {
+    let swatches = [
+        STATE_DANGER,
+        STATE_WARNING,
+        STATE_SUCCESS,
+        STATE_INFO,
+        ACCENT_PRIMARY,
+        ACCENT_SECONDARY,
+        TEXT_PRIMARY,
+        // `BORDER_STRONG` (`#505050`) is the eighth slot — `outline`
+        // in the design-system token spec, also exposed as
+        // `TEXT_DISABLED` since the two share a hue. Re-using the
+        // existing `TEXT_DISABLED` import keeps the swatch list a
+        // single read.
+        TEXT_DISABLED,
+    ];
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: VAL_SPACE_1,
+            ..default()
+        })
+        .with_children(|row| {
+            for color in swatches {
+                row.spawn((
+                    SplashFadableBg { base_color: color },
+                    Node {
+                        width: Val::Px(12.0),
+                        height: Val::Px(12.0),
+                        ..default()
+                    },
+                    BackgroundColor(transparent(color)),
+                ));
+            }
+        });
+}
+
+/// Returns `BG_BASE` with its alpha multiplied by `factor` (0–1). The
+/// fade systems lerp this each tick to drive the scrim's dissolve.
+fn scrim_with_alpha(factor: f32) -> Color {
+    let mut c = BG_BASE;
+    c.set_alpha(factor.clamp(0.0, 1.0));
+    c
+}
+
+/// Returns `c` with alpha 0. Initial paint colour for every fadable
+/// element so the very first frame is fully transparent — the next
+/// `advance_splash` tick lifts the alpha based on `SplashAge`.
+fn transparent(c: Color) -> Color {
+    let mut out = c;
+    out.set_alpha(0.0);
+    out
 }
 
 /// Computes the splash's per-frame alpha from its age. Three phases:
@@ -239,61 +530,39 @@ fn splash_alpha(age: Duration) -> Option<f32> {
 }
 
 /// Advances every splash root's age by `time.delta()` and updates the
-/// scrim + text alpha, despawning the splash once the timeline
-/// finishes. Despawns with descendants so the title and subtitle leave
-/// the world together.
+/// scrim plus every [`SplashFadable`] / [`SplashFadableBg`] alpha,
+/// despawning the splash once the timeline finishes. Despawns with
+/// descendants so the entire hierarchy leaves the world together.
+///
+/// The fadable queries are global (no parent constraint) — the splash
+/// is a one-shot at app start and is the only owner of these markers,
+/// so there is no contamination risk from other plugins.
 #[allow(clippy::type_complexity)]
 fn advance_splash(
     mut commands: Commands,
     time: Res<Time>,
-    mut roots: Query<(Entity, &mut SplashAge, &mut BackgroundColor, &Children), With<SplashRoot>>,
-    mut titles: Query<
-        &mut TextColor,
-        (With<SplashTitle>, Without<SplashSubtitle>, Without<SplashCursor>),
-    >,
-    mut subtitles: Query<
-        &mut TextColor,
-        (With<SplashSubtitle>, Without<SplashTitle>, Without<SplashCursor>),
-    >,
-    mut cursors: Query<
-        &mut TextColor,
-        (With<SplashCursor>, Without<SplashTitle>, Without<SplashSubtitle>),
-    >,
+    mut roots: Query<(Entity, &mut SplashAge, &mut BackgroundColor), With<SplashRoot>>,
+    mut fadable_texts: Query<(&SplashFadable, &mut TextColor)>,
+    mut fadable_bgs: Query<(&SplashFadableBg, &mut BackgroundColor), Without<SplashRoot>>,
 ) {
-    for (entity, mut age, mut bg, children) in &mut roots {
+    for (entity, mut age, mut bg) in &mut roots {
         age.0 = age.0.saturating_add(time.delta());
         let Some(alpha) = splash_alpha(age.0) else {
             commands.entity(entity).despawn();
             continue;
         };
 
-        // Scrim alpha — keeps BG_BASE's RGB and just rewrites alpha.
-        let mut scrim = BG_BASE;
-        scrim.set_alpha(alpha);
-        bg.0 = scrim;
+        bg.0 = scrim_with_alpha(alpha);
 
-        // Walk the splash root's direct children for the title /
-        // subtitle / cursor markers and update their alpha. The
-        // hierarchy is shallow (root → 3 text children) so a small
-        // loop is fine.
-        for child in children.iter() {
-            if let Ok(mut color) = cursors.get_mut(child) {
-                let mut c = ACCENT_PRIMARY;
-                c.set_alpha(alpha);
-                color.0 = c;
-                continue;
-            }
-            if let Ok(mut color) = titles.get_mut(child) {
-                let mut c = ACCENT_PRIMARY;
-                c.set_alpha(alpha);
-                color.0 = c;
-                continue;
-            }
-            if let Ok(mut color) = subtitles.get_mut(child) {
-                let mut c = TEXT_SECONDARY;
-                c.set_alpha(alpha);
-                color.0 = c;
-            }
+        for (fadable, mut text_color) in &mut fadable_texts {
+            let mut c = fadable.base_color;
+            c.set_alpha(alpha);
+            text_color.0 = c;
+        }
+        for (fadable, mut bg_color) in &mut fadable_bgs {
+            let mut c = fadable.base_color;
+            c.set_alpha(alpha);
+            bg_color.0 = c;
         }
     }
 }
@@ -372,9 +641,9 @@ mod tests {
 
     /// `Time<Virtual>` clamps per-tick deltas to `max_delta` (default
     /// 250 ms) regardless of the requested manual step, so we drive
-    /// 200 ms ticks and call `update` enough times to exceed the target
-    /// duration. Returns the splash root's recorded age after the
-    /// stepping completes (or `None` if the splash was despawned).
+    /// 200 ms ticks and call `update` enough times to exceed the
+    /// target duration. Returns the splash root's recorded age after
+    /// the stepping completes (or `None` if the splash was despawned).
     fn advance_by(app: &mut App, total_secs: f32) -> Option<Duration> {
         set_manual_time_step(app, 0.2);
         let ticks = (total_secs / 0.2).ceil() as usize + 1;
@@ -438,9 +707,6 @@ mod tests {
         app.add_plugins(MinimalPlugins).add_plugins(SplashPlugin);
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<ButtonInput<MouseButton>>();
-        // Insert a SettingsResource that says "I've been here before"
-        // before any Startup system runs. spawn_splash should observe
-        // first_run_complete and decline to spawn the overlay.
         app.insert_resource(SettingsResource(Settings {
             first_run_complete: true,
             ..Settings::default()
@@ -475,9 +741,6 @@ mod tests {
     #[test]
     fn splash_despawns_after_total_duration() {
         let mut app = headless_app();
-        // Comfortably past the total duration to absorb the
-        // ManualDuration → Virtual-clock clamp + the despawn lag of
-        // one extra tick.
         let _ = advance_by(&mut app, MOTION_SPLASH_TOTAL_SECS + 0.5);
         assert_eq!(
             count_splash_roots(&mut app),
@@ -489,9 +752,7 @@ mod tests {
     #[test]
     fn splash_alpha_curves_through_fade_hold_fade() {
         // Pure-function test on the curve so we don't need to wrangle
-        // the virtual-clock clamp here. The integration assertion below
-        // (`splash_dismisses_immediately_on_keypress`) covers the
-        // wired-up version.
+        // the virtual-clock clamp here.
         // Start of fade-in.
         assert!(
             splash_alpha(Duration::ZERO).unwrap() < 0.05,
@@ -529,8 +790,6 @@ mod tests {
     #[test]
     fn splash_dismisses_immediately_on_keypress() {
         let mut app = headless_app();
-        // Run one fast tick under the fade-in window so the splash is
-        // unambiguously not yet in fade-out before the dismiss.
         set_manual_time_step(&mut app, 0.05);
         app.update();
         let pre_alpha = scrim_alpha(&mut app);
@@ -539,16 +798,11 @@ mod tests {
             "precondition: splash should be inside fade-in, not yet at full alpha (got {pre_alpha})"
         );
 
-        // Press any key. The dismissal system should bump the age into
-        // the fade-out window on this tick.
         press_key(&mut app, KeyCode::Space);
         app.update();
 
-        // Either still alive in fade-out, or already despawned (the
-        // 200 ms test-clock clamp can shave the fade-out window
-        // depending on how many ticks `app.update()` has accrued).
         if count_splash_roots(&mut app) == 0 {
-            return; // already past fade-out — that's fine.
+            return;
         }
         let mut q = app
             .world_mut()
@@ -599,8 +853,7 @@ mod tests {
 
     /// Bonus test: dismissing the splash with a keypress does NOT clear
     /// that key's `just_pressed` flag — downstream systems still see
-    /// the keystroke that dismissed the splash. Important for parity
-    /// with "no splash" behaviour where Space draws a card.
+    /// the keystroke that dismissed the splash.
     #[test]
     fn dismissal_keypress_is_visible_to_other_systems() {
         let mut app = headless_app();
@@ -610,6 +863,84 @@ mod tests {
         assert!(
             keys.just_pressed(KeyCode::Space),
             "Splash dismissal must NOT consume the input — downstream gameplay still needs it"
+        );
+    }
+
+    /// The Terminal boot-screen content must include the four
+    /// signature elements: cursor block, wordmark, "TERMINAL EDITION"
+    /// subtitle, and at least one boot-log row. Catches a regression
+    /// where the spawn hierarchy gets simplified back to "title +
+    /// version" — the splash is intentionally rich now.
+    #[test]
+    fn splash_renders_terminal_boot_screen_content() {
+        let mut app = headless_app();
+        let texts: Vec<String> = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect();
+        assert!(
+            texts.iter().any(|t| t == "\u{258C}"),
+            "expected the cursor block (▌) on the splash, got: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t == "Solitaire Quest"),
+            "expected the wordmark on the splash, got: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t == "TERMINAL EDITION"),
+            "expected the TERMINAL EDITION subtitle on the splash, got: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t == "assets loaded"),
+            "expected at least one boot-log row, got: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t == "BASE16-EIGHTIES"),
+            "expected the BASE16-EIGHTIES footer label, got: {texts:?}"
+        );
+    }
+
+    /// Every fadable element starts at alpha 0 (fade-in begins from
+    /// fully transparent) and lifts to ~1.0 by the end of the fade-in
+    /// window. Catches a regression where a new fadable's initial
+    /// paint is full-alpha — that flashes a frame of fully-visible
+    /// content before the first `advance_splash` tick lerps it down.
+    #[test]
+    fn fadables_start_transparent_and_reach_full_alpha() {
+        let mut app = headless_app();
+        // Right after Startup, before any time has advanced, every
+        // fadable element should still carry alpha 0 (the spawn
+        // function paints them transparent and the first tick has
+        // already run alpha = 0 / fade ≈ 0). We allow a tiny epsilon
+        // for floating-point lift on the very first tick.
+        let initial_text_alphas: Vec<f32> = app
+            .world_mut()
+            .query::<(&SplashFadable, &TextColor)>()
+            .iter(app.world())
+            .map(|(_, color)| color.0.alpha())
+            .collect();
+        assert!(
+            initial_text_alphas.iter().all(|a| *a <= 0.05),
+            "fadable text alphas should start near 0; got {initial_text_alphas:?}"
+        );
+
+        // Advance past the fade-in window. Every fadable should now
+        // be at full alpha.
+        let _ = advance_by(&mut app, MOTION_SPLASH_FADE_SECS + 0.4);
+        if count_splash_roots(&mut app) == 0 {
+            return; // already past fade-out under the test clock — skip.
+        }
+        let mid_text_alphas: Vec<f32> = app
+            .world_mut()
+            .query::<(&SplashFadable, &TextColor)>()
+            .iter(app.world())
+            .map(|(_, color)| color.0.alpha())
+            .collect();
+        assert!(
+            mid_text_alphas.iter().all(|a| *a >= 0.9),
+            "fadable text alphas should be at full alpha during the hold; got {mid_text_alphas:?}"
         );
     }
 }
