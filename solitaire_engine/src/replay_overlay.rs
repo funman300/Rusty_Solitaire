@@ -4,8 +4,9 @@
 //!
 //! - A "▌ replay" label on the left so the player knows the surface is
 //!   under playback control rather than live input.
-//! - A "Move N of M" progress indicator in the centre, recomputed every
-//!   frame the cursor advances.
+//! - A "MOVE N/M" progress chip in the centre, recomputed every frame
+//!   the cursor advances and bordered in cyan ACCENT_PRIMARY so it
+//!   reads as a discrete callout.
 //! - A "Stop" button on the right that aborts playback and returns
 //!   control to the player.
 //!
@@ -30,7 +31,7 @@ use crate::replay_playback::{stop_replay_playback, ReplayPlaybackState};
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
-    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
+    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,7 +111,7 @@ pub struct ReplayOverlayGameCaption;
 /// continuous visual cue of how far through the replay they are.
 ///
 /// Distinct from the simpler text-based `ReplayOverlayProgressText`
-/// (which spells out "Move N of M"): the scrub fill gives immediate
+/// (which spells out "MOVE N/M" in a chip): the scrub fill gives immediate
 /// at-a-glance positioning; the text gives the exact numbers. Both
 /// surfaces stay together because they answer the same question for
 /// players with different scanning preferences.
@@ -284,19 +285,33 @@ fn spawn_overlay(
                         ));
                     });
 
-                    // Centre: progress readout — neutral primary text
-                    // colour so the eye treats it as data, not a
-                    // callout.
+                    // Centre: progress readout, wrapped in a 1 px
+                    // ACCENT_PRIMARY-bordered chip so it reads as a
+                    // discrete callout rather than free-floating
+                    // text. No fill — the Terminal aesthetic gets
+                    // depth from borders + tonal layering, not
+                    // shadows. The marker stays on the inner Text so
+                    // `update_progress_text` keeps working unchanged.
                     row.spawn((
-                        ReplayOverlayProgressText,
-                        Text::new(progress_label),
-                        TextFont {
-                            font: font_handle,
-                            font_size: TYPE_BODY,
+                        Node {
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
                             ..default()
                         },
-                        TextColor(TEXT_PRIMARY),
-                    ));
+                        BorderColor::all(ACCENT_PRIMARY),
+                    ))
+                    .with_children(|chip| {
+                        chip.spawn((
+                            ReplayOverlayProgressText,
+                            Text::new(progress_label),
+                            TextFont {
+                                font: font_handle,
+                                font_size: TYPE_BODY,
+                                ..default()
+                            },
+                            TextColor(TEXT_PRIMARY),
+                        ));
+                    });
 
                     // Right: Stop button. Tertiary variant — the
                     // action is available but not the loudest element
@@ -452,8 +467,11 @@ fn format_game_caption(state: &ReplayPlaybackState) -> Option<String> {
 /// path produce the exact same string.
 fn format_progress(state: &ReplayPlaybackState) -> String {
     match state.progress() {
-        Some((cursor, total)) => format!("Move {cursor} of {total}"),
-        None if state.is_completed() => "Replay complete".to_string(),
+        // `MOVE N/M` (uppercase + slash) reads as a Terminal output
+        // line and matches the floating-chip motif in the mockup at
+        // `docs/ui-mockups/replay-overlay-mobile.html`.
+        Some((cursor, total)) => format!("MOVE {cursor}/{total}"),
+        None if state.is_completed() => "REPLAY COMPLETE".to_string(),
         None => String::new(),
     }
 }
@@ -604,7 +622,7 @@ mod tests {
         );
         app.update();
 
-        assert_eq!(progress_text(&mut app), "Move 5 of 10");
+        assert_eq!(progress_text(&mut app), "MOVE 5/10");
     }
 
     /// Pressing the Stop button resets the state back to `Inactive` and
