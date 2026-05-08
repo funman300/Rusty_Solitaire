@@ -137,18 +137,22 @@ The palette is base16-eighties — a 16-slot terminal palette where indices 00�
 
 ## Suit Colors
 
-**Two-color traditional mapping**, with mandatory color-blind support:
+**Four-color deck**, with mandatory color-blind support. Each suit
+picks up its own base16-eighties accent so a player scanning the
+table can identify the suit by hue alone (faster than the
+traditional 2-color red/black mapping; common in poker decks and
+online card games):
 
 | Suit | Default | Color-blind mode | Glyph differentiation |
 |---|---|---|---|
-| Hearts | `#fb9fb1` (pink) | `#acc267` (lime) | Solid filled glyph |
-| Diamonds | `#fb9fb1` (pink) | `#acc267` (lime) | **Outlined glyph (1.5px stroke)** |
-| Spades | `#d0d0d0` (foreground) | `#d0d0d0` | Solid filled glyph |
-| Clubs | `#d0d0d0` (foreground) | `#d0d0d0` | **Outlined glyph (1.5px stroke)** |
+| Hearts | `#fb9fb1` (pink, base08) | `#acc267` (lime) | Solid filled glyph |
+| Diamonds | `#ddb26f` (gold, base09) | `#ddb26f` (unchanged) | **Outlined glyph (1.5px stroke)** |
+| Spades | `#d0d0d0` (foreground, base05) | `#d0d0d0` (unchanged) | Solid filled glyph |
+| Clubs | `#acc267` (lime, base0A) | `#acc267` (unchanged) | **Outlined glyph (1.5px stroke)** |
 
 The outlined-glyph treatment is the **primary** differentiation mechanism. Color is supplementary. This means a player viewing the game on a monochrome display, or with severe red-green deficiency, can still distinguish all four suits without context. This is a hard requirement, not an optional setting.
 
-The "color-blind mode" toggle in Settings only swaps red→lime; it does not turn the outlined glyphs on or off, because outlined glyphs are always on. (Was red→cyan before the 2026-05-08 primary-accent swap; CBM moved to lime to stay hue-distinct from the new red-family primary.)
+The "color-blind mode" toggle in Settings only swaps the heart suit colour from pink to lime; the other three suits (diamonds gold, clubs lime, spades gray) are already hue-distinct from pink and stay unchanged. The toggle does not turn the outlined glyphs on or off, because outlined glyphs are always on. Note: under CBM with the 4-colour deck, hearts and clubs share the lime hue — the always-on filled-vs-outlined glyph differentiation (♥ filled, ♣ outlined) keeps them readable. (Was red→cyan before the 2026-05-08 primary-accent swap; CBM moved to lime to stay hue-distinct from the new red-family primary.)
 
 ## Typography
 
@@ -272,7 +276,7 @@ Top-right corner of the HUD: a 6px circular dot.
 
 ## Accessibility
 
-1. **Color-blind mode** (Settings → Gameplay): swaps red suits' default `#fb9fb1` for `#acc267` (lime). Outlined-glyph differentiation remains active in *all* modes.
+1. **Color-blind mode** (Settings → Gameplay): swaps the heart suit colour from `#fb9fb1` (pink) to `#acc267` (lime). The other three suits in the 4-colour deck (diamonds gold, clubs lime, spades gray) are already hue-distinct and stay unchanged. Outlined-glyph differentiation remains active in *all* modes.
 2. **High-contrast mode** (Settings → Gameplay): boosts on-surface from `#d0d0d0` to `#f5f5f5`, outline from `#505050` to `#a0a0a0`, suit-red from `#fb9fb1` to `#ff8aa0`.
 3. **Reduce-motion mode** (Settings → Gameplay): disables card-lift transition (instant z-lift), disables CRT scanline effect, disables the warning-chip pulse animation.
 4. **Tabular figures** are mandatory for any number that updates live (timer, score, moves) so they don't reflow.
