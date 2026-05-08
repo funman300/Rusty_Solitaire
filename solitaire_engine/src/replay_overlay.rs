@@ -35,8 +35,9 @@ use crate::replay_playback::{
 use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY,
-    TYPE_BODY, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBorder, STATE_SUCCESS, TEXT_PRIMARY,
+    TEXT_SECONDARY, TYPE_BODY, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4,
+    Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -680,6 +681,14 @@ fn spawn_overlay(
                         ..default()
                     },
                     BorderColor::all(BORDER_SUBTLE),
+                    // Marker for `apply_high_contrast_borders`: bumps
+                    // the 1 px top border from BORDER_SUBTLE (#505050)
+                    // to BORDER_SUBTLE_HC (#a0a0a0) when
+                    // `Settings::high_contrast_mode` is on. Without
+                    // this the footer reads as floating loose under
+                    // HC because the border that visually anchors it
+                    // to the labels row above is near-invisible.
+                    HighContrastBorder::with_default(BORDER_SUBTLE),
                 ))
                 .with_children(|footer| {
                     footer.spawn((
@@ -2005,6 +2014,34 @@ mod tests {
         assert!(
             texts.contains(&keybind_footer_hint_text().to_string()),
             "footer must contain the keybind-hint text; got {texts:?}",
+        );
+    }
+
+    /// Spawned footer carries `HighContrastBorder` so the existing
+    /// `apply_high_contrast_borders` system bumps the 1 px top
+    /// border under HC mode. Without this the footer reads as
+    /// floating loose under HC.
+    #[test]
+    fn keybind_footer_carries_high_contrast_border_marker() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&HighContrastBorder, With<ReplayOverlayKeybindFooter>>();
+        let marker = q.iter(app.world()).next();
+        assert!(
+            marker.is_some(),
+            "footer must carry HighContrastBorder so `apply_high_contrast_borders` picks it up under HC mode",
         );
     }
 
