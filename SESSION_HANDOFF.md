@@ -1,46 +1,41 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — **v0.21.1 cut and tagged at `daa655a`**,
+**Last updated:** 2026-05-08 — **v0.21.2 cut and tagged at `f23df3b`**,
 working tree clean, all post-tag work pushed to origin.
 
-v0.21.1 is a patch release for the post-v0.21.0 work: closes
-Resume-prompt Options A (app icon — runtime `Window::icon` plus
-the 9-size PNG hierarchy) and F (high-contrast + reduce-motion
-accessibility modes — Settings flags wired through engine and
-UI). Plus a card-visual iteration cycle that moved through three
-states (v0.21.0 Terminal pink/gray → brief 4-colour-deck
-experiment → traditional 2-colour Microsoft-Solitaire-on-dark-mode
-red/near-white) and two visible-bug fixes (suit-coloured border
-anti-aliasing artifact at rounded corners, pile-marker
-bleed-through producing "gray L" shapes at occupied piles —
-the latter implemented the previously-documented-but-not-enforced
-"markers visible only at empty piles" invariant).
+v0.21.2 is a patch release for the post-v0.21.1 polish work:
+extends accessibility (full HC chrome rollout across 8 surfaces;
+splash reduce-motion gating on scanline + cursor pulse), adds a
+floating MOVE chip above the destination card during replay
+playback, and lights up the first real consumer of
+`ToastVariant::Error` (a "Invalid move" toast as the third leg
+of the existing audio + visual rejection-feedback stool).
 
-Full v0.21.1 detail lives in `CHANGELOG.md` § [0.21.1]. This
+Full v0.21.2 detail lives in `CHANGELOG.md` § [0.21.2]. This
 file from here on focuses on what's *open* post-cut and how to
 resume.
 
 ## Status at pause
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `daa655a`; any post-cut docs edits ride on top of that.
-- **HEAD on origin:** matches local. v0.21.1 is fully on origin.
+  `f23df3b`; any post-cut docs edits ride on top of that.
+- **HEAD on origin:** matches local. v0.21.2 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1192 passing / 0 failing** across the workspace
-  (net +8 from v0.21.0's 1184 baseline). Detail in
-  `CHANGELOG.md` § [0.21.1] § Stats.
-- **Tags on origin:** `v0.9.0` through `v0.21.1`. v0.21.1 is on
-  `daa655a`; v0.21.0 stays on `04f9bf9`; v0.20.0 stays on
-  `41a009a`.
+- **Tests:** **1195 passing / 0 failing** across the workspace
+  (net +3 from v0.21.1's 1192 baseline). Detail in
+  `CHANGELOG.md` § [0.21.2] § Stats.
+- **Tags on origin:** `v0.9.0` through `v0.21.2`. v0.21.2 is on
+  `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
+  `04f9bf9`; v0.20.0 stays on `41a009a`.
 
-## Since the v0.21.1 cut
+## Since the v0.21.2 cut
 
 No threads in flight. Working tree clean as of 2026-05-08. New
 work since the cut would land here as commit narratives; for
-the v0.21.1 contents themselves, see `CHANGELOG.md` § [0.21.1].
+the v0.21.2 contents themselves, see `CHANGELOG.md` § [0.21.2].
 
 ## Open punch list
 
@@ -77,29 +72,45 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   mini-tableau preview, playback controls, move-log scroll, and
   a WIN MOVE marker on the scrub bar. Banner-local pieces all
   shipped in v0.21.0 (`c84d9f4` + `6204db8` + `54005d5` +
-  `e080b49`); the screen-takeover is a multi-session redesign
-  with data-layer impact (move-log scroller; WIN MOVE needs a
-  `win_move_index` field on `Replay` that doesn't yet exist).
-- **Floating `MOVE N/M` chip above the focused card during
-  playback.** Cross-plugin work — `update_progress_text` writes
-  the banner chip but the card-position lookup belongs in
-  `card_plugin`. Smaller scope than the screen-takeover.
-- **Toast Warning / Error variants.** `ToastVariant` has slots
-  for `Warning` (gold) and `Error` (pink) but no in-engine
-  event uses them yet. Wire when a warning- or error-flavoured
-  toast event materialises.
+  `e080b49`); the floating MOVE chip above the focused card
+  shipped in v0.21.2 (`2fb2d63`). The screen-takeover is a
+  multi-session redesign with data-layer impact — needs a new
+  `win_move_index: Option<usize>` field on `Replay` (currently
+  unimplemented), a move-log scroller, and a mini-tableau
+  preview.
+- *Floating `MOVE N/M` chip above the focused card during
+  playback — closed 2026-05-08 by `2fb2d63`.* World-space
+  `Text2d` entity sibling to the banner overlay; uses the same
+  `LayoutResource` pile coordinates so it survives window
+  resizes without UI/camera math.
+- **Toast Warning variant wiring.** `ToastVariant::Warning`
+  (gold) still has no in-engine consumer post-v0.21.2. Most
+  likely candidate driver: a daily-challenge-expiry warning
+  when < 30 minutes from midnight UTC reset and the player
+  hasn't completed the challenge. Needs a ticking-timer system
+  + comparison against daily-challenge state.
+- *Toast Error variant wiring — closed 2026-05-08 by `68d50b5`.*
+  `MoveRejectedEvent` now fires a 2-second pink-bordered
+  "Invalid move" toast as the third leg of the
+  audio + visual + text rejection-feedback stool.
 - *High-contrast accessibility mode — closed 2026-05-08 by
-  `c5787c6` + `07e0357`.* Card text rendering picks up
-  `TEXT_PRIMARY_HC` (`#f5f5f5`) and `RED_SUIT_COLOUR_HC`
-  (`#ff8aa0`); Settings panel has a toggle. Future scope:
-  extend HC through chrome borders (`BORDER_SUBTLE_HC` already
-  defined, not yet consumed), buttons, popover edges.
-- *Reduced-motion mode — closed 2026-05-08 by the same pair.*
-  `effective_slide_secs` forces 0 when on, regardless of the
-  `AnimSpeed` setting. Future scope: gate splash scanline
-  overlay + cursor pulse animation on the same flag, gate
-  warning-chip pulse, gate any future card-lift z-bump
-  animation.
+  `c5787c6` + `07e0357` (engine + UI) + v0.21.2's HC chrome
+  rollout (`c9af1ea` + `d87761d` + `ec804d5`).* Card text
+  rendering plus 8 chrome surfaces (modal scaffold, tooltip,
+  onboarding key chips, help panel key chips, stats panel
+  cells, home Level/XP/Score row, home mode buttons, home
+  mode-hotkey chips, 4 settings panel surfaces) all boost
+  borders to `BORDER_SUBTLE_HC` under HC. Dynamic-paint sites
+  (HUD action buttons, modal buttons, radial menu rim) stay
+  un-tagged because their existing paint cycles would race the
+  HC system; remain open for a future iteration that needs a
+  different shape (folding HC into the dynamic-paint logic).
+- *Reduced-motion mode — closed 2026-05-08 by `c5787c6` +
+  v0.21.2's `ed152e2`.* `effective_slide_secs` forces 0 on
+  card animations; `pulse_splash_cursor` skips the per-frame
+  pulse multiplier; `spawn_splash` skips the scanline overlay
+  entirely. Future scope: gate any future card-lift z-bump
+  animation, warning-chip pulse (when one materialises).
 
 ### Carried forward from v0.19.0
 
@@ -203,19 +214,18 @@ into a v0.21.1 / v0.22.0 cut.
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.21.1 is tagged at daa655a (cut 2026-05-08, a
-patch release rolling up app-icon, accessibility modes, and the
-card-visual iteration cycle that closed Resume-prompt Options A
-and F). v0.21.0 stays at 04f9bf9. Working tree clean. See
-CHANGELOG.md § [0.21.1] for full detail of what shipped in the
-patch release.
+Branch: master. v0.21.2 is tagged at f23df3b (cut 2026-05-08, a
+patch release rolling up accessibility extensions, replay polish,
+and the first real `ToastVariant::Error` consumer). v0.21.1 stays
+at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
+CHANGELOG.md § [0.21.2] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. All workspace tests
-pass (1192+; check with `cargo test --workspace`), clippy clean.
+pass (1195+; check with `cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
-  2. CHANGELOG.md        — [0.21.1] section is the most recent cut
+  2. CHANGELOG.md        — [0.21.2] section is the most recent cut
   3. CLAUDE.md           — unified-3.0 rule set
   4. CLAUDE_SPEC.md      — formal architecture spec
   5. ARCHITECTURE.md     — crate responsibilities + data flow
@@ -235,29 +245,30 @@ DECISION TO ASK THE PLAYER FIRST:
      tests can't catch. Likely surfaces JNI ClipboardManager
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
-     (Was Resume-prompt B before the post-v0.21.1 menu trim.)
-  B. Replay-overlay extensions — either the floating `MOVE N/M`
-     chip above the focused card (smaller, cross-plugin; needs
-     cursor → card-position plumbing in `card_plugin`) or the
-     full screen-takeover redesign (multi-session: move-log
-     scroll, mini tableau preview, WIN MOVE marker, data-layer
-     impact for `Replay::win_move_index`).
-  C. Toast Warning / Error variant wiring. UI infrastructure
-     exists in `ToastVariant`; no in-engine event uses Warning
-     (gold) or Error (pink) yet. Wire when a real warning- or
-     error-flavoured event materialises.
+  B. Replay-overlay screen-takeover redesign — multi-session
+     work: move-log scroller, mini-tableau preview, WIN MOVE
+     marker on the scrub bar (needs new `Replay::win_move_index`
+     field), playback controls. The smaller floating-MOVE-chip
+     piece of B already shipped in v0.21.2 (`2fb2d63`).
+  C. Toast Warning variant wiring — pick a real driver. Most
+     likely candidate: a daily-challenge-expiry warning when
+     < 30 minutes from midnight UTC reset and the player hasn't
+     completed the challenge. Needs a ticking-timer system +
+     daily-challenge state comparison. (Toast Error already
+     wired in v0.21.2 for invalid-move feedback.)
   D. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
      up several Phase Android dependencies (Keystore,
      ClipboardManager).
-  E. Extend high-contrast through chrome — `BORDER_SUBTLE_HC`
-     was defined in v0.21.1 but isn't yet consumed; popover
-     edges, button borders, focus rings still use the default
-     non-HC tokens. Plus reduce-motion still doesn't gate
-     splash scanline / cursor pulse / warning-chip pulse —
-     v0.21.1 only gated card slide_secs. Both are small,
-     finite, half-day scope.
+  E. HC + reduce-motion for dynamic-paint sites — v0.21.2
+     finished HC for *static-border* surfaces (8 tagged); the
+     dynamic-paint sites (HUD action buttons, modal buttons,
+     radial menu rim) stay un-tagged because their existing
+     paint cycles would race the `update_high_contrast_borders`
+     system. Wiring HC into those needs a different shape —
+     either fold HC into the dynamic-paint logic, or have HC
+     consult the hover/focus state. Half-day to a day.
 
 WORKFLOW NOTES:
   - Use the system git config (already correct).
