@@ -1950,6 +1950,7 @@ fn picker_row(
                     },
                     BackgroundColor(bg),
                     BorderColor::all(BORDER_SUBTLE),
+                    HighContrastBorder::with_default(BORDER_SUBTLE),
                 ))
                 .with_children(|b| {
                     let text_color = if is_selected { BG_BASE } else { TEXT_PRIMARY };
@@ -2091,6 +2092,7 @@ fn theme_picker_row(
                     },
                     BackgroundColor(bg),
                     BorderColor::all(BORDER_SUBTLE),
+                    HighContrastBorder::with_default(BORDER_SUBTLE),
                 ))
                 .with_children(|b| {
                     spawn_thumbnail_pair(b, entry.thumbnails.as_ref());
@@ -2212,6 +2214,7 @@ fn sync_row(parent: &mut ChildSpawnerCommands, status_text: &str, font_res: Opti
                 },
                 BackgroundColor(BG_ELEVATED_HI),
                 BorderColor::all(BORDER_SUBTLE),
+                HighContrastBorder::with_default(BORDER_SUBTLE),
             ))
             .with_children(|b| {
                 b.spawn((
@@ -2272,6 +2275,7 @@ fn icon_button(
             },
             BackgroundColor(BG_ELEVATED_HI),
             BorderColor::all(BORDER_SUBTLE),
+            HighContrastBorder::with_default(BORDER_SUBTLE),
         ))
         .with_children(|b| {
             b.spawn((Text::new(label.to_string()), glyph_font, TextColor(TEXT_PRIMARY)));

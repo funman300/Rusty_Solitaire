@@ -38,8 +38,8 @@ use crate::ui_modal::{
     ScrimDismissible,
 };
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_ELEVATED, BG_ELEVATED_HI, BORDER_STRONG, BORDER_SUBTLE, RADIUS_MD,
-    STATE_INFO, TEXT_DISABLED, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG,
+    ACCENT_PRIMARY, BG_ELEVATED, BG_ELEVATED_HI, BORDER_STRONG, BORDER_SUBTLE, HighContrastBorder,
+    RADIUS_MD, STATE_INFO, TEXT_DISABLED, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG,
     TYPE_CAPTION, TYPE_DISPLAY, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
 };
 
@@ -840,6 +840,7 @@ fn spawn_home_header_chips(parent: &mut ChildSpawnerCommands, ctx: &HomeContext<
             },
             BackgroundColor(BG_ELEVATED),
             BorderColor::all(BORDER_SUBTLE),
+            HighContrastBorder::with_default(BORDER_SUBTLE),
         ))
         .with_children(|row| {
             for (label, value) in [
@@ -943,6 +944,7 @@ fn spawn_draw_mode_chip<M: Component>(
             },
             BackgroundColor(bg),
             BorderColor::all(BORDER_SUBTLE),
+            HighContrastBorder::with_default(BORDER_SUBTLE),
         ))
         .with_children(|c| {
             c.spawn((Text::new(label.to_string()), font.clone(), TextColor(fg)));
@@ -1156,6 +1158,7 @@ fn spawn_mode_card(
                             ..default()
                         },
                         BorderColor::all(BORDER_SUBTLE),
+                        HighContrastBorder::with_default(BORDER_SUBTLE),
                     ))
                     .with_children(|chip| {
                         chip.spawn((
