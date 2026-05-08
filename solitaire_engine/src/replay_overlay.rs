@@ -61,9 +61,20 @@ pub const Z_REPLAY_OVERLAY: i32 = Z_DROP_OVERLAY as i32 + 5;
 /// gameplay surface visible underneath, tall enough to comfortably fit
 /// the headline-sized "▌ replay" label stacked above the
 /// `TYPE_CAPTION` "GAME #YYYY-DDD" subtitle (the left column needs
-/// ~26 + 2 + 11 = 39 px of inner content; banner = scrub (1) +
-/// vertical padding (16) + content gives 60 with a few px headroom).
-const BANNER_HEIGHT: f32 = 60.0;
+/// ~26 + 2 + 11 = 39 px of inner content; banner = scrub (1) + label
+/// row (16) + vertical padding (16) + content gives 76 with a few px
+/// headroom).
+///
+/// Grew from 60 → 76 in the scrub-notch-labels commit to make room
+/// for the percentage labels (`0%` / `25%` / … / `100%`) under each
+/// notch on the scrub track.
+const BANNER_HEIGHT: f32 = 76.0;
+
+/// Height of the label row that sits below the 1px scrub track and
+/// carries the `0%` / `25%` / `50%` / `75%` / `100%` notch labels.
+/// 16 px is enough for `TYPE_CAPTION` text (12 px font + 4 px breathing
+/// room above the bottom edge).
+const SCRUB_LABEL_ROW_HEIGHT: f32 = 16.0;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
@@ -189,6 +200,23 @@ pub struct ReplayOverlayWinMoveMarker;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayScrubNotch;
 
+/// Marker for the percentage labels under each scrub-bar notch
+/// (`0%` / `25%` / `50%` / `75%` / `100%`). One label per notch;
+/// labels live in a dedicated 16 px row below the 1 px scrub track
+/// (the row that grew the banner from 60 → 76 px).
+///
+/// Positioning follows a "endpoints flush to edges, middle three
+/// anchored at percentage" pattern: the leftmost label uses
+/// `left: 0`, the rightmost uses `right: 0`, and the middle three
+/// (`25%` / `50%` / `75%`) anchor at `left: Val::Percent(p)`. This
+/// avoids overflow at 100 % without needing CSS-style
+/// `translate-x: -50%` centering (which Bevy 0.18 UI doesn't have a
+/// clean equivalent for) — the trade-off is a slight right-of-notch
+/// offset on the middle three, which is visually subtle at the
+/// `TYPE_CAPTION` font size.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayScrubNotchLabel;
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -297,6 +325,12 @@ fn spawn_overlay(
     // the original `font_handle`. Cheap — Bevy's `Handle<Font>` is
     // `Arc`-backed, the clone bumps a refcount.
     let font_handle_for_floating = font_handle.clone();
+    // Second clone for the scrub-bar label row inside the outer
+    // banner closure. The inner top-row closure consumes the
+    // original `font_handle` for the progress-chip text, so by the
+    // time the outer closure reaches the label-row spawn the
+    // original is gone.
+    let font_handle_for_labels = font_handle.clone();
 
     let banner_label = if state.is_completed() {
         "\u{258C} replay complete" // ▌ — cursor-block prefix; matches the splash boot-screen convention.
@@ -529,6 +563,73 @@ fn spawn_overlay(
                         ));
                     }
                 });
+
+            // Third banner row: percentage labels (`0%` / `25%` /
+            // `50%` / `75%` / `100%`) under each scrub-bar notch.
+            // Sibling of (not child of) the 1px track because labels
+            // need their own vertical real estate (TYPE_CAPTION text
+            // doesn't fit inside a 1px container). Position math:
+            // track Node has `Val::Percent(p)` referencing the
+            // banner's full width; this label row also has the
+            // banner's full width, so labels at the same
+            // percentages line up vertically with their notches.
+            let labels = scrub_notch_labels();
+            let positions = scrub_notch_positions();
+            banner
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(SCRUB_LABEL_ROW_HEIGHT),
+                    position_type: PositionType::Relative,
+                    ..default()
+                })
+                .with_children(|row| {
+                    for (i, (label, pct)) in
+                        labels.iter().zip(positions.iter()).enumerate()
+                    {
+                        // Endpoints flush to the row's edges; middle
+                        // three labels anchor at their percentage.
+                        // `i == 0` → flush left (`left: 0`), so the
+                        // "0%" caption doesn't get clipped at the
+                        // left edge. `i == last` → flush right
+                        // (`right: 0`) so "100%" doesn't overflow
+                        // the banner. Bevy 0.18 UI has no clean
+                        // CSS-style `translate-x: -50%` centering,
+                        // so the middle three labels sit slightly
+                        // right-of-notch — visually subtle at this
+                        // font size; explicit polish target if
+                        // anyone notices.
+                        let mut node = Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(2.0),
+                            ..default()
+                        };
+                        if i == 0 {
+                            node.left = Val::Px(0.0);
+                        } else if i == labels.len() - 1 {
+                            node.right = Val::Px(0.0);
+                        } else {
+                            node.left = Val::Percent(*pct);
+                        }
+                        row.spawn((
+                            ReplayOverlayScrubNotchLabel,
+                            node,
+                            Text::new(*label),
+                            TextFont {
+                                font: font_handle_for_labels.clone(),
+                                font_size: TYPE_CAPTION,
+                                ..default()
+                            },
+                            // The mockup's `text-outline` (BORDER_SUBTLE)
+                            // would match the notches but reads as too
+                            // low-contrast against `BG_ELEVATED_HI` for
+                            // the labels to actually be legible at 12 px.
+                            // TEXT_SECONDARY keeps the subdued visual
+                            // hierarchy (caption, not headline) while
+                            // staying readable.
+                            TextColor(TEXT_SECONDARY),
+                        ));
+                    }
+                });
         });
 
     // Floating progress chip — a 2D world-space `Text2d` rendered
@@ -580,6 +681,16 @@ fn scrub_pct(state: &ReplayPlaybackState) -> f32 {
 /// at the helper test rather than at visual review.
 fn scrub_notch_positions() -> [f32; 5] {
     [0.0, 25.0, 50.0, 75.0, 100.0]
+}
+
+/// Pure helper — returns the percentage-label text for each notch,
+/// in left-to-right order. Paired with [`scrub_notch_positions`] so
+/// `labels[i]` belongs at `positions[i]`. Lifted to a function for
+/// the same reason as the positions helper: a clean unit-test
+/// surface that fails at a regression (e.g. someone simplifying
+/// `100%` → `MAX`) rather than at visual review.
+fn scrub_notch_labels() -> [&'static str; 5] {
+    ["0%", "25%", "50%", "75%", "100%"]
 }
 
 /// Pure helper — returns the WIN MOVE marker's left-edge position as
@@ -1556,6 +1667,120 @@ mod tests {
             scrub_notch_count(&mut app),
             0,
             "notches must despawn with the rest of the overlay tree",
+        );
+    }
+
+    fn scrub_notch_label_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayScrubNotchLabel>()
+            .iter(app.world())
+            .count()
+    }
+
+    /// Returns the rendered text of every `ReplayOverlayScrubNotchLabel`
+    /// in left-to-right order — the iteration order isn't guaranteed by
+    /// the ECS query, so callers needing a stable order must sort.
+    fn scrub_notch_label_texts(app: &mut App) -> Vec<String> {
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<&Text, With<ReplayOverlayScrubNotchLabel>>();
+        q.iter(world).map(|t| t.0.clone()).collect()
+    }
+
+    /// Pure-helper guard for the label strings. Pairs with
+    /// `scrub_notch_positions_are_quarter_marks` — same length, same
+    /// order, so `labels[i]` belongs at `positions[i]`.
+    #[test]
+    fn scrub_notch_labels_are_quarter_mark_percents() {
+        assert_eq!(
+            scrub_notch_labels(),
+            ["0%", "25%", "50%", "75%", "100%"],
+            "scrub notch labels must read as the five quarter-mark percentages",
+        );
+        assert_eq!(
+            scrub_notch_labels().len(),
+            scrub_notch_positions().len(),
+            "labels and positions must remain paired one-to-one",
+        );
+    }
+
+    /// Five label entities spawn alongside the rest of the overlay.
+    /// Cardinality matches `scrub_notch_labels().len()`.
+    #[test]
+    fn scrub_notch_labels_spawn_with_overlay() {
+        let mut app = headless_app();
+        app.update();
+        assert_eq!(scrub_notch_label_count(&mut app), 0);
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            scrub_notch_label_count(&mut app),
+            scrub_notch_labels().len(),
+            "exactly one label entity per notch must spawn",
+        );
+    }
+
+    /// Each spawned label carries one of the helper's strings — pins
+    /// the spawn-path against drift between the helper and the actual
+    /// painted text.
+    #[test]
+    fn scrub_notch_labels_carry_helper_strings() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        let mut texts = scrub_notch_label_texts(&mut app);
+        texts.sort();
+        let mut expected: Vec<String> = scrub_notch_labels()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        expected.sort();
+        assert_eq!(
+            texts, expected,
+            "spawned label texts must equal the helper's strings (set equality, ECS order is not guaranteed)",
+        );
+    }
+
+    /// Labels share the overlay tree's lifecycle — they despawn on
+    /// `Playing → Inactive` along with the banner root.
+    #[test]
+    fn scrub_notch_labels_despawn_with_overlay() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(scrub_notch_label_count(&mut app), 5);
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            scrub_notch_label_count(&mut app),
+            0,
+            "labels must despawn with the rest of the overlay tree",
         );
     }
 
