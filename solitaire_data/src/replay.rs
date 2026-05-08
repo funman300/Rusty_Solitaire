@@ -147,12 +147,38 @@ pub struct Replay {
     /// [`REPLAY_SCHEMA_VERSION`].
     #[serde(default)]
     pub share_url: Option<String>,
+    /// Index into [`moves`](Self::moves) of the move that triggered
+    /// the win condition (i.e. completed the last foundation pile).
+    ///
+    /// For replays recorded by the live engine this is always
+    /// `Some(moves.len() - 1)` because recording freezes on win — but
+    /// the field is stored explicitly so the playback UI can read it
+    /// directly without re-deriving "the last move was the win" each
+    /// time, and to leave room for future recording semantics that
+    /// might capture post-win state.
+    ///
+    /// `None` for replays loaded from disk that pre-date this field.
+    /// `#[serde(default)]` keeps older `latest_replay.json` /
+    /// `replays.json` files loadable without bumping
+    /// [`REPLAY_SCHEMA_VERSION`] — this is an additive optional
+    /// field, not a schema-breaking change.
+    ///
+    /// Surfaced by the replay-overlay scrub bar's WIN MOVE marker
+    /// (B-2 screen-takeover redesign) when present.
+    #[serde(default)]
+    pub win_move_index: Option<usize>,
 }
 
 impl Replay {
     /// Construct a fresh replay with the current schema version. The
     /// caller fills in the recorded fields; this is the canonical
     /// constructor used by the engine on win.
+    ///
+    /// [`win_move_index`](Self::win_move_index) and
+    /// [`share_url`](Self::share_url) default to `None` — the engine
+    /// uses [`with_win_move_index`](Self::with_win_move_index) at the
+    /// recording site to set the former, and `sync_plugin` writes the
+    /// latter directly when the upload task resolves.
     pub fn new(
         seed: u64,
         draw_mode: DrawMode,
@@ -172,7 +198,23 @@ impl Replay {
             recorded_at,
             moves,
             share_url: None,
+            win_move_index: None,
         }
+    }
+
+    /// Builder-style setter for [`win_move_index`](Self::win_move_index).
+    /// Returns `self` so the recording site can chain it onto
+    /// [`Replay::new`]:
+    ///
+    /// ```ignore
+    /// let replay = Replay::new(...).with_win_move_index(Some(recording.moves.len() - 1));
+    /// ```
+    ///
+    /// `None` is a valid input — useful for tests that don't care about
+    /// the WIN MOVE marker's scrub-bar position.
+    pub fn with_win_move_index(mut self, idx: Option<usize>) -> Self {
+        self.win_move_index = idx;
+        self
     }
 }
 
@@ -734,6 +776,73 @@ mod tests {
         save_replay_history_to(&path, &ReplayHistory::default()).expect("save");
         let tmp = path.with_extension("json.tmp");
         assert!(!tmp.exists(), ".tmp must be cleaned up after rename");
+
+        let _ = fs::remove_file(&path);
+    }
+
+    // -----------------------------------------------------------------------
+    // win_move_index — additive optional field for the WIN MOVE marker
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn replay_new_defaults_win_move_index_to_none() {
+        let r = sample_replay();
+        assert_eq!(r.win_move_index, None);
+    }
+
+    #[test]
+    fn with_win_move_index_sets_value() {
+        let r = sample_replay().with_win_move_index(Some(3));
+        assert_eq!(r.win_move_index, Some(3));
+    }
+
+    #[test]
+    fn with_win_move_index_accepts_none() {
+        // Passing None through the builder is a valid no-op — useful for
+        // tests / synthetic replays that don't care about the marker.
+        let r = sample_replay().with_win_move_index(None);
+        assert_eq!(r.win_move_index, None);
+    }
+
+    #[test]
+    fn replay_with_win_move_index_round_trips_on_disk() {
+        let path = tmp_path("win_move_index_round_trip");
+        let _ = fs::remove_file(&path);
+
+        let original = sample_replay().with_win_move_index(Some(3));
+        save_latest_replay_to(&path, &original).expect("save");
+        let loaded = load_latest_replay_from(&path).expect("load");
+        assert_eq!(loaded.win_move_index, Some(3));
+        assert_eq!(loaded, original);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    /// Older replay files written before this field was added must still
+    /// load — `#[serde(default)]` keeps `win_move_index` optional and
+    /// defaults missing fields to `None`. This is the contract that lets
+    /// us add the field without bumping `REPLAY_SCHEMA_VERSION`.
+    #[test]
+    fn replay_without_win_move_index_loads_with_none() {
+        let path = tmp_path("legacy_no_win_move_index");
+        let _ = fs::remove_file(&path);
+
+        // Hand-rolled minimal v2 replay JSON with no win_move_index field.
+        let v2_no_field = r#"{
+            "schema_version": 2,
+            "seed": 1,
+            "draw_mode": "DrawOne",
+            "mode": "Classic",
+            "time_seconds": 60,
+            "final_score": 100,
+            "recorded_at": "2026-05-02",
+            "moves": []
+        }"#;
+        fs::write(&path, v2_no_field).expect("write fixture");
+
+        let loaded = load_latest_replay_from(&path).expect("load");
+        assert_eq!(loaded.win_move_index, None);
+        assert_eq!(loaded.schema_version, REPLAY_SCHEMA_VERSION);
 
         let _ = fs::remove_file(&path);
     }

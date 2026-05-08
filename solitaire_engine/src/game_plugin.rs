@@ -936,6 +936,11 @@ pub fn record_replay_on_win(
         if recording.moves.is_empty() {
             continue;
         }
+        // Recording freezes on win, so the move that triggered the
+        // win condition is the last one in the list. Storing the
+        // index explicitly lets the playback UI read the WIN MOVE
+        // position directly instead of re-deriving it on every render.
+        let win_move_index = recording.moves.len().checked_sub(1);
         let replay = Replay::new(
             game.0.seed,
             game.0.draw_mode.clone(),
@@ -944,7 +949,8 @@ pub fn record_replay_on_win(
             ev.score,
             Utc::now().date_naive(),
             recording.moves.clone(),
-        );
+        )
+        .with_win_move_index(win_move_index);
         let Some(p) = path.as_ref().and_then(|r| r.0.as_deref()) else {
             // No persistence path configured (e.g. tests / minimal Linux
             // containers without dirs::data_dir). The in-memory replay
