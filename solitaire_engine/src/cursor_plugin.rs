@@ -50,8 +50,17 @@ use crate::ui_theme::{
 /// Kept in sync with the `marker_colour` constant there.
 const MARKER_DEFAULT: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
 
-/// Green tint applied to pile markers that are valid drop targets during drag.
-const MARKER_VALID: Color = Color::srgba(0.15, 0.85, 0.25, 0.55);
+/// Lime tint applied to pile markers that are valid drop targets during
+/// a drag. Same RGB as the design-system [`STATE_SUCCESS`] token at 55%
+/// alpha, so the in-game "this is a legal target" colour stays
+/// consistent with foundation-completion flourishes and other
+/// valid-move signals. Spelled as a literal because `Alpha::with_alpha`
+/// is not yet a `const` trait method on stable; the tracking test
+/// below pins the RGB to `STATE_SUCCESS` so a palette swap can't drift
+/// the two apart silently. Distinct from [`DROP_TARGET_FILL`] (10%
+/// alpha) because the marker sprite is thin and would otherwise wash
+/// out at a similar opacity.
+const MARKER_VALID: Color = Color::srgba(0.675, 0.761, 0.404, 0.55);
 
 /// Marker component on a parent entity that owns one drop-target overlay
 /// (a translucent fill plus four outline edges as children). The wrapped
@@ -522,6 +531,22 @@ mod tests {
             format!("{MARKER_VALID:?}"),
             format!("{MARKER_DEFAULT:?}")
         );
+    }
+
+    #[test]
+    fn marker_valid_rgb_tracks_state_success_token() {
+        // `MARKER_VALID` is spelled as a literal because
+        // `Alpha::with_alpha` is not a `const` trait method on stable.
+        // This test pins its RGB to `STATE_SUCCESS` so a future
+        // palette swap that updates the token but forgets the marker
+        // fails loudly here.
+        use crate::ui_theme::STATE_SUCCESS;
+        let valid = MARKER_VALID.to_srgba();
+        let success = STATE_SUCCESS.to_srgba();
+        assert!((valid.red - success.red).abs() < 1e-6);
+        assert!((valid.green - success.green).abs() < 1e-6);
+        assert!((valid.blue - success.blue).abs() < 1e-6);
+        assert!((valid.alpha - 0.55).abs() < 1e-6);
     }
 
     // -----------------------------------------------------------------------

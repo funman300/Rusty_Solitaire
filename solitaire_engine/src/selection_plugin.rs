@@ -48,6 +48,7 @@ use crate::input_plugin::{best_destination, best_tableau_destination_for_stack};
 use crate::layout::LayoutResource;
 use crate::pause_plugin::PausedResource;
 use crate::resources::{DragState, GameStateResource};
+use crate::ui_theme::{ACCENT_PRIMARY, STATE_SUCCESS, STATE_WARNING};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -660,14 +661,18 @@ fn update_selection_highlight(
     };
     let card_size = layout.0.card_size;
 
-    // Choose colours per mode: cyan in source-pick, gold while lifted.
+    // Highlight tints follow the Terminal palette's semantic state
+    // tokens: cyan focus/selection while picking the source, gold
+    // attention/commitment once the cards are lifted, lime valid-move
+    // tint on the destination. Alphas are kept non-zero so the card
+    // face beneath remains readable through the wash.
     let lifted = kbd_drag.is_lifted();
     let source_color = if lifted {
-        Color::srgba(1.0, 0.84, 0.0, 0.6)
+        STATE_WARNING.with_alpha(0.6)
     } else {
-        Color::srgba(0.0, 1.0, 1.0, 0.5)
+        ACCENT_PRIMARY.with_alpha(0.5)
     };
-    let dest_color = Color::srgba(0.0, 1.0, 0.4, 0.6);
+    let dest_color = STATE_SUCCESS.with_alpha(0.6);
 
     // Resolve the source pile from KeyboardDragState (when lifted) or
     // SelectionState (otherwise). Lifted takes precedence so the gold

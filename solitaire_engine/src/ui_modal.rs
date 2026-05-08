@@ -135,7 +135,8 @@ pub const MODAL_ENTER_START_SCALE: f32 = 0.96;
 /// Visual emphasis tier applied to a [`ModalButton`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonVariant {
-    /// Loud yellow CTA — Confirm, Play Again. One per modal; right-aligned.
+    /// Cyan CTA (`ACCENT_PRIMARY`) — Confirm, Play Again, Resume. One per
+    /// modal; right-aligned in the actions row.
     Primary,
     /// Mid-emphasis — Cancel, Close, Done.
     Secondary,
@@ -332,14 +333,17 @@ pub fn spawn_modal_button<M: Component>(
     };
 
     let label_color = match variant {
-        // Primary buttons sit on the loud yellow accent — dark text on
-        // top reads well and passes AAA contrast.
+        // Primary buttons sit on the cyan accent — `BG_BASE` text on
+        // top reads well and passes AAA contrast against `#6fc2ef`.
         ButtonVariant::Primary => BG_BASE,
         ButtonVariant::Secondary | ButtonVariant::Tertiary => TEXT_PRIMARY,
     };
     let caption_color = match variant {
-        // Use a slightly muted version of the label colour so the chip
-        // reads as a secondary detail without disappearing.
+        // Muted near-black on the cyan Primary so the hotkey chip reads
+        // as a secondary detail without disappearing. Deliberately a
+        // pure-black-at-alpha rather than `BG_BASE.with_alpha(...)`:
+        // `BG_BASE` is `#151515` (not 0,0,0), so the alpha-on-cyan
+        // composite would tint slightly cooler than intended here.
         ButtonVariant::Primary => Color::srgba(0.0, 0.0, 0.0, 0.55),
         ButtonVariant::Secondary | ButtonVariant::Tertiary => TEXT_SECONDARY,
     };
@@ -395,9 +399,10 @@ fn hover_bg(variant: ButtonVariant) -> Color {
     }
 }
 
-/// Pressed-state background colour. Primary swaps to the magenta
-/// secondary accent for a moment of celebration; Secondary darkens to
-/// the base elevation; Tertiary darkens further.
+/// Pressed-state background colour. Primary swaps to the lavender
+/// secondary accent (`ACCENT_SECONDARY`, `#e1a3ee`) for a moment of
+/// celebration; Secondary darkens to the base elevation; Tertiary
+/// darkens further to `BG_ELEVATED_PRESSED`.
 fn pressed_bg(variant: ButtonVariant) -> Color {
     match variant {
         ButtonVariant::Primary => ACCENT_SECONDARY,
