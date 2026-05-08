@@ -22,16 +22,18 @@ resume.
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
   `3d92a91`; post-cut work on B-2 (`ab857bb` data field +
-  `52befa6` WIN MOVE marker UI) rides on top of that.
+  `52befa6` WIN MOVE marker UI + `fbe48ac` playback controls)
+  rides on top of that.
 - **HEAD on origin:** matches local. v0.21.3 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1220 passing / 0 failing** across the workspace
+- **Tests:** **1228 passing / 0 failing** across the workspace
   (1207 from v0.21.3's stats + 5 from `ab857bb`'s
   `win_move_index` coverage + 8 from `52befa6`'s WIN MOVE marker
-  pure-helper truth-table + spawn lifecycle).
+  pure-helper truth-table + spawn lifecycle + 8 from `fbe48ac`'s
+  pause / step / keyboard accelerator coverage).
 - **Tags on origin:** `v0.9.0` through `v0.21.3`. v0.21.3 is on
   `3d92a91`; v0.21.2 stays on `f23df3b`; v0.21.1 stays on
   `daa655a`; v0.21.0 stays on `04f9bf9`; v0.20.0 stays on
@@ -67,6 +69,23 @@ resume.
   overlay tree on transition back to `Inactive`. 8 new tests
   (1212 → 1220): pure-helper truth table + spawn-presence /
   spawn-absence / despawn-lifecycle observables.
+- **`fbe48ac` — playback controls (pause / resume / step).**
+  Third commit on B-2. New `paused: bool` field on
+  `ReplayPlaybackState::Playing`; `tick_replay_playback` skips
+  the `secs_to_next` decrement entirely while paused so cursor
+  and timer freeze together. New public API:
+  `toggle_pause_replay_playback` and `step_replay_playback`
+  (the latter hard-gated to `Playing { paused: true }` so
+  manual stepping can't race the tick loop). UI: Pause /
+  Resume button (label repaints reactively via
+  `update_pause_button_label` which walks `Children` from
+  marker to inner `Text`) + Step button + Space keyboard
+  accelerator. Existing 25 `Playing { ... }` construction
+  sites across tests gained `paused: false` mechanically.
+  8 new tests (1220 → 1228): label truth table, label repaint
+  on state change, click-toggles-paused, step advances exactly
+  one cursor with paused preserved, step-while-running no-op,
+  Space toggles paused.
 
 ## Open punch list
 
@@ -105,10 +124,13 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   shipped in v0.21.0 (`c84d9f4` + `6204db8` + `54005d5` +
   `e080b49`); the floating MOVE chip above the focused card
   shipped in v0.21.2 (`2fb2d63`). The WIN MOVE scrub-bar marker
-  shipped post-v0.21.3 in `ab857bb` (data field) +
-  `52befa6` (UI). What still needs to land: a move-log
-  scroller, a mini-tableau preview, and playback controls
-  (play/pause/step). Multi-session.
+  shipped post-v0.21.3 in `ab857bb` (data field) + `52befa6`
+  (UI). Playback controls (pause / resume / step + Space
+  accelerator) shipped post-v0.21.3 in `fbe48ac`. What still
+  needs to land: a move-log scroller and a mini-tableau
+  preview — both screen-takeover-only pieces that need a
+  larger layout reflow than the existing banner can carry.
+  Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -285,17 +307,17 @@ DECISION TO ASK THE PLAYER FIRST:
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
   B. Replay-overlay screen-takeover redesign — multi-session
-     work. WIN MOVE marker shipped post-v0.21.3 (`ab857bb` data
-     field + `52befa6` UI). What still needs to land:
-     move-log scroller, mini-tableau preview, playback controls
-     (play/pause/step buttons + keyboard accelerators). The
+     work. Three sub-pieces shipped post-v0.21.3: WIN MOVE
+     marker (`ab857bb` data field + `52befa6` UI), playback
+     controls (`fbe48ac` pause/resume/step + Space). What
+     still needs to land: a move-log scroller and a
+     mini-tableau preview — both layout-heavy pieces that need
+     more vertical real estate than the current banner-only
+     overlay carries, so the natural next finite step is the
+     screen-takeover layout itself (mockup at
+     `docs/ui-mockups/replay-overlay-mobile.html`). The
      smaller floating-MOVE-chip piece shipped in v0.21.2
-     (`2fb2d63`). The natural next finite commit on B is
-     **playback controls** — the existing Stop button is the
-     only player-facing accelerator; adding play/pause is a
-     bounded UI + state-machine extension that exercises the
-     existing `ReplayPlaybackState::Playing { secs_to_next, ..
-     }` machinery without needing new data shapes.
+     (`2fb2d63`).
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
