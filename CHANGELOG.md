@@ -6,8 +6,129 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.3 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.4 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.4] — 2026-05-08
+
+Patch release for the post-v0.21.3 work. One through-line:
+**replay-scrubbing accessibility**. The replay overlay used to be
+pure-passive — the player started a replay, watched it execute,
+and waited for it to end. v0.21.4 adds the scaffolding for
+*navigating within* a replay: a WIN MOVE marker on the scrub bar
+so the player can see at a glance where the winning move sits,
+and pause / resume / step controls so they can stop on any move
+and inspect the board.
+
+The work is also the first three commits on the B-2 replay
+screen-takeover redesign arc. The remaining pieces (screen-
+takeover layout, move-log scroller, mini-tableau preview) are
+deferred to a future cycle because they need a layout reflow
+that the existing banner-only overlay can't carry.
+
+### Added
+
+- **`Replay::win_move_index: Option<usize>` data field**
+  (`ab857bb`). Additive optional field on the persisted
+  `Replay` shape. `#[serde(default)]` keeps older
+  `latest_replay.json` / `replays.json` files loadable without
+  bumping `REPLAY_SCHEMA_VERSION` — this is purely additive.
+  Populated at the live recording site
+  (`game_plugin::handle_game_won`) via a new builder-style
+  setter `Replay::with_win_move_index`. For fresh recordings
+  the value is always `Some(moves.len() - 1)` because recording
+  freezes on win, but storing it explicitly lets the playback
+  UI read the WIN MOVE position directly without re-deriving
+  on every render.
+- **WIN MOVE scrub-bar marker** (`52befa6`). New
+  `ReplayOverlayWinMoveMarker` component spawned as a sibling
+  to `ReplayOverlayScrubFill` under the 1px scrub track,
+  absolute-positioned at `replay.win_move_index / total %` of
+  the bar. Painted in `STATE_SUCCESS` (green) so the marker
+  reads as "this is where the win lives." Pure helper
+  `win_move_marker_pct` returns `None` for any state where the
+  marker shouldn't draw (Inactive, Completed, replay missing
+  the field, empty move list); percentage clamps to `[0, 100]`
+  defensively. Spawn-time only — the position never changes
+  during a single playback because the underlying `Replay` is
+  immutable while `Playing`.
+- **Pause / Resume / Step playback controls** (`fbe48ac`). New
+  `paused: bool` field on `ReplayPlaybackState::Playing`.
+  `tick_replay_playback` skips the `secs_to_next` decrement
+  entirely while paused so cursor and timer freeze together;
+  resuming starts the next move from a full interval. New
+  public API: `toggle_pause_replay_playback` and
+  `step_replay_playback` (the latter hard-gated to `Playing {
+  paused: true }` via the destructure pattern itself, so
+  manual stepping can't race the tick loop). On-screen Pause
+  and Step buttons sit alongside the existing Stop button;
+  `Space` keyboard accelerator toggles pause / resume.
+- **`Replay::with_win_move_index` builder** (`ab857bb`).
+  Chainable setter so the recording site can write
+  `Replay::new(...).with_win_move_index(idx)`. Keeps
+  `Replay::new`'s signature stable across the 13+ existing
+  test-fixture call sites that don't care about the field.
+
+### Changed
+
+- **`Replay::new` writes `win_move_index: None`** (`ab857bb`).
+  Existing canonical constructor stays signature-compatible
+  with all existing callers. The field is opt-in via the
+  builder.
+- **`game_plugin::handle_game_won` populates the new field**
+  (`ab857bb`). The recording site computes
+  `recording.moves.len().checked_sub(1)` as the win-move
+  index. `checked_sub` rather than direct subtraction guards
+  the unreachable empty-recording branch (which is also
+  guarded earlier in the function).
+- **`tick_replay_playback` honors the new `paused` flag**
+  (`fbe48ac`). Skipping the timer decrement is the only
+  behavior change; the loop body and Completed-detection are
+  unchanged. Stepping fires moves directly via
+  `step_replay_playback`, bypassing the tick path entirely.
+- **Pause / Resume button label is reactive** (`fbe48ac`).
+  `update_pause_button_label` walks `Children` from the
+  marked button to its inner `Text` and repaints the label
+  whenever `ReplayPlaybackState` changes. Pure helper
+  `pause_button_label` covers all four state arms (running,
+  paused, inactive, completed).
+- **25 existing `Playing { ... }` construction sites gained
+  `paused: false`** (`fbe48ac`). Mechanical edit across
+  `replay_overlay`, `achievement_plugin`, and
+  `replay_playback` tests to satisfy the new field
+  requirement. No behavioral change.
+
+### Documentation
+
+- `SESSION_HANDOFF.md` refreshed three times this cycle —
+  once after each post-cut feature commit. The B-2 entry in
+  the Visual-identity follow-ups list now points at the
+  remaining sub-pieces (screen-takeover layout, move-log
+  scroller, mini-tableau preview) as a single multi-session
+  arc rather than three independent ones, since they share a
+  layout-reflow prerequisite.
+
+### Stats
+
+- **1228 passing tests / 0 failing** across the workspace
+  (net +21 from v0.21.3's 1207 baseline):
+  - 5 from `ab857bb`'s `win_move_index` coverage: default
+    constructor, builder set / set-None, on-disk round-trip,
+    legacy-JSON-loads-with-None backward-compat. The last
+    test pins the no-schema-bump claim — if a future refactor
+    drops the `#[serde(default)]`, that test catches it.
+  - 8 from `52befa6`'s WIN MOVE marker: pure-helper truth
+    table (Inactive / Completed / no-field / correct-position
+    / clamp) + spawn-presence-with-field /
+    spawn-absence-without / despawn-with-overlay observables.
+  - 8 from `fbe48ac`'s playback controls: label truth table,
+    label repaint on state change, click-toggles-paused,
+    step advances cursor by exactly one with paused
+    preserved, step-while-running no-op, Space toggles
+    paused.
+- Zero clippy warnings under `cargo clippy --workspace
+  --all-targets -- -D warnings`.
+- `cargo test --workspace` clean.
 
 ## [0.21.3] — 2026-05-08
 
