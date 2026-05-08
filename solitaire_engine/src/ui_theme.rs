@@ -8,12 +8,12 @@
 //! engine; collapsing them into one source of truth keeps the visual
 //! system coherent and makes future palette swaps a single-file change.
 //!
-//! Palette is "Midnight Purple + Balatro accent" — see the 2026-04-30
-//! UX overhaul Phase 2 proposal for the rationale behind specific
-//! values. The tokens are exposed as `pub const` so static contexts
-//! (default colours on Sprite components, etc.) can use them; a future
-//! `UiTheme` resource can layer runtime switching on top without
-//! changing the constant API.
+//! Palette is "Terminal" (base16-eighties) — see
+//! `docs/ui-mockups/design-system.md` for the full token spec, mockup
+//! library, and rationale. The tokens are exposed as `pub const` so
+//! static contexts (default colours on Sprite components, etc.) can use
+//! them; a future `UiTheme` resource can layer runtime switching on top
+//! without changing the constant API.
 
 use bevy::color::Color;
 use bevy::math::Vec2;
@@ -21,93 +21,96 @@ use bevy::prelude::Val;
 use solitaire_data::AnimSpeed;
 
 // ---------------------------------------------------------------------------
-// Colours — Midnight Purple base with a Balatro-yellow primary accent.
+// Colours — Terminal (base16-eighties): near-black surface ramp with a cyan
+// primary accent and lime/lavender/gold/teal/pink semantic accents.
 // ---------------------------------------------------------------------------
 
 /// Window backstop and the default text colour on top of `ACCENT_PRIMARY`.
-/// Deep midnight purple, near-black. `#1A0F2E`.
-pub const BG_BASE: Color = Color::srgb(0.102, 0.059, 0.180);
+/// Near-black terminal background. `#151515`.
+pub const BG_BASE: Color = Color::srgb(0.082, 0.082, 0.082);
 
 /// Elevated surface — modal cards, popover panels, button backgrounds.
-/// One step lighter than `BG_BASE` so cards visually float above the
-/// felt without needing real drop shadows. `#2D1B69`.
-pub const BG_ELEVATED: Color = Color::srgb(0.176, 0.106, 0.412);
+/// One step lighter than `BG_BASE` so cards read as a separate plane
+/// without needing drop shadows. `#202020`.
+pub const BG_ELEVATED: Color = Color::srgb(0.125, 0.125, 0.125);
 
 /// Hovered/highlighted surface — used on button hover and on the
-/// currently-active row of a popover. `#3A2580`.
-pub const BG_ELEVATED_HI: Color = Color::srgb(0.227, 0.145, 0.502);
+/// currently-active row of a popover. `#2a2a2a`.
+pub const BG_ELEVATED_HI: Color = Color::srgb(0.165, 0.165, 0.165);
 
 /// Top elevation step — Secondary button hover, popover currently-
-/// hovered row. One rung above `BG_ELEVATED_HI`. `#482F97`.
-pub const BG_ELEVATED_TOP: Color = Color::srgb(0.282, 0.184, 0.592);
+/// hovered row. One rung above `BG_ELEVATED_HI`. `#353535`.
+pub const BG_ELEVATED_TOP: Color = Color::srgb(0.208, 0.208, 0.208);
 
-/// Pressed-button surface — `BG_ELEVATED` darkened ~15%. `#26155B`.
-pub const BG_ELEVATED_PRESSED: Color = Color::srgb(0.149, 0.082, 0.357);
+/// Pressed-button surface — sits below `BG_ELEVATED` so a press reads
+/// as the surface receding rather than rising. `#1a1a1a`.
+pub const BG_ELEVATED_PRESSED: Color = Color::srgb(0.102, 0.102, 0.102);
 
-/// Uniform scrim under every modal. The audit found 0.60–0.92 alpha
-/// drift across 11 overlay plugins; this single value replaces all of
-/// them. `rgba(13, 7, 28, 0.85)`.
-pub const SCRIM: Color = Color::srgba(0.051, 0.027, 0.110, 0.85);
+/// Uniform scrim under every modal. Per the Terminal design system,
+/// modals dim the table aggressively (95% opacity) without blurring,
+/// to maintain the crisp synthwave-flat aesthetic. `rgba(21, 21, 21, 0.95)`.
+pub const SCRIM: Color = Color::srgba(0.082, 0.082, 0.082, 0.95);
 
-/// Translucent fill for the top-of-window HUD band painted by
-/// `hud_plugin::spawn_hud_band`. Same midnight-purple hue as `BG_BASE`,
-/// but at 0.70 alpha so the green felt reads through subtly — enough
-/// to mark the band as "UI" without feeling like a hard chrome strip.
-/// `rgba(26, 15, 46, 0.70)`.
-pub const BG_HUD_BAND: Color = Color::srgba(0.102, 0.059, 0.180, 0.70);
+/// Solid fill for the top-of-window HUD band painted by
+/// `hud_plugin::spawn_hud_band`. Terminal HUD chips are opaque
+/// `surface-container` panels — no transparency — so the chrome reads
+/// as a status-line strip rather than a glassy overlay. `#202020`.
+pub const BG_HUD_BAND: Color = Color::srgba(0.125, 0.125, 0.125, 1.0);
 
-/// Primary text — warm off-white with a hint of purple to fit the
-/// midnight palette without feeling clinical. `#F5F0FF`.
-pub const TEXT_PRIMARY: Color = Color::srgb(0.961, 0.941, 1.000);
+/// Primary text — warm off-white. The base16-eighties foreground.
+/// `#d0d0d0`.
+pub const TEXT_PRIMARY: Color = Color::srgb(0.816, 0.816, 0.816);
 
-/// Secondary text — captions, hints, muted labels. Lavender-grey.
-/// `#B5A8D5`.
-pub const TEXT_SECONDARY: Color = Color::srgb(0.710, 0.659, 0.835);
+/// Secondary text — captions, hints, muted labels. `#a0a0a0`.
+pub const TEXT_SECONDARY: Color = Color::srgb(0.627, 0.627, 0.627);
 
-/// Disabled text — greyed-out buttons, locked items. `#6B5F85`.
-pub const TEXT_DISABLED: Color = Color::srgb(0.420, 0.373, 0.522);
+/// Disabled text — greyed-out buttons, locked items. `#505050`.
+pub const TEXT_DISABLED: Color = Color::srgb(0.314, 0.314, 0.314);
 
-/// Balatro-yellow primary accent — the loudest colour in the palette.
-/// Reserved for primary actions (Confirm, Play Again), win states, and
-/// "look here" callouts. `BG_BASE` text on top of this colour passes
-/// AAA contrast. `#FFD23F`.
-pub const ACCENT_PRIMARY: Color = Color::srgb(1.000, 0.824, 0.247);
+/// Cyan primary accent — the CTA colour of the system. Reserved for
+/// primary actions (Play, Resume, Save), focus rings, and selection.
+/// `BG_BASE` text on top of this colour passes AAA contrast. `#6fc2ef`.
+pub const ACCENT_PRIMARY: Color = Color::srgb(0.435, 0.761, 0.937);
 
 /// Brightened `ACCENT_PRIMARY` for hover states on primary buttons.
-/// Picks up saturation while keeping the same hue. `#FFE36B`.
-pub const ACCENT_PRIMARY_HOVER: Color = Color::srgb(1.000, 0.890, 0.420);
+/// Picks up luminance while keeping the same hue. `#a8dcf5`.
+pub const ACCENT_PRIMARY_HOVER: Color = Color::srgb(0.659, 0.863, 0.961);
 
-/// Warm magenta secondary accent — celebratory states (achievement
-/// unlocked, streak milestones). Used sparingly so it stays special.
-/// `#FF6B9D`.
-pub const ACCENT_SECONDARY: Color = Color::srgb(1.000, 0.420, 0.616);
+/// Lavender secondary accent — celebratory states (level-up,
+/// achievement unlocked, streak milestones). Used sparingly so it stays
+/// special. `#e1a3ee`.
+pub const ACCENT_SECONDARY: Color = Color::srgb(0.882, 0.639, 0.933);
 
-/// Success — foundation completion, valid drop tint, sync OK. `#4ADE80`.
-pub const STATE_SUCCESS: Color = Color::srgb(0.290, 0.871, 0.502);
+/// Success — foundation completion, valid drop tint, sync OK. Lime
+/// from base16-eighties. `#acc267`.
+pub const STATE_SUCCESS: Color = Color::srgb(0.675, 0.761, 0.404);
 
-/// Warning — penalty signal. **Both** Undo and Recycle counters use
-/// this when non-zero (the audit found these were inconsistent — Undos
-/// amber, Recycles white). `#FFA94D`.
-pub const STATE_WARNING: Color = Color::srgb(1.000, 0.663, 0.302);
+/// Warning — penalty signal, daily-seed expiry countdown, sync-pending
+/// status. Gold from base16-eighties. **Both** Undo and Recycle
+/// counters use this when non-zero. `#ddb26f`.
+pub const STATE_WARNING: Color = Color::srgb(0.867, 0.698, 0.435);
 
-/// Danger — rejection shake, illegal placement, sync error. `#F77272`.
-pub const STATE_DANGER: Color = Color::srgb(0.969, 0.447, 0.447);
+/// Danger — rejection shake, illegal placement, sync error. Pink from
+/// base16-eighties (also doubles as `suit-red` per the design.md
+/// rationale). `#fb9fb1`.
+pub const STATE_DANGER: Color = Color::srgb(0.984, 0.624, 0.694);
 
-/// Info — daily-challenge constraint, draw-cycle indicator. `#6BBBFF`.
-pub const STATE_INFO: Color = Color::srgb(0.420, 0.733, 1.000);
+/// Info — neutral system toasts, sync-connected indicator. Teal from
+/// base16-eighties. `#12cfc0`.
+pub const STATE_INFO: Color = Color::srgb(0.071, 0.812, 0.753);
 
 /// Soft fill colour for the drop-target overlay shown over every legal
-/// destination pile while the player is dragging a card. Same green hue
-/// as `STATE_SUCCESS` (`#4ADE80`) so the visual language stays
+/// destination pile while the player is dragging a card. Same lime hue
+/// as `STATE_SUCCESS` (`#acc267`) so the visual language stays
 /// consistent, but at 10 % alpha so the underlying card faces remain
 /// fully readable through the wash.
-pub const DROP_TARGET_FILL: Color = Color::srgba(0.290, 0.871, 0.502, 0.10);
+pub const DROP_TARGET_FILL: Color = Color::srgba(0.675, 0.761, 0.404, 0.10);
 
 /// Outline colour for the drop-target overlay. Matches the
 /// `STATE_SUCCESS` hue at 75 % alpha so the rectangle border reads
 /// unmistakably against both the felt and stacked card faces without
 /// drowning the cards themselves.
-pub const DROP_TARGET_OUTLINE: Color = Color::srgba(0.290, 0.871, 0.502, 0.75);
+pub const DROP_TARGET_OUTLINE: Color = Color::srgba(0.675, 0.761, 0.404, 0.75);
 
 /// Thickness of the drop-target outline edges, in world-space pixels.
 pub const DROP_TARGET_OUTLINE_PX: f32 = 3.0;
@@ -131,7 +134,7 @@ pub const STOCK_BADGE_BG: Color = BG_ELEVATED_HI;
 /// Foreground (text) colour of the stock-pile remaining-count chip.
 ///
 /// `ACCENT_PRIMARY` keeps the chip readable against the elevated
-/// purple background and matches the Balatro accent already used for
+/// surface background and matches the cyan accent already used for
 /// other "look here" callouts.
 pub const STOCK_BADGE_FG: Color = ACCENT_PRIMARY;
 
@@ -159,15 +162,19 @@ pub const Z_STOCK_BADGE: f32 = 30.0;
 /// separately via [`CARD_SHADOW_ALPHA_IDLE`] / [`CARD_SHADOW_ALPHA_DRAG`].
 pub const CARD_SHADOW_COLOR: Color = Color::srgb(0.0, 0.0, 0.0);
 
-/// Alpha for the resting-state card shadow. Low enough that 52 stacked
-/// shadows do not darken the felt into a uniform smear, high enough that
-/// each card reads as separated from the surface.
-pub const CARD_SHADOW_ALPHA_IDLE: f32 = 0.25;
+/// Alpha for the resting-state card shadow. Set to 0 under the Terminal
+/// design system: depth is achieved through 1px suit-color borders and
+/// tonal layering, not blur shadows ("no `box-shadow` anywhere" is a
+/// hard constraint of `docs/ui-mockups/design-system.md`). The shadow
+/// rendering code path is left in place so a future palette swap can
+/// re-enable it without touching consumers.
+pub const CARD_SHADOW_ALPHA_IDLE: f32 = 0.0;
 
-/// Alpha for the lifted/dragged card shadow. Stronger than the idle value
-/// so the dragged stack visibly "casts more shadow" while the player holds
-/// it above the table.
-pub const CARD_SHADOW_ALPHA_DRAG: f32 = 0.40;
+/// Alpha for the lifted/dragged card shadow. Set to 0 for the same
+/// reason as [`CARD_SHADOW_ALPHA_IDLE`]. Drag affordance under the
+/// Terminal system is the cyan focus glow + z-index lift, not a deeper
+/// shadow.
+pub const CARD_SHADOW_ALPHA_DRAG: f32 = 0.0;
 
 /// World-space pixel offset of the resting-state card shadow relative to
 /// its parent card centre. Down-and-right matches a soft top-left light
@@ -197,15 +204,20 @@ pub const CARD_SHADOW_PADDING_DRAG: Vec2 = Vec2::new(8.0, 8.0);
 pub const CARD_SHADOW_LOCAL_Z: f32 = -0.05;
 
 /// Subtle border — default popover, card, and idle button outline.
-pub const BORDER_SUBTLE: Color = Color::srgba(0.647, 0.549, 1.000, 0.12);
+/// `outline-variant` from the design system at full alpha; the Terminal
+/// aesthetic uses solid 1px borders rather than translucent washes.
+/// `#353535`.
+pub const BORDER_SUBTLE: Color = Color::srgba(0.208, 0.208, 0.208, 1.0);
 
 /// Strong border — hover outline, focused button, active popover.
-pub const BORDER_STRONG: Color = Color::srgba(0.647, 0.549, 1.000, 0.30);
+/// `outline` from the design system. `#505050`.
+pub const BORDER_STRONG: Color = Color::srgba(0.314, 0.314, 0.314, 1.0);
 
-/// 2 px ring drawn around the focused interactive element. Balatro yellow
+/// 2 px ring drawn around the focused interactive element. Cyan
 /// (matches `ACCENT_PRIMARY`) at 85% alpha so the ring stays legible
 /// against both elevated surfaces and the modal scrim backdrop.
-pub const FOCUS_RING: Color = Color::srgba(1.0, 0.823, 0.247, 0.85);
+/// `rgba(111, 194, 239, 0.85)`.
+pub const FOCUS_RING: Color = Color::srgba(0.435, 0.761, 0.937, 0.85);
 
 // ---------------------------------------------------------------------------
 // Typography scale (px) — 5 rungs replace the prior
