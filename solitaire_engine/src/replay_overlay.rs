@@ -27,7 +27,9 @@ use bevy::prelude::*;
 use chrono::Datelike;
 
 use crate::font_plugin::FontResource;
+use crate::layout::LayoutResource;
 use crate::replay_playback::{stop_replay_playback, ReplayPlaybackState};
+use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
@@ -87,6 +89,21 @@ pub struct ReplayOverlayBannerText;
 /// [`ReplayPlaybackState::progress`].
 #[derive(Component, Debug)]
 pub struct ReplayOverlayProgressText;
+
+/// Marker on the **floating** progress chip — a 2D world-space text
+/// entity rendered above the destination pile of the most-recently-
+/// applied move. Sits independently of the banner overlay (which
+/// lives in the UI tree and never moves) so the player can see
+/// progress without breaking eye contact with the focal card.
+///
+/// Lifecycle matches the banner overlay: spawned by `spawn_overlay`
+/// when a replay starts, despawned by `react_to_state_change` when
+/// it ends. Position updated each frame by
+/// `update_floating_progress_chip`. Hidden when cursor=0 (no moves
+/// applied yet) or the last applied move was a `StockClick` (no
+/// destination pile to follow).
+#[derive(Component, Debug)]
+pub struct ReplayFloatingProgressChip;
 
 /// Marker on the right-hand "Stop" button. Click handler queries for this
 /// and calls [`stop_replay_playback`] when an `Interaction::Pressed`
@@ -149,6 +166,7 @@ impl Plugin for ReplayOverlayPlugin {
                 react_to_state_change,
                 update_banner_label,
                 update_progress_text,
+                update_floating_progress_chip,
                 update_scrub_fill,
                 handle_stop_button,
             )
@@ -170,6 +188,7 @@ fn react_to_state_change(
     mut commands: Commands,
     state: Res<ReplayPlaybackState>,
     existing: Query<Entity, With<ReplayOverlayRoot>>,
+    floating_chips: Query<Entity, With<ReplayFloatingProgressChip>>,
     font_res: Option<Res<FontResource>>,
 ) {
     if !state.is_changed() {
@@ -183,6 +202,13 @@ fn react_to_state_change(
         spawn_overlay(&mut commands, font_res.as_deref(), &state);
     } else if !should_be_visible && already_spawned {
         for entity in &existing {
+            commands.entity(entity).despawn();
+        }
+        // Floating chip lives outside the UI tree (world-space
+        // entity), so the banner-root despawn doesn't reach it.
+        // Despawn separately on the same state transition so both
+        // disappear together when the replay ends.
+        for entity in &floating_chips {
             commands.entity(entity).despawn();
         }
     }
@@ -200,6 +226,11 @@ fn spawn_overlay(
     state: &ReplayPlaybackState,
 ) {
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+    // Clone for the floating chip spawn that runs *after* the
+    // banner's `.with_children(|banner| { ... })` closure consumes
+    // the original `font_handle`. Cheap — Bevy's `Handle<Font>` is
+    // `Arc`-backed, the clone bumps a refcount.
+    let font_handle_for_floating = font_handle.clone();
 
     let banner_label = if state.is_completed() {
         "\u{258C} replay complete" // ▌ — cursor-block prefix; matches the splash boot-screen convention.
@@ -365,6 +396,30 @@ fn spawn_overlay(
                     ));
                 });
         });
+
+    // Floating progress chip — a 2D world-space `Text2d` rendered
+    // above the destination pile of the most-recently-applied move.
+    // Sibling of (not child of) the banner overlay because it lives
+    // in world-space coordinates, not the UI tree. Spawned hidden;
+    // `update_floating_progress_chip` shows + positions it on the
+    // first frame the cursor advances past 0. Lifecycle matches
+    // the banner overlay — `react_to_state_change` despawns both
+    // when the replay state transitions back to `Inactive`.
+    commands.spawn((
+        ReplayFloatingProgressChip,
+        Text2d::new(format_progress(state)),
+        TextFont {
+            font: font_handle_for_floating,
+            font_size: TYPE_BODY,
+            ..default()
+        },
+        TextColor(TEXT_PRIMARY),
+        // High Z keeps the chip above every card stack
+        // (Z_DROP_OVERLAY = 50, Z_STOCK_BADGE = 30, regular cards
+        // stack to the low double digits at most).
+        Transform::from_xyz(0.0, 0.0, 100.0),
+        Visibility::Hidden,
+    ));
 }
 
 /// Pure helper — returns the scrub-fill width as a percentage of the
@@ -422,6 +477,78 @@ fn update_progress_text(
     let label = format_progress(&state);
     for mut text in &mut q {
         **text = label.clone();
+    }
+}
+
+/// Repositions the floating progress chip above the destination
+/// pile of the most-recently-applied move and repaints its text.
+///
+/// The chip is hidden when:
+/// - the cursor is at 0 (no moves applied yet — chip would have
+///   nowhere meaningful to land), OR
+/// - the most-recently-applied move was a `StockClick` (no
+///   destination pile — stock-click feedback already lives at
+///   the stock pile and we don't want the chip to jitter back
+///   to the stock pile every cycle).
+///
+/// When visible, the chip's world-space `Transform.translation`
+/// is set to the destination pile's centre plus a fixed upward
+/// offset (`card_size.y * 0.6`) so the chip floats just above
+/// the top edge of the card. World-space placement (rather than
+/// UI-space + camera projection) keeps the math trivial and means
+/// the chip stays correctly positioned through window resizes
+/// without any extra wiring — `LayoutResource` already drives
+/// every other piece of pile geometry.
+fn update_floating_progress_chip(
+    state: Res<ReplayPlaybackState>,
+    layout: Option<Res<LayoutResource>>,
+    mut chips: Query<
+        (&mut Transform, &mut Visibility, &mut Text2d),
+        With<ReplayFloatingProgressChip>,
+    >,
+) {
+    let Some(layout) = layout else {
+        return;
+    };
+
+    // Resolve the destination pile of the last-applied move (if
+    // any). `cursor` is the index of the *next* move to apply, so
+    // the most-recently-applied move sits at `cursor - 1`.
+    let dest_pile = match state.as_ref() {
+        ReplayPlaybackState::Playing { replay, cursor, .. } if *cursor > 0 => {
+            match &replay.moves[cursor - 1] {
+                ReplayMove::Move { to, .. } => Some(to.clone()),
+                ReplayMove::StockClick => None,
+            }
+        }
+        _ => None,
+    };
+
+    let Some(world_pos) = dest_pile
+        .as_ref()
+        .and_then(|p| layout.0.pile_positions.get(p).copied())
+    else {
+        // Nothing to point at — hide every chip and exit.
+        for (_, mut visibility, _) in chips.iter_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    };
+
+    // Position above the destination pile by ~60 % of a card
+    // height. Half a card lifts above the centre, the extra 10 %
+    // is breathing room above the top edge so the chip doesn't
+    // visually clip the card.
+    let above = Vec2::new(0.0, layout.0.card_size.y * 0.6);
+    let target = (world_pos + above).extend(100.0);
+    let label = format_progress(&state);
+
+    for (mut transform, mut visibility, mut text2d) in chips.iter_mut() {
+        transform.translation = target;
+        *visibility = Visibility::Inherited;
+        if **text2d != label {
+            **text2d = label.clone();
+        }
     }
 }
 
@@ -665,6 +792,56 @@ mod tests {
             overlay_root_count(&mut app),
             0,
             "overlay must despawn the frame after state returns to Inactive",
+        );
+    }
+
+    /// Lifecycle: the floating progress chip spawns alongside the
+    /// banner overlay when playback starts, and despawns when
+    /// playback ends. (Position correctness needs `LayoutResource`,
+    /// which isn't set up in this headless fixture; the lifecycle
+    /// test below is what's load-bearing for the spawn/despawn
+    /// pairing.)
+    #[test]
+    fn floating_chip_spawns_and_despawns_with_overlay() {
+        let mut app = headless_app();
+        // Inactive → no chip.
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ReplayFloatingProgressChip>()
+                .iter(app.world())
+                .count(),
+            0,
+            "no floating chip while playback is Inactive",
+        );
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(5),
+                cursor: 0,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ReplayFloatingProgressChip>()
+                .iter(app.world())
+                .count(),
+            1,
+            "floating chip must spawn when playback starts",
+        );
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ReplayFloatingProgressChip>()
+                .iter(app.world())
+                .count(),
+            0,
+            "floating chip must despawn when playback ends",
         );
     }
 
