@@ -28,8 +28,8 @@ use crate::font_plugin::FontResource;
 use crate::replay_playback::{stop_replay_playback, ReplayPlaybackState};
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_ELEVATED_HI, TEXT_PRIMARY, TYPE_BODY, TYPE_HEADLINE, VAL_SPACE_2,
-    VAL_SPACE_4, Z_DROP_OVERLAY,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, TEXT_PRIMARY, TYPE_BODY, TYPE_HEADLINE,
+    VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,6 +87,19 @@ pub struct ReplayOverlayProgressText;
 #[derive(Component, Debug)]
 pub struct ReplayStopButton;
 
+/// Marker on the cyan "fill" of the bottom-edge scrub bar. The
+/// `Node`'s `width` is rewritten every frame the cursor advances to
+/// `cursor / total` of the bar's full width, so the player has a
+/// continuous visual cue of how far through the replay they are.
+///
+/// Distinct from the simpler text-based `ReplayOverlayProgressText`
+/// (which spells out "Move N of M"): the scrub fill gives immediate
+/// at-a-glance positioning; the text gives the exact numbers. Both
+/// surfaces stay together because they answer the same question for
+/// players with different scanning preferences.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayScrubFill;
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -118,6 +131,7 @@ impl Plugin for ReplayOverlayPlugin {
                 react_to_state_change,
                 update_banner_label,
                 update_progress_text,
+                update_scrub_fill,
                 handle_stop_button,
             )
                 .chain(),
@@ -192,11 +206,9 @@ fn spawn_overlay(
                 top: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 height: Val::Px(BANNER_HEIGHT),
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::SpaceBetween,
-                padding: UiRect::axes(VAL_SPACE_4, VAL_SPACE_2),
-                column_gap: VAL_SPACE_4,
+                // Column outer so the content row sits above the 1px
+                // scrub bar at the bottom edge.
+                flex_direction: FlexDirection::Column,
                 ..default()
             },
             BackgroundColor(banner_bg),
@@ -208,56 +220,114 @@ fn spawn_overlay(
             GlobalZIndex(Z_REPLAY_OVERLAY),
         ))
         .with_children(|banner| {
-            // Left: "Replay" label in the cyan primary accent
-            // (`ACCENT_PRIMARY`) so it reads unmistakably as a
-            // non-gameplay surface.
-            banner.spawn((
-                ReplayOverlayBannerText,
-                Text::new(banner_label),
-                TextFont {
-                    font: font_handle.clone(),
-                    font_size: TYPE_HEADLINE,
-                    ..default()
-                },
-                TextColor(ACCENT_PRIMARY),
-            ));
-
-            // Centre: progress readout — neutral primary text colour so
-            // the eye treats it as data, not a callout.
-            banner.spawn((
-                ReplayOverlayProgressText,
-                Text::new(progress_label),
-                TextFont {
-                    font: font_handle,
-                    font_size: TYPE_BODY,
-                    ..default()
-                },
-                TextColor(TEXT_PRIMARY),
-            ));
-
-            // Right: Stop button. Tertiary variant — the action is
-            // available but not the loudest element in the banner; the
-            // "Replay" cyan accent owns that slot. `spawn_modal_button`
-            // gives us hover / press paint and focus rings for free via
-            // the existing `UiModalPlugin` paint system.
+            // Top row: the existing content (label / progress / Stop).
             banner
                 .spawn(Node {
+                    flex_grow: 1.0,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
-                    column_gap: VAL_SPACE_2,
+                    justify_content: JustifyContent::SpaceBetween,
+                    padding: UiRect::axes(VAL_SPACE_4, VAL_SPACE_2),
+                    column_gap: VAL_SPACE_4,
                     ..default()
                 })
-                .with_children(|wrap| {
-                    spawn_modal_button(
-                        wrap,
-                        ReplayStopButton,
-                        "Stop",
-                        None,
-                        ButtonVariant::Tertiary,
-                        font_res,
-                    );
+                .with_children(|row| {
+                    // Left: "Replay" label in the cyan primary accent
+                    // (`ACCENT_PRIMARY`) so it reads unmistakably as a
+                    // non-gameplay surface.
+                    row.spawn((
+                        ReplayOverlayBannerText,
+                        Text::new(banner_label),
+                        TextFont {
+                            font: font_handle.clone(),
+                            font_size: TYPE_HEADLINE,
+                            ..default()
+                        },
+                        TextColor(ACCENT_PRIMARY),
+                    ));
+
+                    // Centre: progress readout — neutral primary text
+                    // colour so the eye treats it as data, not a
+                    // callout.
+                    row.spawn((
+                        ReplayOverlayProgressText,
+                        Text::new(progress_label),
+                        TextFont {
+                            font: font_handle,
+                            font_size: TYPE_BODY,
+                            ..default()
+                        },
+                        TextColor(TEXT_PRIMARY),
+                    ));
+
+                    // Right: Stop button. Tertiary variant — the
+                    // action is available but not the loudest element
+                    // in the banner; the "Replay" cyan accent owns
+                    // that slot. `spawn_modal_button` gives us hover /
+                    // press paint and focus rings for free via the
+                    // existing `UiModalPlugin` paint system.
+                    row.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: VAL_SPACE_2,
+                        ..default()
+                    })
+                    .with_children(|wrap| {
+                        spawn_modal_button(
+                            wrap,
+                            ReplayStopButton,
+                            "Stop",
+                            None,
+                            ButtonVariant::Tertiary,
+                            font_res,
+                        );
+                    });
+                });
+
+            // Bottom edge: 1px-tall scrub bar. Track in `BORDER_SUBTLE`,
+            // fill in `ACCENT_PRIMARY`. The fill width is rewritten by
+            // [`update_scrub_fill`] every tick the cursor advances.
+            // Initial fill width matches the spawn-time progress so the
+            // first-frame paint already reflects state instead of
+            // popping from 0 → cursor on the first tick.
+            let initial_scrub_pct = scrub_pct(state);
+            banner
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(1.0),
+                        ..default()
+                    },
+                    BackgroundColor(BORDER_SUBTLE),
+                ))
+                .with_children(|track| {
+                    track.spawn((
+                        ReplayOverlayScrubFill,
+                        Node {
+                            width: Val::Percent(initial_scrub_pct),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(ACCENT_PRIMARY),
+                    ));
                 });
         });
+}
+
+/// Pure helper — returns the scrub-fill width as a percentage of the
+/// track for the given playback state. `Completed` reads as 100 %;
+/// `Inactive` and `Playing` with no progress read as 0 %.
+fn scrub_pct(state: &ReplayPlaybackState) -> f32 {
+    if state.is_completed() {
+        return 100.0;
+    }
+    match state.progress() {
+        Some((_, 0)) | None => 0.0,
+        Some((cursor, total)) => {
+            let frac = (cursor as f32 / total as f32).clamp(0.0, 1.0);
+            frac * 100.0
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +369,23 @@ fn update_progress_text(
     let label = format_progress(&state);
     for mut text in &mut q {
         **text = label.clone();
+    }
+}
+
+/// Repaints the bottom-edge cyan scrub fill to mirror cursor progress.
+/// Same change-detection guard as the text updaters — the overlay
+/// already early-exits when nothing moved, so an idle replay leaves the
+/// scrub bar's `Node` untouched.
+fn update_scrub_fill(
+    state: Res<ReplayPlaybackState>,
+    mut q: Query<&mut Node, With<ReplayOverlayScrubFill>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    let pct = scrub_pct(&state);
+    for mut node in &mut q {
+        node.width = Val::Percent(pct);
     }
 }
 
@@ -561,6 +648,106 @@ mod tests {
             banner_text(&mut app),
             "Replay complete",
             "banner label must swap on Playing → Completed",
+        );
+    }
+
+    /// Read the current `Node.width` of the unique scrub-fill entity as
+    /// a percentage. Assertions can then compare against expected
+    /// `cursor / total` ratios without poking ECS internals at the call
+    /// site.
+    fn scrub_fill_pct(app: &mut App) -> f32 {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Node, With<ReplayOverlayScrubFill>>();
+        let node = q
+            .iter(app.world())
+            .next()
+            .expect("scrub-fill node must exist while overlay is spawned");
+        match node.width {
+            Val::Percent(p) => p,
+            other => panic!("scrub fill width must be Val::Percent; got {other:?}"),
+        }
+    }
+
+    /// Pure-helper guard. Locks in the four corners of `scrub_pct` so a
+    /// future refactor of `ReplayPlaybackState::progress()` can't
+    /// silently regress the visual cue: `Inactive → 0 %`,
+    /// `Playing { cursor: 0, total: N } → 0 %`,
+    /// `Playing { cursor: N/2, total: N } → 50 %`,
+    /// `Completed → 100 %`.
+    #[test]
+    fn scrub_pct_covers_state_corners() {
+        assert_eq!(scrub_pct(&ReplayPlaybackState::Inactive), 0.0);
+        assert_eq!(scrub_pct(&ReplayPlaybackState::Completed), 100.0);
+        assert_eq!(
+            scrub_pct(&ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+            }),
+            0.0,
+        );
+        assert_eq!(
+            scrub_pct(&ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 5,
+                secs_to_next: 0.5,
+            }),
+            50.0,
+        );
+        assert_eq!(
+            scrub_pct(&ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 10,
+                secs_to_next: 0.5,
+            }),
+            100.0,
+        );
+    }
+
+    /// End-to-end: the spawn path must paint the scrub fill at the
+    /// initial cursor's percentage, and the per-frame `update_scrub_fill`
+    /// system must repaint it as the cursor advances. Mirrors the shape
+    /// of `overlay_progress_text_reflects_cursor`.
+    #[test]
+    fn overlay_scrub_fill_tracks_cursor() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8),
+                cursor: 2,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(
+            scrub_fill_pct(&mut app),
+            25.0,
+            "spawn-time fill must reflect the initial cursor",
+        );
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8),
+                cursor: 6,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(
+            scrub_fill_pct(&mut app),
+            75.0,
+            "update_scrub_fill must repaint width on cursor advance",
+        );
+
+        set_state(&mut app, ReplayPlaybackState::Completed);
+        app.update();
+        assert_eq!(
+            scrub_fill_pct(&mut app),
+            100.0,
+            "Completed state must read as a fully-filled track",
         );
     }
 }
