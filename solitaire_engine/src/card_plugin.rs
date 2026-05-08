@@ -2329,9 +2329,15 @@ mod tests {
 
         assert_ne!(idle_offset, drag_offset, "drag offset must differ from idle");
         assert_ne!(idle_padding, drag_padding, "drag padding must differ from idle");
+        // Under the Terminal design system both alphas are pinned to 0
+        // (depth comes from 1px borders + tonal layering, no `box-shadow`).
+        // The invariant we still enforce is "drag never weaker than idle"
+        // — so an accidental swap of the two constants fails loudly,
+        // and a future palette that re-enables shadows still has to keep
+        // the lift cue stronger than the rest state.
         assert!(
-            drag_alpha > idle_alpha,
-            "drag alpha must be stronger than idle (got drag={drag_alpha}, idle={idle_alpha})"
+            drag_alpha >= idle_alpha,
+            "drag alpha must not be weaker than idle (got drag={drag_alpha}, idle={idle_alpha})"
         );
         // Drag offset magnitude should be larger than idle so the parallax
         // reads as "lifted".
