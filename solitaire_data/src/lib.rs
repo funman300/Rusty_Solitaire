@@ -163,3 +163,6 @@ pub use replay::{
     replay_history_path, save_replay_history_to, Replay, ReplayHistory, ReplayMove,
     REPLAY_HISTORY_CAP, REPLAY_HISTORY_SCHEMA_VERSION, REPLAY_SCHEMA_VERSION,
 };
+
+pub mod platform;
+pub use platform::data_dir;

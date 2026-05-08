@@ -400,9 +400,9 @@ impl Settings {
 }
 
 /// Returns the platform-specific path to `settings.json`, or `None` if
-/// `dirs::data_dir()` is unavailable.
+/// the platform's data directory is unavailable.
 pub fn settings_file_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join(APP_DIR_NAME).join(SETTINGS_FILE_NAME))
+    crate::data_dir().map(|d| d.join(APP_DIR_NAME).join(SETTINGS_FILE_NAME))
 }
 
 /// Load settings from an explicit path. Returns `Settings::default()` if the

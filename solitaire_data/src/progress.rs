@@ -46,7 +46,7 @@ pub fn xp_for_win(time_seconds: u64, used_undo: bool) -> u64 {
 
 /// Platform-specific default path for `progress.json`.
 pub fn progress_file_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join(APP_DIR_NAME).join(FILE_NAME))
+    crate::data_dir().map(|d| d.join(APP_DIR_NAME).join(FILE_NAME))
 }
 
 /// Load progress from an explicit path. Returns `default()` if missing/corrupt.

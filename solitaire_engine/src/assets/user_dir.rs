@@ -1,13 +1,12 @@
 //! Per-platform resolution of the user-themes directory.
 //!
 //! The path is determined exactly once and exposed via
-//! [`user_theme_dir`]. On desktop platforms it is derived from
-//! `dirs::data_dir()` (matching the rest of the project's
-//! per-app-storage convention); on mobile it must be supplied by the
-//! platform entry point via [`set_user_theme_dir`] before any code
-//! that needs the path executes — there is deliberately no silent
-//! fallback because mobile sandboxing makes any guess we'd hard-code
-//! wrong.
+//! [`user_theme_dir`]. The base directory comes from
+//! [`solitaire_data::data_dir`] (desktop: `dirs::data_dir()`;
+//! Android: the hardcoded `/data/data/<package>/files` sandbox
+//! path). Mobile entry points may still override the path via
+//! [`set_user_theme_dir`] when they need to point at a non-default
+//! location (e.g. tests, custom AssetManager wiring).
 //!
 //! # Why panic instead of returning Result?
 //!
@@ -35,17 +34,18 @@ const APP_DIR_NAME: &str = "solitaire_quest";
 /// Sub-folder under [`APP_DIR_NAME`] dedicated to user themes.
 const THEME_DIR_NAME: &str = "themes";
 
-/// Sets the user-themes directory at runtime — mobile-only API.
+/// Sets the user-themes directory at runtime — escape hatch for
+/// embedders or tests that need to override the platform default.
 ///
 /// Returns `Err` containing the rejected path if the override has
 /// already been set. The first caller wins and subsequent calls are
 /// silently a no-op-with-feedback so a mis-configured embedder can't
 /// flip the path mid-session.
 ///
-/// On desktop platforms this is functional but unnecessary —
-/// [`user_theme_dir`] derives the path from `dirs::data_dir` directly
-/// and ignores the override. Setting it on desktop is harmless but
-/// nearly always a sign of confusion.
+/// Mostly unnecessary now that [`solitaire_data::data_dir`] handles
+/// every supported target — the override is kept for tests and for
+/// embedders that want a non-default location (e.g. a sandboxed
+/// AssetManager root on a future iOS port).
 pub fn set_user_theme_dir(path: PathBuf) -> Result<(), PathBuf> {
     USER_THEME_DIR_OVERRIDE.set(path)
 }
@@ -55,16 +55,10 @@ pub fn set_user_theme_dir(path: PathBuf) -> Result<(), PathBuf> {
 ///
 /// # Panics
 ///
-/// Panics on:
-///
-/// - Desktop, if `dirs::data_dir()` returns `None` (rare; usually
-///   indicates a broken `$HOME` or `$XDG_*` configuration).
-/// - Mobile, if no entry point has called [`set_user_theme_dir`] yet.
-/// - Any other target, where the embedder is required to supply the
-///   path manually.
-///
-/// The panic message names the missing piece so the failure is
-/// immediately actionable.
+/// Panics if [`solitaire_data::data_dir`] returns `None`, which on
+/// desktop indicates a broken `$HOME` / `$XDG_*` configuration.
+/// Android always returns `Some`. The panic message names the
+/// supported workaround ([`set_user_theme_dir`]).
 pub fn user_theme_dir() -> PathBuf {
     if let Some(p) = USER_THEME_DIR_OVERRIDE.get() {
         return p.clone();
@@ -79,45 +73,23 @@ fn user_theme_dir_for(data_dir: PathBuf) -> PathBuf {
     data_dir.join(APP_DIR_NAME).join(THEME_DIR_NAME)
 }
 
-/// Per-target-os resolution of the platform's data dir. Split out so
-/// mobile branches can grow without disturbing desktop behaviour.
+/// Per-target-os resolution of the platform's data dir. Delegates
+/// to [`solitaire_data::data_dir`] which encapsulates the
+/// per-target shape (desktop: `dirs::data_dir()`; android: the
+/// hardcoded `/data/data/<package>/files` sandbox path). Panics
+/// only when the underlying resolver returns `None`, which on
+/// desktop indicates a broken `$HOME` / `$XDG_*` configuration —
+/// the panic message names the supported workaround.
 fn detected_platform_data_dir() -> PathBuf {
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    {
-        dirs::data_dir().unwrap_or_else(|| {
-            panic!(
-                "user_theme_dir(): platform data directory is unavailable. \
-                 On Linux check $XDG_DATA_HOME or $HOME; on macOS / Windows \
-                 the OS reported no Application Support / AppData path. \
-                 As a workaround call solitaire_engine::assets::user_dir::\
-                 set_user_theme_dir() before App::run()."
-            )
-        })
-    }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
+    solitaire_data::data_dir().unwrap_or_else(|| {
         panic!(
-            "user_theme_dir(): mobile entry point must call \
-             solitaire_engine::assets::user_dir::set_user_theme_dir() \
-             before App::run() — there is no platform default."
+            "user_theme_dir(): platform data directory is unavailable. \
+             On Linux check $XDG_DATA_HOME or $HOME; on macOS / Windows \
+             the OS reported no Application Support / AppData path. \
+             As a workaround call solitaire_engine::assets::user_dir::\
+             set_user_theme_dir() before App::run()."
         )
-    }
-
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows",
-        target_os = "android",
-        target_os = "ios"
-    )))]
-    {
-        panic!(
-            "user_theme_dir(): unsupported platform; call \
-             solitaire_engine::assets::user_dir::set_user_theme_dir() \
-             from your entry point before App::run()."
-        )
-    }
+    })
 }
 
 #[cfg(test)]
@@ -140,14 +112,16 @@ mod tests {
         assert_eq!(dir, PathBuf::from("solitaire_quest/themes"));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn detected_data_dir_yields_a_path_with_a_parent() {
-        // On every supported desktop platform the OS reports a
-        // user-writable data directory; the test machine already has
-        // one for `dirs::data_dir()` to discover. We don't pin the
-        // exact value because it depends on the user's $HOME, but it
-        // must at least be a non-empty path with a parent component.
+        // On every supported target the platform resolver
+        // (`solitaire_data::data_dir`) returns a usable directory:
+        // desktop targets via `dirs::data_dir()` (the test machine
+        // already has a `$HOME` for it to discover), Android via
+        // the hardcoded `/data/data/<package>/files` sandbox path.
+        // We don't pin the exact value because it depends on the
+        // user's `$HOME` on desktop, but it must at least be a
+        // non-empty path with a parent component.
         let dir = detected_platform_data_dir();
         assert!(dir.parent().is_some(), "data dir {dir:?} should be absolute");
     }

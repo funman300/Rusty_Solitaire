@@ -230,21 +230,21 @@ impl ReplayHistory {
 }
 
 /// Returns the platform-specific path to `latest_replay.json`, or `None`
-/// if `dirs::data_dir()` is unavailable (e.g. minimal Linux containers).
+/// if `crate::data_dir()` is unavailable (e.g. minimal Linux containers).
 #[deprecated(
     note = "single-slot replay storage replaced by the rolling history at \
             replay_history_path(); kept for the one-shot legacy migration \
             in migrate_legacy_latest_replay"
 )]
 pub fn latest_replay_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join(APP_DIR_NAME).join(LATEST_REPLAY_FILE_NAME))
+    crate::data_dir().map(|d| d.join(APP_DIR_NAME).join(LATEST_REPLAY_FILE_NAME))
 }
 
 /// Returns the platform-specific path to `replays.json`, the rolling
-/// history file, or `None` if `dirs::data_dir()` is unavailable (e.g.
+/// history file, or `None` if `crate::data_dir()` is unavailable (e.g.
 /// minimal Linux containers).
 pub fn replay_history_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join(APP_DIR_NAME).join(REPLAY_HISTORY_FILE_NAME))
+    crate::data_dir().map(|d| d.join(APP_DIR_NAME).join(REPLAY_HISTORY_FILE_NAME))
 }
 
 /// Save a [`Replay`] atomically to `path` using the standard `.tmp` →

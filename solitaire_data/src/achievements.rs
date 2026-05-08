@@ -15,7 +15,7 @@ const FILE_NAME: &str = "achievements.json";
 
 /// Platform-specific default path for `achievements.json`.
 pub fn achievements_file_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join(APP_DIR_NAME).join(FILE_NAME))
+    crate::data_dir().map(|d| d.join(APP_DIR_NAME).join(FILE_NAME))
 }
 
 /// Load achievements from an explicit path. Returns `Vec::new()` if the file
