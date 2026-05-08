@@ -101,6 +101,15 @@ struct SplashTitle;
 #[derive(Component, Debug)]
 struct SplashSubtitle;
 
+/// Marker on the cyan "terminal cursor" block (`▌`) painted above the
+/// title. Visual signature of the Terminal design system per
+/// `docs/ui-mockups/design-system.md` — the same `#6fc2ef` block
+/// appears on the card-back theme, on the splash, and (per spec) is
+/// the project's cursor motif. Faded together with the rest of the
+/// splash so the dissolve still reads as one layer.
+#[derive(Component, Debug)]
+struct SplashCursor;
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -129,6 +138,14 @@ fn spawn_splash(
     }
 
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+    let cursor_font = TextFont {
+        font: font_handle.clone(),
+        // Larger than TYPE_DISPLAY so the cursor block reads as the
+        // signature element above the wordmark. Hand-tuned literal —
+        // a one-off display character outside the regular text scale.
+        font_size: 96.0,
+        ..default()
+    };
     let title_font = TextFont {
         font: font_handle.clone(),
         font_size: TYPE_DISPLAY,
@@ -171,6 +188,12 @@ fn spawn_splash(
             GlobalZIndex(Z_SPLASH),
         ))
         .with_children(|root| {
+            root.spawn((
+                SplashCursor,
+                Text::new("\u{258C}"), // ▌ — the Terminal cursor block.
+                cursor_font,
+                TextColor(initial_title),
+            ));
             root.spawn((
                 SplashTitle,
                 Text::new("Solitaire Quest"),
@@ -219,12 +242,23 @@ fn splash_alpha(age: Duration) -> Option<f32> {
 /// scrim + text alpha, despawning the splash once the timeline
 /// finishes. Despawns with descendants so the title and subtitle leave
 /// the world together.
+#[allow(clippy::type_complexity)]
 fn advance_splash(
     mut commands: Commands,
     time: Res<Time>,
     mut roots: Query<(Entity, &mut SplashAge, &mut BackgroundColor, &Children), With<SplashRoot>>,
-    mut titles: Query<&mut TextColor, (With<SplashTitle>, Without<SplashSubtitle>)>,
-    mut subtitles: Query<&mut TextColor, (With<SplashSubtitle>, Without<SplashTitle>)>,
+    mut titles: Query<
+        &mut TextColor,
+        (With<SplashTitle>, Without<SplashSubtitle>, Without<SplashCursor>),
+    >,
+    mut subtitles: Query<
+        &mut TextColor,
+        (With<SplashSubtitle>, Without<SplashTitle>, Without<SplashCursor>),
+    >,
+    mut cursors: Query<
+        &mut TextColor,
+        (With<SplashCursor>, Without<SplashTitle>, Without<SplashSubtitle>),
+    >,
 ) {
     for (entity, mut age, mut bg, children) in &mut roots {
         age.0 = age.0.saturating_add(time.delta());
@@ -239,9 +273,16 @@ fn advance_splash(
         bg.0 = scrim;
 
         // Walk the splash root's direct children for the title /
-        // subtitle markers and update their alpha. The hierarchy is
-        // shallow (root → 2 text children) so a small loop is fine.
+        // subtitle / cursor markers and update their alpha. The
+        // hierarchy is shallow (root → 3 text children) so a small
+        // loop is fine.
         for child in children.iter() {
+            if let Ok(mut color) = cursors.get_mut(child) {
+                let mut c = ACCENT_PRIMARY;
+                c.set_alpha(alpha);
+                color.0 = c;
+                continue;
+            }
             if let Ok(mut color) = titles.get_mut(child) {
                 let mut c = ACCENT_PRIMARY;
                 c.set_alpha(alpha);
