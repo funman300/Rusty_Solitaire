@@ -21,8 +21,9 @@ use crate::card_animation::{sample_curve, CardAnimation, MotionCurve};
 use crate::card_plugin::CardEntity;
 use crate::challenge_plugin::ChallengeAdvancedEvent;
 use crate::daily_challenge_plugin::{DailyChallengeCompletedEvent, DailyGoalAnnouncementEvent};
-use crate::events::{InfoToastEvent, XpAwardedEvent};
-use crate::events::{AchievementUnlockedEvent, GameWonEvent};
+use crate::events::{
+    AchievementUnlockedEvent, GameWonEvent, InfoToastEvent, MoveRejectedEvent, XpAwardedEvent,
+};
 use crate::game_plugin::GameMutation;
 use crate::layout::LayoutResource;
 use crate::pause_plugin::PausedResource;
@@ -162,6 +163,7 @@ impl Plugin for AnimationPlugin {
             .add_message::<ChallengeAdvancedEvent>()
             .add_message::<SettingsChangedEvent>()
             .add_message::<InfoToastEvent>()
+            .add_message::<MoveRejectedEvent>()
             .add_message::<XpAwardedEvent>()
             .init_resource::<EffectiveSlideDuration>()
             .init_resource::<ToastQueue>()
@@ -183,6 +185,7 @@ impl Plugin for AnimationPlugin {
                     handle_settings_toast,
                     handle_auto_complete_toast,
                     handle_xp_awarded_toast,
+                    handle_move_rejected_toast,
                     tick_toasts,
                     (enqueue_toasts, drive_toast_display).chain(),
                 )
@@ -565,9 +568,11 @@ pub enum ToastVariant {
     /// event; kept so future warning-flavoured toasts have a slot.
     #[allow(dead_code)]
     Warning,
-    /// Failure / rejected action — pink border. Currently unused; kept so
-    /// future error-flavoured toasts have a slot.
-    #[allow(dead_code)]
+    /// Failure / rejected action — pink border. Used by
+    /// [`handle_move_rejected_toast`] for illegal-placement
+    /// feedback; the third leg of the rejection-feedback stool
+    /// alongside `card_invalid.wav` (audio) and the destination-
+    /// pile shake (visual).
     Error,
     /// Reward / milestone — lavender border. Used for XP awards,
     /// achievement unlocks, level-ups, daily/weekly/challenge completions.
@@ -618,6 +623,30 @@ fn handle_xp_awarded_toast(mut commands: Commands, mut events: MessageReader<XpA
             format!("+{} XP", ev.amount),
             3.0,
             ToastVariant::Celebration,
+        );
+    }
+}
+
+/// Spawns a 2-second pink-bordered Error toast when the player tries an
+/// illegal placement (`MoveRejectedEvent`). Adds a third leg to the
+/// existing rejection feedback stool — `card_invalid.wav` already plays
+/// (audio cue) and `feedback_anim_plugin::queue_shake_for_rejected_move`
+/// fires the destination-pile shake (visual cue). The toast is the
+/// accessibility-focused leg: persistent ~2 s text that's readable for
+/// deaf players and impossible to miss for players who blink during the
+/// shake. First in-engine consumer of `ToastVariant::Error` — exercises
+/// the variant's pink border accent and the design-system "rejected
+/// action" semantic.
+fn handle_move_rejected_toast(
+    mut commands: Commands,
+    mut events: MessageReader<MoveRejectedEvent>,
+) {
+    for _ev in events.read() {
+        spawn_toast(
+            &mut commands,
+            "Invalid move".to_string(),
+            2.0,
+            ToastVariant::Error,
         );
     }
 }
@@ -964,6 +993,44 @@ mod tests {
         // a ToastOverlay immediately, so the assertion is >= 0 here.
         // The queue-based path spawns a ToastEntity instead.
         let _ = count;
+    }
+
+    #[test]
+    fn move_rejected_event_spawns_error_toast() {
+        // The first in-engine consumer of `ToastVariant::Error`. Firing
+        // a `MoveRejectedEvent` (illegal placement) must spawn exactly
+        // one `ToastOverlay` carrying the rejection-feedback message.
+        // Pairs the existing audio (`card_invalid.wav`) and visual
+        // (`feedback_anim_plugin::queue_shake_for_rejected_move`) feedback
+        // with an accessibility-focused readable text cue.
+        use solitaire_core::pile::PileType;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins).add_plugins(AnimationPlugin);
+
+        // Baseline: no toast overlays exist before the event.
+        let before = app
+            .world_mut()
+            .query::<&ToastOverlay>()
+            .iter(app.world())
+            .count();
+
+        app.world_mut().write_message(MoveRejectedEvent {
+            from: PileType::Tableau(0),
+            to: PileType::Tableau(1),
+            count: 1,
+        });
+        app.update();
+
+        let after = app
+            .world_mut()
+            .query::<&ToastOverlay>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            after,
+            before + 1,
+            "MoveRejectedEvent must spawn exactly one error toast",
+        );
     }
 
     // -----------------------------------------------------------------------
