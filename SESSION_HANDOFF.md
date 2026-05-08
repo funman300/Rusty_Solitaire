@@ -1,91 +1,57 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — **v0.21.3 cut and tagged at
-`3d92a91`**, working tree clean, all post-tag work pushed to
+**Last updated:** 2026-05-08 — **v0.21.4 cut and tagged at
+`23ff62c`**, working tree clean, all post-tag work pushed to
 origin.
 
-v0.21.3 is a patch release with one through-line: **accessibility
-arc closure**. v0.21.2 explicitly carved out "dynamic-paint sites"
-(HUD action buttons, modal buttons, radial menu rim) on the
-assumption that their existing paint cycles would race the
-central `update_high_contrast_borders` system. v0.21.3 walks the
-actual code, finds the carve-out was over-cautious, and closes
-it. Bonus: the first real consumer of `ToastVariant::Warning`
-also lands here, making the `ToastVariant` enum fully load-bearing
-(every variant has at least one driver).
+v0.21.4 is a patch release with one through-line:
+**replay-scrubbing accessibility**. The replay overlay used to be
+pure-passive — start, watch, wait. v0.21.4 adds the scaffolding
+for *navigating within* a replay: a WIN MOVE marker on the scrub
+bar so the player can see at a glance where the winning move
+sits, plus pause / resume / step controls (with a Space keyboard
+accelerator) so they can stop on any move and inspect the board.
+Also lands the additive `Replay::win_move_index: Option<usize>`
+data field that makes the marker possible — serde-default so
+older on-disk replays load with `None` and simply don't get a
+marker (no schema bump).
 
-Full v0.21.3 detail lives in `CHANGELOG.md` § [0.21.3]. This
+Three commits on the B-2 replay screen-takeover redesign arc
+land here. The remaining sub-pieces (screen-takeover layout,
+move-log scroller, mini-tableau preview) share a layout-reflow
+prerequisite the banner can't carry, so they're deferred to a
+future cycle as a single multi-session arc.
+
+Full v0.21.4 detail lives in `CHANGELOG.md` § [0.21.4]. This
 file from here on focuses on what's *open* post-cut and how to
 resume.
 
 ## Status at pause
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `3d92a91`; post-cut work on B-2 (`ab857bb` data field +
-  `52befa6` WIN MOVE marker UI + `fbe48ac` playback controls)
-  rides on top of that.
-- **HEAD on origin:** matches local. v0.21.3 is fully on origin.
+  `23ff62c`; any post-cut docs edits ride on top of that.
+- **HEAD on origin:** matches local. v0.21.4 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
 - **Tests:** **1228 passing / 0 failing** across the workspace
-  (1207 from v0.21.3's stats + 5 from `ab857bb`'s
-  `win_move_index` coverage + 8 from `52befa6`'s WIN MOVE marker
-  pure-helper truth-table + spawn lifecycle + 8 from `fbe48ac`'s
-  pause / step / keyboard accelerator coverage).
+  (net +21 from v0.21.3's 1207 baseline). Detail in
+  `CHANGELOG.md` § [0.21.4] § Stats.
+- **Tags on origin:** `v0.9.0` through `v0.21.4`. v0.21.4 is on
+  `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
+  `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
+  `04f9bf9`; v0.20.0 stays on `41a009a`.
 - **Tags on origin:** `v0.9.0` through `v0.21.3`. v0.21.3 is on
   `3d92a91`; v0.21.2 stays on `f23df3b`; v0.21.1 stays on
   `daa655a`; v0.21.0 stays on `04f9bf9`; v0.20.0 stays on
   `41a009a`.
 
-## Since the v0.21.3 cut
+## Since the v0.21.4 cut
 
-- **`ab857bb` — `Replay::win_move_index` data field landed.**
-  First finite step toward the B-2 replay screen-takeover
-  redesign. Additive optional `Option<usize>` on `Replay` with
-  `#[serde(default)]` so older `latest_replay.json` /
-  `replays.json` files load unchanged (no schema bump). Populated
-  at the live recording site via a new `with_win_move_index`
-  builder; for fresh recordings the value is always
-  `Some(moves.len() - 1)` because recording freezes on win, but
-  storing it explicitly lets the playback UI read the WIN MOVE
-  position directly without re-deriving on every render. 5 new
-  tests (1207 → 1212): default, builder set / set-None, on-disk
-  round-trip, legacy-JSON-loads-with-None backward-compat.
-- **`52befa6` — WIN MOVE marker on the scrub bar.** Second
-  commit on B-2 — the UI that consumes the data field. New
-  `ReplayOverlayWinMoveMarker` component spawned as a sibling
-  to `ReplayOverlayScrubFill` under the 1px scrub track,
-  absolute-positioned at `replay.win_move_index / total` along
-  the bar. Painted in `STATE_SUCCESS` (green) so the marker
-  reads as "this is where the win lives." Pure helper
-  `win_move_marker_pct` returns `None` for any state where the
-  marker shouldn't draw (Inactive, Completed, replay missing
-  the field, empty move list); percentage clamps to `[0, 100]`
-  defensively. Lifecycle is spawn-time only — the marker is
-  immutable during a single playback because the underlying
-  `Replay` doesn't change while `Playing`. Despawned with the
-  overlay tree on transition back to `Inactive`. 8 new tests
-  (1212 → 1220): pure-helper truth table + spawn-presence /
-  spawn-absence / despawn-lifecycle observables.
-- **`fbe48ac` — playback controls (pause / resume / step).**
-  Third commit on B-2. New `paused: bool` field on
-  `ReplayPlaybackState::Playing`; `tick_replay_playback` skips
-  the `secs_to_next` decrement entirely while paused so cursor
-  and timer freeze together. New public API:
-  `toggle_pause_replay_playback` and `step_replay_playback`
-  (the latter hard-gated to `Playing { paused: true }` so
-  manual stepping can't race the tick loop). UI: Pause /
-  Resume button (label repaints reactively via
-  `update_pause_button_label` which walks `Children` from
-  marker to inner `Text`) + Step button + Space keyboard
-  accelerator. Existing 25 `Playing { ... }` construction
-  sites across tests gained `paused: false` mechanically.
-  8 new tests (1220 → 1228): label truth table, label repaint
-  on state change, click-toggles-paused, step advances exactly
-  one cursor with paused preserved, step-while-running no-op,
-  Space toggles paused.
+No threads in flight. Working tree clean as of 2026-05-08. New
+work since the cut would land here as commit narratives; for
+the v0.21.4 contents themselves, see `CHANGELOG.md` § [0.21.4].
 
 ## Open punch list
 
@@ -273,20 +239,21 @@ into a v0.21.1 / v0.22.0 cut.
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.21.3 is tagged at 3d92a91 (cut 2026-05-08, a
-patch release rolling up the accessibility-arc closure: HC reaches
-the previously-carved-out dynamic-paint sites, and the first real
-consumer of `ToastVariant::Warning` lands as the daily-challenge
-expiry toast). v0.21.2 stays at f23df3b, v0.21.1 at daa655a,
-v0.21.0 at 04f9bf9. Working tree clean. See CHANGELOG.md §
-[0.21.3] for full detail.
+Branch: master. v0.21.4 is tagged at 23ff62c (cut 2026-05-08, a
+patch release rolling up replay-scrubbing accessibility: WIN MOVE
+marker on the scrub bar, pause / resume / step playback controls
+with a Space keyboard accelerator, and the additive
+`Replay::win_move_index: Option<usize>` data field that makes the
+marker possible). v0.21.3 stays at 3d92a91, v0.21.2 at f23df3b,
+v0.21.1 at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
+CHANGELOG.md § [0.21.4] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. All workspace tests
-pass (1207+; check with `cargo test --workspace`), clippy clean.
+pass (1228+; check with `cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
-  2. CHANGELOG.md        — [0.21.3] section is the most recent cut
+  2. CHANGELOG.md        — [0.21.4] section is the most recent cut
   3. CLAUDE.md           — unified-3.0 rule set
   4. CLAUDE_SPEC.md      — formal architecture spec
   5. ARCHITECTURE.md     — crate responsibilities + data flow
@@ -307,17 +274,19 @@ DECISION TO ASK THE PLAYER FIRST:
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
   B. Replay-overlay screen-takeover redesign — multi-session
-     work. Three sub-pieces shipped post-v0.21.3: WIN MOVE
-     marker (`ab857bb` data field + `52befa6` UI), playback
-     controls (`fbe48ac` pause/resume/step + Space). What
-     still needs to land: a move-log scroller and a
-     mini-tableau preview — both layout-heavy pieces that need
-     more vertical real estate than the current banner-only
-     overlay carries, so the natural next finite step is the
-     screen-takeover layout itself (mockup at
-     `docs/ui-mockups/replay-overlay-mobile.html`). The
-     smaller floating-MOVE-chip piece shipped in v0.21.2
-     (`2fb2d63`).
+     work. Three sub-pieces shipped in v0.21.4: WIN MOVE
+     marker (data field + UI) and pause / step / Space
+     playback controls. The smaller floating-MOVE-chip piece
+     shipped in v0.21.2 (`2fb2d63`). What still needs to
+     land: a move-log scroller and a mini-tableau preview —
+     both layout-heavy pieces that need more vertical real
+     estate than the current banner-only overlay carries, so
+     the natural next finite step is the **screen-takeover
+     layout itself** (mockup at
+     `docs/ui-mockups/replay-overlay-mobile.html`). That's
+     the single multi-session arc the remaining work groups
+     under — once the takeover layout lands, the scroller and
+     preview can each be small carved-out commits.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
