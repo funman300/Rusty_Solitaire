@@ -61,9 +61,12 @@ pub const STACK_FAN_FRAC: f32 = 0.003;
 /// Font size as a fraction of card width.
 const FONT_SIZE_FRAC: f32 = 0.28;
 
-pub const CARD_FACE_COLOUR: Color = Color::srgb(0.98, 0.98, 0.95);
-pub const RED_SUIT_COLOUR: Color = Color::srgb(0.78, 0.12, 0.15);
-pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.08, 0.08, 0.08);
+/// Card-face background — Terminal `#1a1a1a` (BG_ELEVATED).
+pub const CARD_FACE_COLOUR: Color = Color::srgb(0.102, 0.102, 0.102);
+/// Suit colour for hearts + diamonds — Terminal `#fb9fb1` (suit-pink).
+pub const RED_SUIT_COLOUR: Color = Color::srgb(0.984, 0.624, 0.694);
+/// Suit colour for spades + clubs — Terminal `#d0d0d0` (TEXT_PRIMARY).
+pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.816, 0.816, 0.816);
 
 /// Pre-loaded [`Handle<Image>`]s for card face and back PNG textures.
 ///
@@ -94,19 +97,26 @@ pub struct CardImageSet {
     pub theme_back: Option<Handle<Image>>,
 }
 
-/// Alternative face tint for red-suit cards in color-blind mode — a subtle
-/// blue wash that distinguishes them from black-suit cards without colour alone.
-const CARD_FACE_COLOUR_RED_CBM: Color = Color::srgba(0.85, 0.92, 1.0, 1.0);
+/// Suit-colour swap for red-suit cards in colour-blind mode — Terminal
+/// `#6fc2ef` (cyan). Replaces `RED_SUIT_COLOUR` (pink) when CBM is on,
+/// providing a hue-distinct alternative that survives the most common
+/// red/green deficiencies. Pre-Terminal this was a *face tint*; the new
+/// design moves CBM differentiation into the suit glyph colour itself
+/// and keeps the face uniformly `CARD_FACE_COLOUR` regardless of CBM.
+const RED_SUIT_COLOUR_CBM: Color = Color::srgb(0.435, 0.761, 0.937);
 
-/// Returns the card back color for the given unlocked card-back index.
-/// Index 0 = default blue; 1–4 are unlockable alternate designs.
+/// Returns the fallback card-back colour for the given unlocked card-back
+/// index. Production renders backs from PNG artwork; this fallback only
+/// fires under `MinimalPlugins` (tests). Mirrors the 5 accent colours
+/// from `card_face_svg::BACK_ACCENTS` so the test-environment back lives
+/// in the same hue family as the on-disk PNG art for that index.
 fn card_back_colour(selected_card_back: usize) -> Color {
     match selected_card_back {
-        0 => Color::srgb(0.15, 0.30, 0.55), // default blue
-        1 => Color::srgb(0.55, 0.10, 0.10), // deep red
-        2 => Color::srgb(0.05, 0.40, 0.10), // forest green
-        3 => Color::srgb(0.35, 0.08, 0.52), // purple
-        _ => Color::srgb(0.05, 0.40, 0.42), // teal (4+)
+        0 => Color::srgb(0.435, 0.761, 0.937), // #6fc2ef cyan (Terminal canonical)
+        1 => Color::srgb(0.675, 0.761, 0.404), // #acc267 lime
+        2 => Color::srgb(0.882, 0.639, 0.933), // #e1a3ee lavender
+        3 => Color::srgb(0.984, 0.624, 0.694), // #fb9fb1 pink
+        _ => Color::srgb(0.867, 0.698, 0.435), // #ddb26f gold (4+)
     }
 }
 
@@ -400,7 +410,6 @@ fn card_sprite(
     card: &Card,
     card_size: Vec2,
     back_colour: Color,
-    color_blind: bool,
     card_images: Option<&CardImageSet>,
     selected_back: usize,
 ) -> Sprite {
@@ -445,8 +454,13 @@ fn card_sprite(
             ..default()
         }
     } else {
+        // Terminal aesthetic: face background is uniformly CARD_FACE_COLOUR
+        // regardless of colour-blind mode (CBM differentiation now lives in
+        // the suit glyph colour, applied by `text_colour`, not the face
+        // background). Pre-Terminal this branch dispatched through a
+        // separate `face_colour(card, color_blind)` helper.
         let body_colour = if card.face_up {
-            face_colour(card, color_blind)
+            CARD_FACE_COLOUR
         } else {
             back_colour
         };
@@ -632,19 +646,6 @@ fn card_positions<'a>(game: &'a GameState, layout: &Layout) -> Vec<(&'a Card, Ve
     out
 }
 
-/// Returns the appropriate face-up body colour for a card.
-///
-/// In color-blind mode, red-suit cards receive a subtle blue tint
-/// (`CARD_FACE_COLOUR_RED_CBM`) so they are distinguishable from black-suit
-/// cards without relying on the text colour alone.
-fn face_colour(card: &Card, color_blind: bool) -> Color {
-    if color_blind && card.suit.is_red() {
-        CARD_FACE_COLOUR_RED_CBM
-    } else {
-        CARD_FACE_COLOUR
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn spawn_card_entity(
     commands: &mut Commands,
@@ -657,7 +658,7 @@ fn spawn_card_entity(
     card_images: Option<&CardImageSet>,
     selected_back: usize,
 ) {
-    let sprite = card_sprite(card, layout.card_size, back_colour, color_blind, card_images, selected_back);
+    let sprite = card_sprite(card, layout.card_size, back_colour, card_images, selected_back);
 
     let mut entity = commands.spawn((
         CardEntity { card_id: card.id },
@@ -683,7 +684,7 @@ fn spawn_card_entity(
                     font_size: layout.card_size.x * FONT_SIZE_FRAC,
                     ..default()
                 },
-                TextColor(text_colour(card)),
+                TextColor(text_colour(card, color_blind)),
                 Transform::from_xyz(0.0, 0.0, 0.01),
                 label_visibility(card),
             ));
@@ -710,7 +711,7 @@ fn update_card_entity(
     let target = Vec3::new(pos.x, pos.y, z);
 
     // Always refresh the visual appearance.
-    commands.entity(entity).insert(card_sprite(card, layout.card_size, back_colour, color_blind, card_images, selected_back));
+    commands.entity(entity).insert(card_sprite(card, layout.card_size, back_colour, card_images, selected_back));
 
     // Skip the snap/slide path entirely when a curve-based `CardAnimation`
     // is driving this card (e.g. the drag-rejection return tween). Writing
@@ -755,7 +756,7 @@ fn update_card_entity(
                     font_size: layout.card_size.x * FONT_SIZE_FRAC,
                     ..default()
                 },
-                TextColor(text_colour(card)),
+                TextColor(text_colour(card, color_blind)),
                 Transform::from_xyz(0.0, 0.0, 0.01),
                 label_visibility(card),
             ));
@@ -788,9 +789,21 @@ fn label_for(card: &Card) -> String {
     format!("{rank}{suit}")
 }
 
-fn text_colour(card: &Card) -> Color {
+/// Suit colour for the rank/suit overlay rendered atop the constant
+/// fallback sprite (only fires under `MinimalPlugins` — production
+/// renders the suit glyph baked into the PNG). When `color_blind` is
+/// enabled, red-suit cards swap to `RED_SUIT_COLOUR_CBM` (cyan) — the
+/// "Settings toggle swaps red→cyan" half of the design system's
+/// colour-blind support. The other half (always-on filled-vs-outlined
+/// glyph differentiation for ♥♠ vs ♦♣) is baked into the PNG art and
+/// has no constant-fallback equivalent.
+fn text_colour(card: &Card, color_blind: bool) -> Color {
     if card.suit.is_red() {
-        RED_SUIT_COLOUR
+        if color_blind {
+            RED_SUIT_COLOUR_CBM
+        } else {
+            RED_SUIT_COLOUR
+        }
     } else {
         BLACK_SUIT_COLOUR
     }
@@ -1746,8 +1759,8 @@ mod tests {
             rank: Rank::Ace,
             face_up: true,
         };
-        assert_eq!(text_colour(&h), RED_SUIT_COLOUR);
-        assert_eq!(text_colour(&d), RED_SUIT_COLOUR);
+        assert_eq!(text_colour(&h, false), RED_SUIT_COLOUR);
+        assert_eq!(text_colour(&d, false), RED_SUIT_COLOUR);
     }
 
     #[test]
@@ -1764,8 +1777,8 @@ mod tests {
             rank: Rank::Ace,
             face_up: true,
         };
-        assert_eq!(text_colour(&c), BLACK_SUIT_COLOUR);
-        assert_eq!(text_colour(&s), BLACK_SUIT_COLOUR);
+        assert_eq!(text_colour(&c, false), BLACK_SUIT_COLOUR);
+        assert_eq!(text_colour(&s, false), BLACK_SUIT_COLOUR);
     }
 
     #[test]
@@ -2048,38 +2061,35 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // face_colour (pure) — color-blind mode
+    // text_colour (pure) — color-blind mode
+    //
+    // Pre-Terminal these were `face_colour` tests asserting that CBM
+    // tinted the *face background* of red-suit cards. The Terminal
+    // design system moves CBM differentiation into the suit *glyph*
+    // colour (red→cyan), so these tests now exercise `text_colour`.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn face_colour_normal_mode_returns_card_face_colour_for_red_suit() {
-        let card = Card { id: 0, suit: Suit::Hearts, rank: Rank::King, face_up: true };
-        assert_eq!(face_colour(&card, false), CARD_FACE_COLOUR);
-    }
-
-    #[test]
-    fn face_colour_normal_mode_returns_card_face_colour_for_black_suit() {
-        let card = Card { id: 0, suit: Suit::Spades, rank: Rank::King, face_up: true };
-        assert_eq!(face_colour(&card, false), CARD_FACE_COLOUR);
-    }
-
-    #[test]
-    fn face_colour_color_blind_mode_gives_red_suits_a_different_tint() {
+    fn text_colour_color_blind_mode_swaps_red_suits_to_cyan() {
         let red_card = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Queen, face_up: true };
-        let cbm_colour = face_colour(&red_card, true);
+        let cbm_colour = text_colour(&red_card, true);
+        assert_eq!(
+            cbm_colour, RED_SUIT_COLOUR_CBM,
+            "color-blind mode must replace the red suit colour with the CBM cyan",
+        );
         assert_ne!(
-            cbm_colour, CARD_FACE_COLOUR,
-            "color-blind mode must tint red-suit cards differently from the standard face colour"
+            cbm_colour, RED_SUIT_COLOUR,
+            "CBM red must be visibly distinct from the default red suit colour",
         );
     }
 
     #[test]
-    fn face_colour_color_blind_mode_does_not_change_black_suits() {
+    fn text_colour_color_blind_mode_does_not_change_black_suits() {
         let black_card = Card { id: 0, suit: Suit::Clubs, rank: Rank::Jack, face_up: true };
         assert_eq!(
-            face_colour(&black_card, true),
-            CARD_FACE_COLOUR,
-            "color-blind mode must not alter black-suit card face colour"
+            text_colour(&black_card, true),
+            BLACK_SUIT_COLOUR,
+            "color-blind mode must not alter black-suit text colour",
         );
     }
 
@@ -2633,7 +2643,6 @@ mod tests {
             &face_down,
             Vec2::new(80.0, 112.0),
             card_back_colour(2),
-            false,
             Some(&set),
             2,
         );
@@ -2666,7 +2675,6 @@ mod tests {
                 &face_down,
                 Vec2::new(80.0, 112.0),
                 card_back_colour(selected_back),
-                false,
                 Some(&set),
                 selected_back,
             );
