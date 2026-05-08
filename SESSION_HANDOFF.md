@@ -195,6 +195,77 @@ chip-above-focused-card and the full screen-takeover redesign
 remain — both data-layer or cross-plugin and intentionally still
 open.
 
+### `29136d8` `feat(engine): add pulsing trailing cursor to splash "▌ ready_" line`
+
+Closes the cursor-pulse half of the splash polish arc deferred in
+`cacb19c`. The "▌ ready_" line now ends with a 6×12 px cyan Node
+that pulses on a 1 s sine cadence, multiplied with the global
+splash fade timeline so the cursor never reaches full alpha while
+the rest of the splash is still fading in.
+
+**The "multiply, don't override" pattern.** Two systems write the
+same `BackgroundColor` per frame: `advance_splash` writes the
+global-fade alpha, `pulse_splash_cursor` overwrites with
+`global_alpha × pulse_factor`. Both derive from `SplashAge` on the
+root, so the writes are commensurate — the second one isn't
+"fighting" the first, just refining it. This is the cleanest fix
+for the "fight the global fade timeline" warning the original
+`cacb19c` skip note flagged.
+
+**Defensive division guard.** `cursor_pulse_factor(age, period, min)`
+short-circuits to `1.0` when `period <= 0.0` so a future
+misconfiguration produces a steady cursor rather than NaN
+propagation (NaN in alpha = invisible UI, hard to debug). Worth
+mirroring on every trig/division helper, not just this one.
+
+One new test (1182 → 1183): `cursor_pulse_factor_corners` pins the
+peak (factor = 1 at age = period / 4), trough (factor = min at age =
+period × 3 / 4), and the zero/negative-period guard.
+
+### `a27cf5a` `feat(engine): add tiled scanline overlay to splash`
+
+Closes the scanline half of the splash polish arc. A fullscreen
+`ImageNode` tiles a runtime-generated 2×2 RGBA8 texture over the
+splash content — top row transparent, bottom row `#1a1a1a` at
+~30 % alpha — producing the 1 px-pitch horizontal scanline pattern
+called for in `docs/ui-mockups/splash-mobile.html`.
+
+**Texture-α × tint-α composite for fade integration.** The 30 %
+alpha is baked into the texture pixels, not the `ImageNode.color`
+tint. `advance_splash`'s new third query writes
+`(1, 1, 1, global_alpha)` into the tint each tick; the GPU
+multiplies texture-α by tint-α, so the visible composite is
+`0.3 × global_alpha`. Cleaner than building a "multiplicative
+fadable" abstraction in the ECS — the GPU already does this
+multiplication for free.
+
+**Bevy 0.18 API surprises (worth pinning):**
+- `RenderAssetUsages` re-exports under `bevy::asset::`, not
+  `bevy::render::render_asset::`. Type name unchanged; module
+  path moved.
+- `TextureFormat::pixel_size()` returns `Result<usize, _>` rather
+  than the bare `usize` you'd expect for a static format query.
+  Annoying enough that the `debug_assert_eq!` against the buffer
+  length just hard-codes the `2 × 2 × 4 = 16` literal.
+
+Headless test fixture now also `init_resource::<Assets<Image>>()`
+since `MinimalPlugins` doesn't pull `AssetPlugin` — same pattern
+`settings_plugin::tests` already used. Without it, the
+`Option<ResMut<Assets<Image>>>` parameter on `spawn_splash` would
+fall through and the scanline overlay would silently skip,
+defeating the new tests.
+
+Two new tests (1183 → 1185):
+`build_scanline_image_has_expected_2x2_rgba_bytes` locks the
+texture pixels literally so a future tweak can't drift the
+appearance silently; `scanline_overlay_spawns_and_fades_with_splash`
+asserts spawn placement under `SplashRoot` and the new
+fade-images branch's correctness end-to-end.
+
+This pair (`29136d8` + `a27cf5a`) closes Option B from the
+SESSION_HANDOFF Resume prompt — both splash polish pieces now
+shipped.
+
 ## What shipped in v0.20.0 (frozen at `41a009a`)
 
 ### Terminal visual-identity port
@@ -295,16 +366,14 @@ reads from it, so swapping the palette is now a one-file edit:
   intentionally unmigrated and should swap in lockstep with the
   artwork. Largest visible payoff remaining in the visual-
   identity arc.
-- **Splash boot-loader scanline overlay.** `cacb19c` shipped the
-  rest of the boot screen but skipped the scanline overlay
-  (1px lines at 2 px pitch in `#1a1a1a` over the whole splash,
-  30 % opacity). Needs a tiled-pattern asset (a 2 × 2 px PNG) or
-  a custom shader. Pure aesthetic, no behaviour change.
-- **Splash cursor pulse.** The "ready_" line's mockup pulses a
-  cyan 6 × 12 px block at the end of the text. `cacb19c`
-  skipped this because a per-element pulse fights the global
-  `SplashFadable` fade timeline. Either layer the pulse on top
-  of the fade (multiply alphas) or accept the static cursor.
+- *Splash boot-loader scanline overlay — closed by `a27cf5a`.*
+  Runtime-generated 2 × 2 RGBA8 texture tiled via
+  `NodeImageMode::Tiled`; per-pixel alpha × tint alpha gives
+  multiplicative fade integration without new abstractions.
+- *Splash cursor pulse — closed by `29136d8`.* Trailing 6 × 12 px
+  cyan Node, sine-pulsed, multiplied with the global splash fade
+  (the "multiply, don't override" pattern that resolves the
+  original `cacb19c` skip-rationale).
 - **Replay-overlay enrichments beyond the scrub bar.** Banner-local
   pieces of the mockup (`docs/ui-mockups/replay-overlay-mobile.html`)
   all shipped: scrub bar (`c84d9f4`), `▌ replay` cursor-block label
@@ -451,11 +520,9 @@ DECISION TO ASK THE PLAYER FIRST:
   A. Push the post-cut commits to origin. Either as-is on master
      or rolled into a v0.20.1 cut (CHANGELOG entry + tag).
      Mechanical, but local master diverges from origin until done.
-  B. Splash polish — scanline overlay + cursor pulse. The two
-     pieces of the mockup `cacb19c` skipped (scanline needs a
-     tiled-pattern asset or shader; pulse needs to layer on top
-     of the SplashFadable timeline). Pure polish; no behaviour
-     change.
+  B. *Closed by `29136d8` + `a27cf5a`.* Both splash polish
+     pieces shipped (cursor pulse + scanline overlay). No further
+     splash work pending unless a new mockup detail surfaces.
   C. *Closed by `54005d5` + `e080b49`.* Banner-local replay-overlay
      pieces all shipped (scrub bar, ▌ label, GAME caption, MOVE
      chip). Remaining are cross-plugin (floating MOVE chip above
