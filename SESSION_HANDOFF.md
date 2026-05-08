@@ -88,10 +88,12 @@ adding more is one component-attach, not three new query types.
 
 **Skipped, with rationale captured in the commit:**
 - Scanline overlay (needs a tiled-pattern asset or custom shader).
+  *Open in "Visual-identity follow-ups" below.*
 - Pulsing cursor on the "ready_" line (would fight the global
-  fade timeline).
+  fade timeline). *Open in "Visual-identity follow-ups" below.*
 - "RUSTY SOLITAIRE" wordmark from the mockup (the actual product
-  is "Solitaire Quest"; the mockup leaked the repo name).
+  is "Solitaire Quest"; the mockup leaked the repo name). *Closed
+  — the in-engine wordmark stays "Solitaire Quest".*
 
 ### `c84d9f4` `feat(engine): scrub fill bar + per-frame updater for replay overlay`
 
@@ -110,8 +112,9 @@ asserting `Node.width` on the unique scrub-fill entity. Same
 change-detection guard as the text updaters, so an idle replay
 leaves the node untouched.
 
-Header text treatment, move-log scroll, MOVE chip, and WIN MOVE
-callout from the same mockup are still open — separate commits.
+Header text treatment (closed by `6204db8` immediately below),
+move-log scroll, MOVE chip, and WIN MOVE callout from the same
+mockup are still open — separate commits.
 
 ### `6204db8` `feat(engine): port replay banner label to ▌ cursor-block treatment`
 
@@ -123,6 +126,16 @@ line rather than a generic UI title, tightening the family
 resemblance between the two top-level overlay surfaces. Pure
 text-content change; no behavioural shift, no new components, no
 new systems.
+
+**Mockup deviation (intentional):** the source mockup string in
+`docs/ui-mockups/replay-overlay-mobile.html` is `▌replay.tsx`. The
+`.tsx` is a prototyping leak — Stitch renders in React, so the
+mockup author reached for a familiar filename — and was dropped
+for the in-engine version since the codebase is Rust. The `▌` +
+lowercase pattern is what reads as a Terminal-output-line; the
+extension is incidental. (Same shape as the "RUSTY SOLITAIRE"
+wordmark deviation noted under `cacb19c` — the mockup leaked the
+repo name; the actual product is "Solitaire Quest".)
 
 ## What shipped in v0.20.0 (frozen at `41a009a`)
 
