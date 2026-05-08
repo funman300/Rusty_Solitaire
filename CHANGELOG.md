@@ -6,8 +6,107 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.2 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.3 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.3] — 2026-05-08
+
+Patch release for the post-v0.21.2 work. One through-line:
+**accessibility arc closure**. v0.21.2 explicitly carved out
+"dynamic-paint sites" (HUD action buttons, modal buttons, radial
+menu rim) on the assumption that their existing paint cycles would
+race the central `update_high_contrast_borders` system. v0.21.3
+walks the actual code, finds the carve-out was over-cautious, and
+closes it. Bonus: the first real consumer of `ToastVariant::Warning`
+also lands here, making the `ToastVariant` enum fully load-bearing
+(every variant has at least one driver).
+
+### Added
+
+- **`WarningToastEvent(String)` — first `ToastVariant::Warning`
+  consumer** (`279e23d`). Generic carrier message that any system
+  can fire to spawn a 4 s amber-bordered fire-and-forget toast.
+  Mirrors the v0.21.2 `MoveRejectedEvent` → `Error` toast wiring:
+  domain message crosses the plugin boundary, the animation
+  plugin's `handle_warning_toast` system reads it and spawns. Not
+  queued (Warning is alert-shaped, not info-shaped — should never
+  block on a queue).
+- **Daily-challenge-expiry warning** (`279e23d`). First in-engine
+  driver of `WarningToastEvent`. New
+  `daily_challenge_plugin::check_daily_expiry_warning` system
+  fires at most once per `DailyChallengeResource::date` when the
+  player is within 30 min of UTC midnight reset and today's
+  challenge isn't yet complete. Suppression decided by a pure
+  helper (`compute_expiry_warning_minutes`) covering: already-
+  completed-today, already-shown-for-this-date, outside the
+  threshold window, post-midnight rollover. Pure-helper-plus-
+  thin-system shape because `Utc::now()` can't be pinned without
+  injecting a clock resource — overkill for one consumer.
+- **`radial_rim_outline` pure helper** (`c153363`). Decision
+  logic for the radial-menu rim outline colour. Resting outlines
+  always carry `BORDER_SUBTLE`; focused outlines carry
+  `BORDER_STRONG` normally and `BORDER_SUBTLE_HC` under HC. Naive
+  marker substitution would invert the focused-vs-resting
+  hierarchy because `BORDER_SUBTLE_HC` (`#a0a0a0`) is *lighter*
+  than `BORDER_STRONG` (`#505050`); folding the choice in here
+  keeps the focused rim more visible under HC, not less.
+
+### Changed
+
+- **HC marker pattern extended to HUD action buttons + modal
+  buttons** (`c153363`). Re-reading the code revealed both sites'
+  paint systems (`paint_action_buttons`, `paint_modal_buttons`)
+  only mutate `BackgroundColor` — `BorderColor` is set once at
+  spawn and never touched. So the existing
+  `HighContrastBorder::with_default(BORDER_SUBTLE)` marker
+  pattern works cleanly for both, no race. v0.21.2's carve-out
+  comment was based on assumed-but-not-actual race risk; this
+  cycle treats it as the doc-vs-implementation drift pattern in
+  the wild and verifies before trusting.
+- **Radial menu rim folds HC into per-frame respawn**
+  (`c153363`). The rim is the only true dynamic-painter of the
+  three carved-out sites — `radial_redraw_overlay` despawns and
+  respawns all rim sprites every frame the radial is `Active`.
+  The `HighContrastBorder` marker can't apply (entities don't
+  persist across frames) so HC is read directly in the system
+  via `Option<Res<SettingsResource>>` and routed through
+  `radial_rim_outline`. The `Option<Res<...>>` shape preserves
+  test compatibility under `MinimalPlugins`.
+- **Animation plugin registers `WarningToastEvent`** (`279e23d`).
+  Joins `InfoToastEvent`, `MoveRejectedEvent` etc. in
+  `AnimationPlugin::build`. Daily-challenge plugin also
+  registers it (idempotent) so the message exists when running
+  the daily plugin under `MinimalPlugins` without the animation
+  plugin attached.
+
+### Documentation
+
+- `SESSION_HANDOFF.md` refreshed twice this cycle — once after
+  the Toast Warning wiring (menu trimmed 5 → 4 options), and
+  again after the HC dynamic-paint rollout (menu trimmed 4 → 3,
+  with all remaining options now flagged as multi-session). The
+  `High-contrast accessibility mode` entry in the Visual-identity
+  follow-ups list is updated to reflect that no "un-tagged
+  because race-risk" surfaces remain.
+
+### Stats
+
+- **1207 passing tests / 0 failing** across the workspace
+  (net +12 from v0.21.2's 1195 baseline):
+  - 7 tests for `compute_expiry_warning_minutes` (`279e23d`)
+    covering each suppression rule + the inclusive boundary at
+    exactly 30 min remaining.
+  - 1 in-Bevy test (`check_system_fires_warning_event_only_once_per_day`)
+    pinning `DailyExpiryWarningShown`'s once-per-date
+    suppression and the symmetric "already-completed-today"
+    suppression.
+  - 4 truth-table tests for `radial_rim_outline` (`c153363`):
+    focused × HC. The "resting stays subtle under HC" test
+    explicitly documents *why* — it's the hierarchy-preservation
+    invariant a future refactor might be tempted to break.
+- Zero clippy warnings under `cargo clippy --workspace
+  --all-targets -- -D warnings`.
+- `cargo test --workspace` clean.
 
 ## [0.21.2] — 2026-05-08
 
