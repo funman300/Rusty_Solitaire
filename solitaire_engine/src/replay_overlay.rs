@@ -28,9 +28,10 @@ use chrono::Datelike;
 
 use crate::font_plugin::FontResource;
 use crate::layout::LayoutResource;
-use crate::events::{DrawRequestEvent, MoveRequestEvent};
+use crate::events::{DrawRequestEvent, MoveRequestEvent, UndoRequestEvent};
 use crate::replay_playback::{
-    step_replay_playback, stop_replay_playback, toggle_pause_replay_playback, ReplayPlaybackState,
+    step_backwards_replay_playback, step_replay_playback, stop_replay_playback,
+    toggle_pause_replay_playback, ReplayPlaybackState,
 };
 use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
@@ -275,6 +276,7 @@ impl Plugin for ReplayOverlayPlugin {
         // in production (alongside `replay_playback`) is harmless.
         app.add_message::<MoveRequestEvent>()
             .add_message::<DrawRequestEvent>()
+            .add_message::<UndoRequestEvent>()
             .add_systems(
                 Update,
                 (
@@ -288,6 +290,7 @@ impl Plugin for ReplayOverlayPlugin {
                     handle_step_button,
                     handle_pause_keyboard,
                     handle_stop_keyboard,
+                    handle_arrow_keyboard,
                     handle_stop_button,
                 )
                     .chain(),
@@ -786,12 +789,11 @@ fn keybind_footer_mode_text() -> &'static str {
 /// Pure helper — returns the keybind-hint text shown on the right
 /// side of the keybind-hint footer row. Lists only the keys that
 /// are *actually wired* today: the Space accelerator for
-/// pause/resume and the ESC accelerator for stop. Future commits
-/// that wire ← / → for prev/next move will extend this string —
-/// the footer never lists unimplemented keybinds (would lie to
-/// users).
+/// pause/resume, the ESC accelerator for stop, and the ← / →
+/// accelerators for paused single-move stepping. The footer never
+/// lists unimplemented keybinds (would lie to users).
 fn keybind_footer_hint_text() -> &'static str {
-    "[SPACE] pause/resume \u{00B7} [ESC] stop" // · separator
+    "[SPACE] pause/resume \u{00B7} [ESC] stop \u{00B7} [\u{2190}\u{2192}] step" // · separator
 }
 
 /// Pure helper — returns the WIN MOVE marker's left-edge position as
@@ -1092,6 +1094,37 @@ fn handle_pause_keyboard(
         return;
     }
     toggle_pause_replay_playback(&mut state);
+}
+
+/// Watches the arrow keys for the paused single-step
+/// accelerators. UI-first contract from CLAUDE.md §3.3 is
+/// satisfied by the on-screen Step button (forward only); these
+/// are the optional accelerators that also surface a backwards
+/// step.
+///
+/// Both keys are paused-only — the underlying step helpers
+/// hard-gate via destructure on `paused: true`. Pressing → during
+/// running playback or ← at cursor 0 are silent no-ops; the
+/// player learns "pause first, then arrow."
+///
+/// The mockup labels these `[← →] scrub` (continuous fast scan).
+/// Single-move step is the closest behaviour shippable today; the
+/// footer hint reads `[← →] step` to match what's wired rather
+/// than the aspirational "scrub."
+fn handle_arrow_keyboard(
+    keys: Option<Res<ButtonInput<KeyCode>>>,
+    mut state: ResMut<ReplayPlaybackState>,
+    mut moves_writer: MessageWriter<MoveRequestEvent>,
+    mut draws_writer: MessageWriter<DrawRequestEvent>,
+    mut undo_writer: MessageWriter<UndoRequestEvent>,
+) {
+    let Some(keys) = keys else { return };
+    if keys.just_pressed(KeyCode::ArrowRight) {
+        step_replay_playback(&mut state, &mut moves_writer, &mut draws_writer);
+    }
+    if keys.just_pressed(KeyCode::ArrowLeft) {
+        step_backwards_replay_playback(&mut state, &mut undo_writer);
+    }
 }
 
 /// Watches `Esc` for the keyboard stop accelerator. UI-first
@@ -1958,8 +1991,8 @@ mod tests {
         );
         assert_eq!(
             keybind_footer_hint_text(),
-            "[SPACE] pause/resume \u{00B7} [ESC] stop",
-            "hint text must list both wired keybinds (Space → pause/resume, Esc → stop) separated by a middle dot",
+            "[SPACE] pause/resume \u{00B7} [ESC] stop \u{00B7} [\u{2190}\u{2192}] step",
+            "hint text must list all three wired keybind groups (Space → pause/resume, Esc → stop, ←→ → step) separated by middle dots",
         );
     }
 
@@ -2311,6 +2344,153 @@ mod tests {
             hint.contains("[ESC]"),
             "hint must surface the Esc accelerator; got {hint:?}",
         );
+    }
+
+    /// Hint must also list the arrow-key step accelerators.
+    /// Pinned separately from the Space + Esc test so a future
+    /// regression that drops only the arrows is caught here even
+    /// if the Space + Esc check still passes.
+    #[test]
+    fn keybind_footer_hint_lists_arrow_steps() {
+        let hint = keybind_footer_hint_text();
+        assert!(
+            hint.contains("\u{2190}\u{2192}"),
+            "hint must surface the ←→ step accelerators; got {hint:?}",
+        );
+        assert!(
+            hint.contains("step"),
+            "hint must label the arrow accelerators as 'step' \
+             (matches what's wired — single-move step, not continuous scrub); got {hint:?}",
+        );
+    }
+
+    /// Pressing → while paused advances the cursor by exactly one
+    /// — same end-state as clicking the on-screen Step button.
+    #[test]
+    fn arrow_right_keyboard_advances_cursor_while_paused() {
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        set_state(&mut app, pressed_paused_state(5, 0));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowRight);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, paused, .. } => {
+                assert_eq!(
+                    *cursor, 1,
+                    "→ must advance the cursor by exactly one while paused",
+                );
+                assert!(
+                    *paused,
+                    "→ must leave the paused flag untouched",
+                );
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    /// Pressing → while running is a no-op — the existing
+    /// `step_replay_playback` guard prevents racing the tick loop.
+    #[test]
+    fn arrow_right_keyboard_is_noop_while_running() {
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        set_state(&mut app, running_state(5, 0));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowRight);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, paused, .. } => {
+                assert_eq!(*cursor, 0, "→ must not race the tick loop");
+                assert!(!*paused);
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    /// Pressing ← while paused with cursor > 0 decrements the
+    /// cursor by exactly one. The corresponding game-state reversal
+    /// happens when `handle_undo` reads the dispatched
+    /// `UndoRequestEvent` — that's covered in the playback core's
+    /// integration test, not here.
+    #[test]
+    fn arrow_left_keyboard_decrements_cursor_while_paused() {
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        // Start paused at cursor=3 so there's room to step backwards.
+        set_state(&mut app, pressed_paused_state(5, 3));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, paused, .. } => {
+                assert_eq!(
+                    *cursor, 2,
+                    "← must decrement the cursor by exactly one while paused",
+                );
+                assert!(
+                    *paused,
+                    "← must leave the paused flag untouched",
+                );
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    /// Pressing ← at cursor 0 is a no-op (nothing to rewind past).
+    #[test]
+    fn arrow_left_keyboard_is_noop_at_cursor_zero() {
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        set_state(&mut app, pressed_paused_state(5, 0));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, .. } => {
+                assert_eq!(*cursor, 0, "← at cursor 0 must be a no-op");
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
+    }
+
+    /// Pressing ← while running is a no-op — same hard-gate
+    /// rationale as the forward-step paused-only check.
+    #[test]
+    fn arrow_left_keyboard_is_noop_while_running() {
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        set_state(&mut app, running_state(5, 3));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowLeft);
+        app.update();
+
+        match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, paused, .. } => {
+                assert_eq!(*cursor, 3, "← must not race the tick loop");
+                assert!(!*paused);
+            }
+            other => panic!("expected Playing, got {other:?}"),
+        }
     }
 
     #[test]

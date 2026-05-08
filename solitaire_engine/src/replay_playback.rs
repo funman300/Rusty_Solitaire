@@ -42,7 +42,7 @@
 use bevy::prelude::*;
 use solitaire_data::{Replay, ReplayMove};
 
-use crate::events::{DrawRequestEvent, MoveRequestEvent, StateChangedEvent};
+use crate::events::{DrawRequestEvent, MoveRequestEvent, StateChangedEvent, UndoRequestEvent};
 use crate::game_plugin::{GameMutation, RecordingReplay};
 use crate::resources::GameStateResource;
 use crate::settings_plugin::SettingsResource;
@@ -281,6 +281,52 @@ pub fn step_replay_playback(
         }
     }
     *cursor += 1;
+    true
+}
+
+/// Steps the replay **backwards** by exactly one move while paused.
+///
+/// Strategy: the live game's undo system is the source of truth for
+/// reversing moves. Every move the replay forward-stepped (via
+/// [`step_replay_playback`] or the auto-advance loop in
+/// [`tick_replay_playback`]) was dispatched as a canonical
+/// [`MoveRequestEvent`] / [`DrawRequestEvent`], which the game
+/// applied and pushed onto its undo stack. So a backwards step here
+/// is simply: decrement the cursor (so the about-to-apply move
+/// re-points at the one we're rewinding past) and fire an
+/// [`UndoRequestEvent`] so the game reverses its most-recent move
+/// next frame.
+///
+/// Hard-gated to the paused state via destructure pattern —
+/// matches the existing [`step_replay_playback`] gate so the
+/// player can only scrub one direction at a time and the tick
+/// loop never races a manual rewind.
+///
+/// Returns `false` and is a no-op in three cases:
+/// - State isn't `Playing` (no replay attached).
+/// - State is `Playing` but not paused (the tick loop owns the cursor).
+/// - Cursor is already at 0 (nothing to rewind past).
+///
+/// Returns `true` on a successful step; the actual game-state
+/// reversal happens next frame when `handle_undo` reads the
+/// `UndoRequestEvent`.
+pub fn step_backwards_replay_playback(
+    state: &mut ResMut<ReplayPlaybackState>,
+    undo_writer: &mut MessageWriter<UndoRequestEvent>,
+) -> bool {
+    let ReplayPlaybackState::Playing {
+        cursor,
+        paused: true,
+        ..
+    } = state.as_mut()
+    else {
+        return false;
+    };
+    if *cursor == 0 {
+        return false;
+    }
+    *cursor -= 1;
+    undo_writer.write(UndoRequestEvent);
     true
 }
 
