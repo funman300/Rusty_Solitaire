@@ -11,6 +11,7 @@ use solitaire_core::pile::PileType;
 
 use crate::events::{HintVisualEvent, StateChangedEvent};
 use crate::layout::{compute_layout, Layout, LayoutResource, LayoutSystem};
+use crate::resources::GameStateResource;
 #[cfg(test)]
 use crate::layout::TABLE_COLOUR;
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
@@ -85,6 +86,7 @@ impl Plugin for TablePlugin {
                     apply_theme_on_settings_change,
                     apply_hint_pile_highlight,
                     tick_hint_pile_highlights,
+                    sync_pile_marker_visibility,
                 ),
             );
     }
@@ -372,6 +374,42 @@ fn tick_hint_pile_highlights(
     }
 }
 
+/// Hides pile-marker sprites for piles that have a card on top, shows them
+/// for empty piles. Implements the "remain visible only where a pile is
+/// empty" invariant declared in this module's top-level doc comment but
+/// previously not enforced — markers always rendered, and the resulting
+/// translucent rectangle bled through the rounded corners of any card sat
+/// on top, producing visible "gray L" artifacts at each card corner.
+///
+/// Runs every Update tick guarded by `game.is_changed()` so the work is
+/// skipped on idle frames. Bevy's resource change-detection sets the
+/// changed flag on every state mutation (draw, move, undo, recycle, new
+/// game), which covers every transition that flips a pile from
+/// empty-to-occupied or vice versa.
+fn sync_pile_marker_visibility(
+    game: Option<Res<GameStateResource>>,
+    mut markers: Query<(&PileMarker, &mut Visibility)>,
+) {
+    let Some(game) = game else {
+        return;
+    };
+    if !game.is_changed() {
+        return;
+    }
+    for (pile_marker, mut visibility) in markers.iter_mut() {
+        let is_empty = game
+            .0
+            .piles
+            .get(&pile_marker.0)
+            .is_none_or(|pile| pile.cards.is_empty());
+        *visibility = if is_empty {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +466,57 @@ mod tests {
         types.sort_by_key(|p| format!("{p:?}"));
         types.dedup();
         assert_eq!(types.len(), 13);
+    }
+
+    #[test]
+    fn pile_markers_hide_when_pile_is_occupied() {
+        // After a fresh deal: the 7 tableau piles + the stock pile are
+        // all occupied; the 4 foundation piles + the waste pile are
+        // empty. The visibility-by-occupancy system must hide the
+        // first 8 markers and keep the last 5 visible. This implements
+        // the "remain visible only where a pile is empty" invariant
+        // in the module-level doc comment that was previously
+        // declared but not enforced — pile markers used to always
+        // render, and the resulting translucent rectangle bled through
+        // the rounded corners of any card sat on top.
+        let mut app = headless_app();
+        // headless_app() runs one tick; run another so
+        // sync_pile_marker_visibility has a chance to fire (it runs
+        // in Update, after Startup spawns the markers and the game
+        // state populates).
+        app.update();
+
+        let mut q = app.world_mut().query::<(&PileMarker, &Visibility)>();
+        let mut hidden_piles: Vec<PileType> = Vec::new();
+        let mut visible_piles: Vec<PileType> = Vec::new();
+        for (marker, visibility) in q.iter(app.world()) {
+            if matches!(visibility, Visibility::Hidden) {
+                hidden_piles.push(marker.0.clone());
+            } else {
+                visible_piles.push(marker.0.clone());
+            }
+        }
+
+        // 8 occupied piles after a fresh deal: stock + 7 tableau.
+        assert_eq!(
+            hidden_piles.len(),
+            8,
+            "stock + 7 tableau piles should hide their markers post-deal",
+        );
+        assert!(hidden_piles.contains(&PileType::Stock));
+        for i in 0..7 {
+            assert!(
+                hidden_piles.contains(&PileType::Tableau(i)),
+                "tableau {i} marker should be hidden — it has cards",
+            );
+        }
+
+        // 5 empty piles: waste + 4 foundations.
+        assert_eq!(visible_piles.len(), 5);
+        assert!(visible_piles.contains(&PileType::Waste));
+        for i in 0..4_u8 {
+            assert!(visible_piles.contains(&PileType::Foundation(i)));
+        }
     }
 
     // -----------------------------------------------------------------------
