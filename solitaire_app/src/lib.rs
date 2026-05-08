@@ -284,11 +284,20 @@ fn apply_smart_default_window_size(
 fn set_window_icon(
     mut applied: Local<bool>,
     primary_window: Query<Entity, With<PrimaryWindow>>,
-    winit_windows: NonSend<WinitWindows>,
+    // `Option<NonSend<...>>` rather than `NonSend<...>` because Bevy
+    // 0.18's stricter system-param validation panics on the first
+    // few frames before `WinitWindows` is inserted (the resource is
+    // populated after winit's `Resumed` event, which fires after
+    // the first system-tick batch). The early-return below handles
+    // the `None` window-wrapper case for the same lifecycle reason.
+    winit_windows: Option<NonSend<WinitWindows>>,
 ) {
     if *applied {
         return;
     }
+    let Some(winit_windows) = winit_windows else {
+        return;
+    };
     let Ok(primary_entity) = primary_window.single() else {
         return;
     };
