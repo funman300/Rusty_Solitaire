@@ -6,8 +6,174 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.0 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.1 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.1] — 2026-05-08
+
+Patch release for the post-v0.21.0 work — closes Resume-prompt
+Options A (app icon) and F (high-contrast + reduce-motion
+accessibility modes), plus a card-visual iteration cycle that
+moved through three states: the v0.21.0 Terminal pink/gray, a
+brief 4-colour-deck experiment (hearts pink, diamonds gold,
+clubs lime, spades gray), and a reversion to traditional 2-colour
+"Microsoft Solitaire on dark mode" pairing (saturated red +
+near-white). Two visible bugs surfaced and were fixed during
+the iteration: the suit-coloured border produced anti-aliasing
+artifacts at rounded card corners (border dropped entirely),
+and the pile-marker sprite bleed-through created visible "gray
+L" shapes where cards sat on markers (markers now hide when
+occupied — the documented but previously-not-enforced "remain
+visible only where a pile is empty" invariant).
+
+### Added
+
+- **Desktop window icon** (`3eb3a26`). Runtime `Window::icon`
+  wired via `WinitWindows`; embedded 256 px PNG decoded on
+  startup via `tiny_skia` and handed to winit. Plus a 9-size
+  PNG hierarchy at `assets/icon/icon_<size>.png` covering
+  Linux hicolor (16/24/32/48/64/128/256/512), Windows `.ico`
+  targets (16/32/48/256), and macOS `.icns` targets
+  (16/32/64/128/256/512/1024). All sizes generated from a
+  shared `icon_svg` builder (Terminal `▌RS` mark on dark
+  `#151515` with brick-red accent) by a new
+  `icon_generator` example. Pin test `icon_svg_pin` guards
+  rasterised RGBA bytes against `usvg`/`resvg` drift. Two
+  new `solitaire_app` deps target-gated to non-Android:
+  direct `winit = "0.30"` (for `Icon` construction —
+  `bevy_winit` 0.18 doesn't re-export it) and direct
+  `tiny-skia` (for PNG → RGBA decode). Android draws its
+  launcher icon from the APK manifest, so neither dep is
+  needed there.
+- **`Settings::high_contrast_mode` flag** (`c5787c6`). Boosts
+  card text colours: hearts/diamonds → `RED_SUIT_COLOUR_HC`
+  (`#ff6868`), clubs/spades → `TEXT_PRIMARY_HC` (`#f5f5f5`).
+  Composes with `color_blind_mode`: CBM lime wins over HC red
+  on red suits when both are on; HC still applies to dark
+  suits independent of CBM. Six new tests pin the truth
+  table.
+- **`Settings::reduce_motion_mode` flag** (`c5787c6`). Forces
+  `effective_slide_secs` to `0.0` regardless of the
+  `AnimSpeed` selection, making cards snap instantly to their
+  target. Two new tests pin the gate behaviour and the
+  fall-through to `anim_speed_to_secs` when off. Future
+  scope: gate splash scanline / cursor pulse / warning-chip
+  pulse on the same flag.
+- **Settings UI toggle rows** (`07e0357`). Two new rows in
+  the Settings panel under Cosmetic (alongside Color-blind):
+  "High Contrast" and "Reduce Motion". `tab-walk` order
+  visits all three accessibility flags in one vertical run.
+  Same shape as the existing `ColorBlindText` toggle scaffold
+  with marker components, label updaters, click handlers,
+  and disambiguator chains.
+- **`sync_pile_marker_visibility` system** (`4d48cad`).
+  Implements the module-level doc invariant in `table_plugin`
+  ("pile markers ... remain visible only where a pile is
+  empty") that was previously declared but not enforced.
+  Hides the pile-marker sprite for any pile that has a card
+  on top, shows it for empty piles. Closes the "gray L
+  corners" artifact where the marker's translucent fill bled
+  through the rounded card corners.
+
+### Changed
+
+- **Card-face suit colours** (`62b61cc` → `ddb6540`). Started
+  the cycle at v0.21.0's Terminal pink (`#fb9fb1`) / gray
+  (`#d0d0d0`), briefly experimented with a 4-colour deck
+  (`62b61cc` — hearts pink, diamonds gold, clubs lime, spades
+  gray) for faster suit recognition by hue alone, then
+  reverted to traditional 2-colour pairing at the player's
+  request (`ddb6540`). Final state: `RED_SUIT_COLOUR =
+  #e35353` (saturated red, replacing the v0.21.0 pink) and
+  `BLACK_SUIT_COLOUR = #e8e8e8` (near-white, brighter than
+  the v0.21.0 `#d0d0d0` foreground gray so the dark suits
+  read as a chromatic-neutral counterpart to the saturated
+  red rather than as "the same gray as body text"). Reads
+  like Microsoft Solitaire on dark mode. `RED_SUIT_COLOUR_HC`
+  rebumped to `#ff6868` (brighter saturated red) so HC stays
+  more chromatic than the new default red rather than the
+  previous pinker boost. The 4-colour experiment's commit
+  history is preserved in the log; net delta vs. v0.21.0 is
+  the new red + new near-white.
+- **Card-face border dropped** (`dd97021`). The earlier 1 px
+  suit-coloured stroke on the card body produced
+  anti-aliasing artifacts at the rounded corners (the colored
+  stroke faded through gray pixels into the play surface).
+  Cards now have no border — body fill alone defines the
+  shape against the play surface; the 5-unit brightness gap
+  between `#1a1a1a` body and `#151515` surface is enough to
+  read as a card edge without an explicit stroke.
+  `design-system.md` § Game Cards line 225 updated in
+  lockstep.
+- **Settings UI accessibility row count** (`07e0357`). Three
+  toggles in Cosmetic now: Color-blind, High Contrast,
+  Reduce Motion. Existing query-disambiguator chains in
+  `handle_settings_buttons` extended with `Without<HighContrastText>`
+  and `Without<ReduceMotionText>` so the new components
+  don't ambiguate the existing mutations.
+
+### Fixed
+
+- **Bevy 0.18 system-param validation panic on icon startup**
+  (`716a025`). `NonSend<WinitWindows>` failed validation on
+  the first few frames before winit's `Resumed` event populated
+  the resource. Bevy 0.18's stricter validation panics rather
+  than skips when a non-send resource is absent; the error
+  message itself spelled out the fix ("wrap the parameter in
+  `Option<T>` and handle `None` when it happens"). Wraps
+  `winit_windows` as `Option<NonSend<WinitWindows>>` and
+  early-returns on `None`.
+- **"Gray L corners" on cards** (`4d48cad`). Two artifacts
+  were producing similar-looking grey at card corners: the
+  SVG stroke fading through gray pixels (closed by `dd97021`)
+  and the pile-marker sprite bleeding through the rounded
+  cutouts (closed by `4d48cad`). Right test target, wrong
+  visible-artifact target on the first attempt — the pin
+  test correctly drifted 52 face hashes, but the visible
+  gray came from a different layer. Two layers, two fixes;
+  the second closed the player-visible complaint.
+
+### Documentation
+
+- `docs/ui-mockups/design-system.md` § Suit Colors retitled
+  through three states (Terminal 2-color → "Four-color
+  deck" → final "Two-color traditional pairing"). Final
+  table records the saturated red + near-white. § Game Cards
+  border spec changed from "1px solid in suit color" to
+  "Border: none" with the artifact-rationale audit trail.
+  CBM section text updated through each colour-scheme
+  iteration.
+- `SESSION_HANDOFF.md` refreshed twice this cycle (`0c1cc40`
+  + `31139ae`) — the first reset the post-v0.21.0 narrative
+  ("no threads in flight"), the second recorded Options A +
+  F closures and trimmed the Resume-prompt menu.
+- New module-level doc strings on the new constants
+  (`RED_SUIT_COLOUR_HC`, `TEXT_PRIMARY_HC`, `BORDER_SUBTLE_HC`,
+  `RED_SUIT_COLOUR_CBM` semantic shift) record the
+  composability rules between CBM and HC and the "what to
+  use this for" rationale.
+
+### Stats
+
+- **1192 passing tests / 0 failing** across the workspace
+  (net +8 from v0.21.0's 1184 baseline). New tests added by
+  this release:
+  - `card_face_svg_pin` integration test rebaselined three
+    times during the suit-colour iteration; final hashes
+    pin the saturated-red + near-white + no-border state.
+  - 4 high-contrast text_colour tests + 2 reduce-motion
+    `effective_slide_secs` tests in `card_plugin` /
+    `animation_plugin` (from `c5787c6`).
+  - 1 `icon_svg_pin` integration test guarding the icon
+    rasterisation pipeline (from `48b28d2` — actually
+    landed in v0.21.0's accounting but worth noting for the
+    cycle).
+  - 1 `pile_markers_hide_when_pile_is_occupied` test pinning
+    the new visibility-by-occupancy invariant (from
+    `4d48cad`).
+- Zero clippy warnings under `cargo clippy --workspace
+  --all-targets -- -D warnings`.
+- `cargo test --workspace` clean.
 
 ## [0.21.0] — 2026-05-08
 
