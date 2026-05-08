@@ -161,12 +161,38 @@ fn glyph_paint_attrs(colour: &str, paint: GlyphPaint) -> String {
     }
 }
 
-fn suit_glyph(suit: Suit) -> &'static str {
+/// SVG `path` `d` attribute tracing the suit's silhouette inside a
+/// 32 × 32 logical box (origin top-left, +Y down). All four suits are
+/// authored as a single closed perimeter so the same path renders
+/// correctly whether filled (♥ ♠) or outlined (♦ ♣).
+///
+/// Path-based rendering replaces the earlier `<text>` approach because
+/// the bundled `FiraMono` font doesn't carry the Unicode suit glyphs
+/// (U+2660-2666) at the requested size — `usvg` was falling back to a
+/// substitute rendering that produced near-invisible "tofu" marks.
+/// Paths bypass the font system entirely.
+fn suit_path_d(suit: Suit) -> &'static str {
     match suit {
-        Suit::Clubs => "&#x2663;",
-        Suit::Diamonds => "&#x2666;",
-        Suit::Hearts => "&#x2665;",
-        Suit::Spades => "&#x2660;",
+        Suit::Hearts => {
+            "M16,28 C 8,22 2,17 2,11 C 2,7 5,4 9,4 \
+             C 12,4 14,6 16,9 C 18,6 20,4 23,4 \
+             C 27,4 30,7 30,11 C 30,17 24,22 16,28 Z"
+        }
+        Suit::Diamonds => "M16,2 L 29,16 L 16,30 L 3,16 Z",
+        Suit::Spades => {
+            "M16,4 C 9,9 2,14 2,21 C 2,25 5,28 9,28 \
+             C 13,28 14,26 14,24 L 13,30 L 19,30 L 18,24 \
+             C 18,26 19,28 23,28 C 27,28 30,25 30,21 \
+             C 30,14 23,9 16,4 Z"
+        }
+        Suit::Clubs => {
+            "M16,4 C 13,4 10,7 10,10 C 10,12 11,13 12,14 \
+             C 9,14 4,17 4,21 C 4,24 7,27 10,27 \
+             C 12,27 14,26 14,24 L 13,30 L 19,30 L 18,24 \
+             C 18,26 20,27 22,27 C 25,27 28,24 28,21 \
+             C 28,17 23,14 20,14 C 21,13 22,12 22,10 \
+             C 22,7 19,4 16,4 Z"
+        }
     }
 }
 
@@ -174,7 +200,7 @@ fn suit_glyph(suit: Suit) -> &'static str {
 /// self-contained, parsable SVG document.
 pub fn face_svg(rank: Rank, suit: Suit) -> String {
     let (colour, paint) = suit_paint(suit);
-    let glyph = suit_glyph(suit);
+    let path_d = suit_path_d(suit);
     let rank_text = rank_filename(rank);
     let small_glyph_attrs = glyph_paint_attrs(colour, paint);
     let large_glyph_attrs = glyph_paint_attrs(colour, paint);
@@ -183,27 +209,42 @@ pub fn face_svg(rank: Rank, suit: Suit) -> String {
     //   border:        1 px  → 2 px  stroke-width
     //   corner radius: 8 px  → 16 px rx/ry
     //   rank font:    18 px  → 36 px
-    //   small glyph:  10 px  → 20 px
-    //   large glyph:  32 px  → 64 px
+    //   small glyph:  10 px  → 20 px (suit_path_d is authored at 32 →
+    //                                 scale 0.625 to land at 20)
+    //   large glyph:  32 px  → 64 px (scale 2.0)
     //
     // Inset the border by 1 px so the 2 px stroke renders fully
     // inside the 256 × 384 pixmap rather than getting clipped.
+    //
+    // Suit glyphs are rendered as inline SVG paths (not `<text>`)
+    // because the bundled `FiraMono` font doesn't carry usable
+    // U+2660-2666 glyphs at the requested size. See `suit_path_d`
+    // for the rationale.
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
   <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
         fill="{BG_FACE}" stroke="{colour}" stroke-width="2"/>
 
-  <!-- Top-left rank + small suit glyph. -->
+  <!-- Top-left rank in JetBrains-Mono-styled FiraMono (rank digits
+       and letters render correctly in FiraMono; only the suit glyphs
+       needed to escape to paths). -->
   <text x="14" y="44" font-family="Fira Mono" font-size="36" font-weight="700"
         fill="{colour}">{rank_text}</text>
-  <text x="14" y="68" font-family="Fira Mono" font-size="20"
-        {small_glyph_attrs}>{glyph}</text>
 
-  <!-- Bottom-right large suit glyph, rotated 180° about its own
-       baseline anchor so the glyph reads upside-down. -->
-  <text x="242" y="350" font-family="Fira Mono" font-size="64"
-        text-anchor="end" {large_glyph_attrs}
-        transform="rotate(180 242 332)">{glyph}</text>
+  <!-- Top-left small suit glyph at (14, 50), 20 × 20.
+       `suit_path_d` is authored in a 32-unit box, so scale 0.625
+       lands the visible glyph at 20 px. -->
+  <g transform="translate(14 50) scale(0.625)">
+    <path d="{path_d}" {small_glyph_attrs}/>
+  </g>
+
+  <!-- Bottom-right large suit glyph, 64 × 64, rotated 180° so it
+       reads upside-down (the convention for inverted-corner
+       indicators). The transform pipeline lands the glyph's visible
+       bottom-right at (242, 350) and visible top-left at (178, 286). -->
+  <g transform="translate(242 350) rotate(180) scale(2)">
+    <path d="{path_d}" {large_glyph_attrs}/>
+  </g>
 </svg>"##
     )
 }

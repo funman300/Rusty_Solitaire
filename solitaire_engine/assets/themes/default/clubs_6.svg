@@ -2,15 +2,24 @@
   <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
         fill="#1a1a1a" stroke="#d0d0d0" stroke-width="2"/>
 
-  <!-- Top-left rank + small suit glyph. -->
+  <!-- Top-left rank in JetBrains-Mono-styled FiraMono (rank digits
+       and letters render correctly in FiraMono; only the suit glyphs
+       needed to escape to paths). -->
   <text x="14" y="44" font-family="Fira Mono" font-size="36" font-weight="700"
         fill="#d0d0d0">6</text>
-  <text x="14" y="68" font-family="Fira Mono" font-size="20"
-        fill="none" stroke="#d0d0d0" stroke-width="3">&#x2663;</text>
 
-  <!-- Bottom-right large suit glyph, rotated 180° about its own
-       baseline anchor so the glyph reads upside-down. -->
-  <text x="242" y="350" font-family="Fira Mono" font-size="64"
-        text-anchor="end" fill="none" stroke="#d0d0d0" stroke-width="3"
-        transform="rotate(180 242 332)">&#x2663;</text>
+  <!-- Top-left small suit glyph at (14, 50), 20 × 20.
+       `suit_path_d` is authored in a 32-unit box, so scale 0.625
+       lands the visible glyph at 20 px. -->
+  <g transform="translate(14 50) scale(0.625)">
+    <path d="M16,4 C 13,4 10,7 10,10 C 10,12 11,13 12,14 C 9,14 4,17 4,21 C 4,24 7,27 10,27 C 12,27 14,26 14,24 L 13,30 L 19,30 L 18,24 C 18,26 20,27 22,27 C 25,27 28,24 28,21 C 28,17 23,14 20,14 C 21,13 22,12 22,10 C 22,7 19,4 16,4 Z" fill="none" stroke="#d0d0d0" stroke-width="3"/>
+  </g>
+
+  <!-- Bottom-right large suit glyph, 64 × 64, rotated 180° so it
+       reads upside-down (the convention for inverted-corner
+       indicators). The transform pipeline lands the glyph's visible
+       bottom-right at (242, 350) and visible top-left at (178, 286). -->
+  <g transform="translate(242 350) rotate(180) scale(2)">
+    <path d="M16,4 C 13,4 10,7 10,10 C 10,12 11,13 12,14 C 9,14 4,17 4,21 C 4,24 7,27 10,27 C 12,27 14,26 14,24 L 13,30 L 19,30 L 18,24 C 18,26 20,27 22,27 C 25,27 28,24 28,21 C 28,17 23,14 20,14 C 21,13 22,12 22,10 C 22,7 19,4 16,4 Z" fill="none" stroke="#d0d0d0" stroke-width="3"/>
+  </g>
 </svg>
