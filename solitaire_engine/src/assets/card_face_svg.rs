@@ -103,6 +103,39 @@ pub fn suit_filename(suit: Suit) -> &'static str {
     }
 }
 
+/// Lowercase full-word suit token used by the bundled-default theme's
+/// SVG filenames (`<suit>_<rank>.svg` — e.g. `spades_ace.svg`). Mirrors
+/// `solitaire_engine::theme::CardKey::manifest_name`.
+pub fn theme_suit_token(suit: Suit) -> &'static str {
+    match suit {
+        Suit::Clubs => "clubs",
+        Suit::Diamonds => "diamonds",
+        Suit::Hearts => "hearts",
+        Suit::Spades => "spades",
+    }
+}
+
+/// Lowercase full-word rank token used by the bundled-default theme's
+/// SVG filenames (`ace`, `2`..`10`, `jack`, `queen`, `king`). Mirrors
+/// `solitaire_engine::theme::CardKey::manifest_name`.
+pub fn theme_rank_token(rank: Rank) -> &'static str {
+    match rank {
+        Rank::Ace => "ace",
+        Rank::Two => "2",
+        Rank::Three => "3",
+        Rank::Four => "4",
+        Rank::Five => "5",
+        Rank::Six => "6",
+        Rank::Seven => "7",
+        Rank::Eight => "8",
+        Rank::Nine => "9",
+        Rank::Ten => "10",
+        Rank::Jack => "jack",
+        Rank::Queen => "queen",
+        Rank::King => "king",
+    }
+}
+
 #[derive(Copy, Clone)]
 enum GlyphPaint {
     Filled,

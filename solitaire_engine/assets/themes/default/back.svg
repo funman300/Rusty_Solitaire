@@ -1,40 +1,21 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Default theme card back — Solitaire Quest's midnight-purple palette.
-  Original work, MIT-licensed alongside the rest of this project.
-  Aspect 2:3 to match the face SVGs from hayeah/playing-cards-assets.
--->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300" width="200" height="300">
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
   <defs>
-    <pattern id="diamonds" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
-      <rect x="0" y="0" width="20" height="20" fill="#1A0F2E"/>
-      <path d="M 10 0 L 20 10 L 10 20 L 0 10 Z"
-            fill="none" stroke="#3A2580" stroke-width="1"/>
-      <circle cx="10" cy="10" r="1" fill="#FFD23F"/>
+    <pattern id="scanlines" x="0" y="0" width="2" height="4" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="2" height="2" fill="#1a1a1a"/>
     </pattern>
   </defs>
 
-  <!-- Outer card surface with a midnight-purple base + diamond lattice -->
-  <rect x="0" y="0" width="200" height="300" rx="12" ry="12" fill="#1A0F2E"/>
-  <rect x="6" y="6" width="188" height="288" rx="9" ry="9" fill="url(#diamonds)"/>
+  <!-- Background fill, then scanlines on top (the scanlines stay
+       darker than BACK_BG so the "off" rows show through). -->
+  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
+        fill="#151515" stroke="#353535" stroke-width="2"/>
+  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
+        fill="url(#scanlines)"/>
 
-  <!-- Bordered inset so the lattice has a clear edge -->
-  <rect x="14" y="14" width="172" height="272" rx="6" ry="6"
-        fill="none" stroke="#FFD23F" stroke-width="1.5" opacity="0.85"/>
+  <!-- Top-left accent badge (the only theme-varying element). -->
+  <rect x="12" y="12" width="24" height="32" fill="#6fc2ef"/>
 
-  <!-- Centred diamond medallion -->
-  <g transform="translate(100 150)">
-    <path d="M 0 -42 L 42 0 L 0 42 L -42 0 Z" fill="#2D1B69" stroke="#FFD23F" stroke-width="2"/>
-    <path d="M 0 -22 L 22 0 L 0 22 L -22 0 Z" fill="#3A2580" stroke="#FFD23F" stroke-width="1"/>
-    <circle cx="0" cy="0" r="4" fill="#FFD23F"/>
-  </g>
-
-  <!-- Corner pips picking up the magenta secondary accent so the back
-       still reads as part of the design system at a glance -->
-  <g fill="#FF6B9D">
-    <circle cx="22" cy="22" r="2.5"/>
-    <circle cx="178" cy="22" r="2.5"/>
-    <circle cx="22" cy="278" r="2.5"/>
-    <circle cx="178" cy="278" r="2.5"/>
-  </g>
+  <!-- Bottom-right "▌RS" monogram in JetBrains-Mono-styled FiraMono. -->
+  <text x="244" y="368" font-family="Fira Mono" font-size="24"
+        fill="#505050" text-anchor="end">&#x258C;RS</text>
 </svg>
