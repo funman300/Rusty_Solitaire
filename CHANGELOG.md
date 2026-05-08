@@ -6,8 +6,134 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.1 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.2 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.2] — 2026-05-08
+
+Patch release for the post-v0.21.1 polish work. Three through-
+lines: **accessibility extensions** (reduce-motion gating for
+splash animations, full HC chrome rollout across 8 surfaces),
+**replay polish** (floating MOVE chip above the focused card
+during playback), and the **first real consumer of
+`ToastVariant::Error`** (invalid-move feedback as the third leg
+of the existing audio + visual rejection-feedback stool).
+
+The accessibility extensions close two threads v0.21.1 left
+explicitly open: reduce-motion was previously gated only on card
+slide_secs, and HC borders had `BORDER_SUBTLE_HC` defined but no
+consumers. v0.21.2 finishes both — non-essential motion in the
+splash boot screen now respects reduce-motion, and every static-
+border chrome surface (modal scaffold, tooltip, help / stats /
+home / settings panels) boosts to the HC variant under high-
+contrast mode. Dynamic-paint sites (HUD action buttons, modal
+buttons, radial menu rim) intentionally stay un-tagged because
+their existing paint cycles would race the HC system; they
+remain open for a future iteration that needs a different shape.
+
+### Added
+
+- **`sync_pile_marker_visibility` system precursor was v0.21.1's;
+  this cycle adds**: `update_high_contrast_borders` system in
+  `settings_plugin` (`c9af1ea`). Walks all entities tagged with
+  `HighContrastBorder` each Update tick, swaps `BorderColor` to
+  `BORDER_SUBTLE_HC` when high-contrast mode is on. Compares
+  current colour and only mutates when different so Bevy's
+  change-detection doesn't trigger repaints every frame. New
+  `HighContrastBorder { default_color: Color }` component carries
+  the off-state colour at each tagged site so the system can
+  revert correctly.
+- **HC chrome rollout — 8 tagged surfaces** (`c9af1ea` modal
+  scaffold; `d87761d` tooltip + onboarding key chips + help
+  panel key chips + stats panel cells; `ec804d5` home Level/XP/
+  Score row + home mode-selector buttons + home mode-hotkey
+  chips + 4 settings panel surfaces). Each tagging is one line
+  on the spawn tuple. The marker-component architecture pays
+  back proportionally to the number of consumers — the per-
+  commit cost dropped from ~75 lines (foundation + first
+  surface) to ~13 lines (4 surfaces) to ~9 lines (7 surfaces).
+- **Floating MOVE chip during replay** (`2fb2d63`). New
+  `ReplayFloatingProgressChip` marker on a `Text2d` entity
+  rendered in 2D world space above the destination pile of the
+  most-recently-applied move. Sibling of the banner overlay (not
+  a child) because it lives in world-space coordinates, not the
+  UI tree. Lifecycle matches the banner: `spawn_overlay` spawns
+  the chip alongside the banner when a replay starts;
+  `react_to_state_change` despawns it when the replay ends.
+  World-space placement (rather than UI-space + camera projection)
+  uses the same `LayoutResource` pile coordinates that drive
+  every other piece of pile geometry — stays correctly positioned
+  through window resizes for free. Hidden when cursor=0 (no
+  moves applied yet) or when the last applied move was a
+  `StockClick` (no destination pile to follow).
+- **`handle_move_rejected_toast` system + first real
+  `ToastVariant::Error` consumer** (`68d50b5`). When
+  `MoveRejectedEvent` fires (illegal placement attempt), spawns
+  a 2-second pink-bordered "Invalid move" toast. Joins the
+  existing `card_invalid.wav` (audio cue) and destination-pile
+  shake (visual cue) as the accessibility-focused readable text
+  channel — covers deaf players (no audio reliance) and
+  reduce-motion players (no shake reliance) with a persistent
+  ~2 s text cue. Drops the `#[allow(dead_code)]` from
+  `ToastVariant::Error` and updates its doc to point at the new
+  consumer.
+
+### Changed
+
+- **Splash scanline overlay skipped under reduce-motion**
+  (`ed152e2`). `spawn_splash` reads `Settings::reduce_motion_mode`
+  and skips the scanline texture / overlay node entirely when
+  on. Without the scanlines the boot screen still reads as
+  terminal-themed (foreground content, borders, palette swatches
+  unchanged); the scanlines are decorative.
+- **Splash cursor pulse held under reduce-motion** (`ed152e2`).
+  `pulse_splash_cursor` reads `Settings::reduce_motion_mode` and
+  skips the per-frame sine-pulse multiplier when on — the cursor
+  still fades in / out with the global splash alpha (essential
+  timing) but doesn't blink. Spec calls out non-essential motion
+  as the reduce-motion target; the global fade is essential
+  (otherwise the splash would hard-cut on/off, which is
+  jarring), and the cursor blink is decorative.
+- **`AnimationPlugin::build` registers
+  `MoveRejectedEvent`** (`68d50b5`). Bevy's `add_message` is
+  idempotent, so the duplicate registration with
+  `feedback_anim_plugin` (which already registered the message)
+  coexists cleanly. Required for the new
+  `handle_move_rejected_toast` system to run under
+  MinimalPlugins (tests).
+
+### Documentation
+
+- `docs/ui-mockups/design-system.md` and `SESSION_HANDOFF.md`
+  refreshed in lockstep with the rollouts. The handoff's
+  Resume-prompt menu trimmed twice this cycle as Options A and F
+  closed in v0.21.1, then this commit cycle's accessibility
+  extensions implicitly closed the "future scope" footnotes
+  v0.21.1 left on F's documentation.
+
+### Stats
+
+- **1195 passing tests / 0 failing** across the workspace
+  (net +3 from v0.21.1's 1192 baseline). New tests added by
+  this cycle:
+  - `splash_skips_scanline_overlay_under_reduce_motion`
+    (`ed152e2`) pins the reduce-motion gate on the splash
+    scanline overlay. Discovered an asset-fixture bootstrapping
+    detail along the way: under `MinimalPlugins`,
+    `Assets<Image>` isn't auto-inserted; the test had to add
+    `bevy::asset::AssetPlugin::default()` and
+    `init_asset::<bevy::image::Image>()`. Pattern flagged for
+    future asset-using tests.
+  - `floating_chip_spawns_and_despawns_with_overlay`
+    (`2fb2d63`) pins the floating MOVE chip's lifecycle:
+    absent on Inactive, exactly one on Playing, absent again
+    on return to Inactive.
+  - `move_rejected_event_spawns_error_toast` (`68d50b5`) pins
+    the new toast wiring: firing a `MoveRejectedEvent` spawns
+    exactly one `ToastOverlay` on the next tick.
+- Zero clippy warnings under `cargo clippy --workspace
+  --all-targets -- -D warnings`.
+- `cargo test --workspace` clean.
 
 ## [0.21.1] — 2026-05-08
 
