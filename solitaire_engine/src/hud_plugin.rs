@@ -571,7 +571,13 @@ fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
 fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Commands) {
     let font = TextFont {
         font: font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
-        font_size: 16.0,
+        // TYPE_BODY (14.0) — was a hardcoded `16.0` until the
+        // top-bar-overlap fix. Aligns with the rest of `hud_plugin`'s
+        // text (which already routes through the `TYPE_*` tokens) and
+        // reclaims horizontal space so the action button row doesn't
+        // collide with the left-anchored HUD column at narrow window
+        // widths.
+        font_size: TYPE_BODY,
         ..default()
     };
     commands
@@ -695,7 +701,12 @@ fn spawn_action_button<M: Component>(
             order,
         },
         Node {
-            padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_2),
+            // Horizontal padding stepped down from VAL_SPACE_3 to
+            // VAL_SPACE_2 to reclaim ~96px across the 6-button row at
+            // narrow window widths (see top-bar-overlap fix in the
+            // companion commit). Vertical padding stays at VAL_SPACE_2
+            // so button height tracks the rest of the chrome band.
+            padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_2),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),
