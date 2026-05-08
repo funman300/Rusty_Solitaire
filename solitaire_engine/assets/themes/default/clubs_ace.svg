@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
-  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
-        fill="#1a1a1a" stroke="#e8e8e8" stroke-width="2"/>
+  <rect x="0" y="0" width="256" height="384" rx="16" ry="16"
+        fill="#1a1a1a"/>
 
   <!-- Top-left rank in JetBrains-Mono-styled FiraMono (rank digits
        and letters render correctly in FiraMono; only the suit glyphs

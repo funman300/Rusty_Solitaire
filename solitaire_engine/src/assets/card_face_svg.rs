@@ -213,15 +213,21 @@ pub fn face_svg(rank: Rank, suit: Suit) -> String {
     let large_glyph_attrs = glyph_paint_attrs(colour, paint);
 
     // Numbers come from `design-system.md` § Game Cards, scaled 2×:
-    //   border:        1 px  → 2 px  stroke-width
     //   corner radius: 8 px  → 16 px rx/ry
     //   rank font:    18 px  → 36 px
     //   small glyph:  10 px  → 20 px (suit_path_d is authored at 32 →
     //                                 scale 0.625 to land at 20)
     //   large glyph:  32 px  → 64 px (scale 2.0)
     //
-    // Inset the border by 1 px so the 2 px stroke renders fully
-    // inside the 256 × 384 pixmap rather than getting clipped.
+    // No stroke on the card body. The earlier 1 px suit-coloured
+    // border created anti-aliasing artifacts at the rounded corners
+    // where the colored stroke faded through gray pixels into the
+    // dark play surface beneath — a visible "gray sliver" at each
+    // rounded corner that read as a rendering bug. Without the
+    // stroke, the card shape is defined purely by the body fill
+    // against the play surface; the 5-unit brightness gap between
+    // `#1a1a1a` (card body) and `#151515` (play surface) is small
+    // enough that anti-aliasing is barely perceptible.
     //
     // Suit glyphs are rendered as inline SVG paths (not `<text>`)
     // because the bundled `FiraMono` font doesn't carry usable
@@ -236,8 +242,8 @@ pub fn face_svg(rank: Rank, suit: Suit) -> String {
     // `design-system.md` § Game Cards for the spec deviation.
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
-  <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
-        fill="{BG_FACE}" stroke="{colour}" stroke-width="2"/>
+  <rect x="0" y="0" width="256" height="384" rx="16" ry="16"
+        fill="{BG_FACE}"/>
 
   <!-- Top-left rank in JetBrains-Mono-styled FiraMono (rank digits
        and letters render correctly in FiraMono; only the suit glyphs

@@ -222,7 +222,7 @@ Selection highlights use a **2px inset stroke** in `#a54242` following the host 
 
 Flat face design.
 - Background: `#1a1a1a`
-- Border: 1px solid in suit color (pink for hearts/diamonds, foreground gray for spades/clubs)
+- Border: none. The card shape is defined by the body fill alone against the play surface. The earlier 1px suit-coloured border was removed because it produced visible anti-aliasing artifacts at the rounded corners (a "gray sliver" where the colored stroke faded through gray pixels into the dark play surface). The 5-unit brightness gap between `#1a1a1a` body and `#151515` surface is enough to read as a card edge without an explicit stroke.
 - Top-left: rank in JetBrains Mono Bold 18px + small suit glyph (10px)
 - Bottom-right: large suit glyph (32px), upright (same orientation as the top-left small glyph — single-orientation digital play does not benefit from the traditional 180° inverted-corner indicator)
 - Corner radius: 8px
