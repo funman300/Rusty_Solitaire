@@ -30,18 +30,14 @@ pub const TARGET: UVec2 = UVec2::new(256, 384);
 
 const BG_FACE: &str = "#1a1a1a"; // BG_ELEVATED — face background
 
-// Four-colour deck: each suit picks up its own base16-eighties
-// accent so a player scanning the table can distinguish the suit
-// by hue alone. Faster recognition than the 2-colour traditional
-// red/black scheme; common in poker-room decks and online card
-// games. The outlined-glyph differentiation (♦ ♣ outlined, ♥ ♠
-// filled) is preserved on top of the colour split as the
-// always-on colour-blind fallback per `design-system.md`
-// §Accessibility.
-const SUIT_HEART: &str = "#fb9fb1"; // pink (base08 / RED_SUIT_COLOUR)
-const SUIT_DIAMOND: &str = "#ddb26f"; // gold (base09 / STATE_WARNING)
-const SUIT_CLUB: &str = "#acc267"; // lime (base0A / STATE_SUCCESS)
-const SUIT_SPADE: &str = "#d0d0d0"; // foreground gray (base05 / TEXT_PRIMARY)
+// 2-colour traditional pairing — hearts + diamonds share a
+// saturated red, clubs + spades share a near-white. Mirrors the
+// "Microsoft Solitaire on dark mode" feel of a real card deck.
+// Brief 4-colour-deck experiment between v0.21.0 and this commit
+// reverted; the always-on filled-vs-outlined glyph differentiation
+// (♦ ♣ outlined, ♥ ♠ filled) carries the always-on CBM fallback.
+const SUIT_RED: &str = "#e35353"; // matches `RED_SUIT_COLOUR`
+const SUIT_DARK: &str = "#e8e8e8"; // matches `BLACK_SUIT_COLOUR`
 
 const BACK_BG: &str = "#151515";
 const BACK_SCANLINE: &str = "#1a1a1a";
@@ -156,10 +152,10 @@ enum GlyphPaint {
 
 fn suit_paint(suit: Suit) -> (&'static str, GlyphPaint) {
     match suit {
-        Suit::Hearts => (SUIT_HEART, GlyphPaint::Filled),
-        Suit::Diamonds => (SUIT_DIAMOND, GlyphPaint::Outlined),
-        Suit::Spades => (SUIT_SPADE, GlyphPaint::Filled),
-        Suit::Clubs => (SUIT_CLUB, GlyphPaint::Outlined),
+        Suit::Hearts => (SUIT_RED, GlyphPaint::Filled),
+        Suit::Diamonds => (SUIT_RED, GlyphPaint::Outlined),
+        Suit::Spades => (SUIT_DARK, GlyphPaint::Filled),
+        Suit::Clubs => (SUIT_DARK, GlyphPaint::Outlined),
     }
 }
 

@@ -63,39 +63,33 @@ const FONT_SIZE_FRAC: f32 = 0.28;
 
 /// Card-face background — Terminal `#1a1a1a` (BG_ELEVATED).
 pub const CARD_FACE_COLOUR: Color = Color::srgb(0.102, 0.102, 0.102);
-/// Suit colour for hearts — Terminal `#fb9fb1` (suit-pink). Per
-/// the 4-colour deck convention, hearts and diamonds no longer
-/// share a hue: hearts stay pink (the most strongly "red" of the
-/// four base16 accents), diamonds pick up gold so a player
-/// scanning the table can distinguish the suit by colour alone.
-/// Kept as `RED_SUIT_COLOUR` for back-compat; semantically this
-/// is now "the heart suit colour".
-pub const RED_SUIT_COLOUR: Color = Color::srgb(0.984, 0.624, 0.694);
-/// High-contrast variant of [`RED_SUIT_COLOUR`] — `#ff8aa0`. Lifted
-/// chroma + luminance for the Settings → Accessibility → High-
-/// contrast mode toggle. Spec at `design-system.md` §Accessibility
-/// (#2): suit-red boosts from `#fb9fb1` to `#ff8aa0` so red suits
-/// remain unambiguously distinguishable from foreground gray on
-/// low-quality displays. Independent of `RED_SUIT_COLOUR_CBM`
+/// Suit colour for hearts + diamonds — saturated red `#e35353`.
+/// 2-colour traditional pairing (the "Microsoft Solitaire on dark
+/// mode" feel) replacing the brief 4-colour-deck experiment that
+/// shipped between v0.21.0 and this commit. Brighter and more
+/// saturated than the v0.21.0 pink `#fb9fb1` so the cards read as
+/// a "real solitaire deck" rather than a Terminal-pastel theme.
+/// Visually distinct from `ACCENT_PRIMARY` (`#a54242` brick red,
+/// darker) so chrome and suit don't read as the same hue.
+pub const RED_SUIT_COLOUR: Color = Color::srgb(0.890, 0.325, 0.325);
+/// High-contrast variant of [`RED_SUIT_COLOUR`] — `#ff6868`. Lifted
+/// luminance for the Settings → Accessibility → High-contrast mode
+/// toggle. Pre-2-colour-revert this was `#ff8aa0` (pink-salmon)
+/// matching the v0.21.0 pink default; rebumped to a brighter red
+/// so it reads as "more chromatic" than the new saturated default,
+/// not "less saturated." Independent of `RED_SUIT_COLOUR_CBM`
 /// (lime) — high-contrast is *additive* over the default colour
 /// palette; CBM is a *replacement* of red with a hue-distinct
 /// alternative. The two modes can stack; CBM wins when both are on
 /// because the CBM lime is itself a high-contrast colour.
-pub const RED_SUIT_COLOUR_HC: Color = Color::srgb(1.000, 0.541, 0.627);
-/// Suit colour for diamonds — Terminal `#ddb26f` (gold, base09).
-/// In the 4-colour deck split, diamonds break away from sharing
-/// the "red" hue with hearts and pick up gold so the two former
-/// red suits are visually distinguishable.
-pub const DIAMOND_SUIT_COLOUR: Color = Color::srgb(0.867, 0.698, 0.435);
-/// Suit colour for clubs — Terminal `#acc267` (lime, base0A).
-/// In the 4-colour deck split, clubs break away from sharing the
-/// "black" hue with spades and pick up lime so the two former
-/// black suits are visually distinguishable.
-pub const CLUB_SUIT_COLOUR: Color = Color::srgb(0.675, 0.761, 0.404);
-/// Suit colour for spades — Terminal `#d0d0d0` (TEXT_PRIMARY).
-/// Kept as `BLACK_SUIT_COLOUR` for back-compat; semantically this
-/// is now "the spade suit colour" in the 4-colour deck split.
-pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.816, 0.816, 0.816);
+pub const RED_SUIT_COLOUR_HC: Color = Color::srgb(1.000, 0.408, 0.408);
+/// Suit colour for spades + clubs — near-white `#e8e8e8`. Brighter
+/// than `TEXT_PRIMARY` (`#d0d0d0`, foreground gray) so the
+/// "black suit" reads as a distinct, chromatic-neutral counterpart
+/// to the new saturated red, not as "the same gray as body text."
+/// `TEXT_PRIMARY_HC` (`#f5f5f5`) is still brighter for the
+/// high-contrast boost path.
+pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.910, 0.910, 0.910);
 
 /// Pre-loaded [`Handle<Image>`]s for card face and back PNG textures.
 ///
@@ -831,58 +825,38 @@ fn label_for(card: &Card) -> String {
 
 /// Suit colour for the rank/suit overlay rendered atop the constant
 /// fallback sprite (only fires under `MinimalPlugins` — production
-/// renders the suit glyph baked into the PNG). The 4-colour deck
-/// split assigns each suit a distinct base16-eighties accent so
-/// players can identify the suit by hue alone:
+/// renders the suit glyph baked into the PNG). 2-colour traditional
+/// pairing — hearts + diamonds share the saturated red, clubs +
+/// spades share the near-white. Two accessibility flags compose:
 ///
-/// | Suit     | Default colour          | CBM swap      | HC boost         |
-/// | -------- | ----------------------- | ------------- | ---------------- |
-/// | Hearts   | `RED_SUIT_COLOUR` pink  | lime          | `RED_SUIT_COLOUR_HC` |
-/// | Diamonds | `DIAMOND_SUIT_COLOUR` gold | (no swap — already non-red-family) | (no boost — already mid-luminance) |
-/// | Clubs    | `CLUB_SUIT_COLOUR` lime | (no swap)     | (no boost)       |
-/// | Spades   | `BLACK_SUIT_COLOUR` gray | (no swap)    | `TEXT_PRIMARY_HC` |
-///
-/// Two independent accessibility flags compose:
-///
-/// - `color_blind`: hearts swap from pink to `RED_SUIT_COLOUR_CBM`
-///   (lime). The other three suits are already hue-distinct from
-///   pink so they don't change. Note that CBM lime collides with
-///   the club suit colour — players running CBM on the 4-colour
-///   deck rely on the always-on filled-vs-outlined differentiation
-///   (♥ filled, ♣ outlined) to distinguish hearts and clubs.
-/// - `high_contrast`: hearts boost to `RED_SUIT_COLOUR_HC`
-///   (`#ff8aa0`); spades boost from `#d0d0d0` to `#f5f5f5`
-///   (`TEXT_PRIMARY_HC`). Diamonds (gold) and clubs (lime) are
-///   already mid-luminance accents so no HC boost is defined for
-///   them.
+/// - `color_blind`: red-suit cards swap to `RED_SUIT_COLOUR_CBM`
+///   (lime) — the "Settings toggle swaps red→lime" half of the
+///   design system's colour-blind support. CBM is a hue-replacement
+///   for red, so HC has no further effect on red when CBM is on
+///   (the lime is itself a high-luminance colour).
+/// - `high_contrast`: when CBM is off, red suits boost to
+///   `RED_SUIT_COLOUR_HC` (`#ff6868`); black suits boost from
+///   `#e8e8e8` (near-white) to `#f5f5f5` (`TEXT_PRIMARY_HC`).
 ///
 /// The other half of CBM support (always-on filled-vs-outlined
 /// glyph differentiation for ♥♠ vs ♦♣) is baked into the PNG art
 /// and has no constant-fallback equivalent.
 fn text_colour(card: &Card, color_blind: bool, high_contrast: bool) -> Color {
-    match card.suit {
-        Suit::Hearts => {
-            if color_blind {
-                // CBM lime replaces the pink for red-deficient
-                // readers; the always-on filled-vs-outlined split
-                // keeps hearts visually distinct from clubs (which
-                // are also lime in the 4-colour scheme).
-                RED_SUIT_COLOUR_CBM
-            } else if high_contrast {
-                RED_SUIT_COLOUR_HC
-            } else {
-                RED_SUIT_COLOUR
-            }
+    if card.suit.is_red() {
+        if color_blind {
+            // CBM lime wins — the colour-blind swap replaces the
+            // red hue entirely, and the lime is already high-
+            // luminance, so an HC boost on top has nothing to do.
+            RED_SUIT_COLOUR_CBM
+        } else if high_contrast {
+            RED_SUIT_COLOUR_HC
+        } else {
+            RED_SUIT_COLOUR
         }
-        Suit::Diamonds => DIAMOND_SUIT_COLOUR,
-        Suit::Clubs => CLUB_SUIT_COLOUR,
-        Suit::Spades => {
-            if high_contrast {
-                TEXT_PRIMARY_HC
-            } else {
-                BLACK_SUIT_COLOUR
-            }
-        }
+    } else if high_contrast {
+        TEXT_PRIMARY_HC
+    } else {
+        BLACK_SUIT_COLOUR
     }
 }
 
@@ -1823,41 +1797,19 @@ mod tests {
     }
 
     #[test]
-    fn text_colour_4_colour_deck_assigns_each_suit_its_own_hue() {
-        // Pre-4-colour-deck this was two tests asserting hearts +
-        // diamonds shared `RED_SUIT_COLOUR` and clubs + spades
-        // shared `BLACK_SUIT_COLOUR`. The 4-colour split breaks
-        // both pairings: hearts pink, diamonds gold, clubs lime,
-        // spades gray. All four colours must be distinct so a
-        // player scanning the table can identify the suit by hue
-        // alone.
+    fn text_colour_is_red_for_hearts_and_diamonds() {
         let h = Card { id: 0, suit: Suit::Hearts, rank: Rank::Ace, face_up: true };
         let d = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Ace, face_up: true };
+        assert_eq!(text_colour(&h, false, false), RED_SUIT_COLOUR);
+        assert_eq!(text_colour(&d, false, false), RED_SUIT_COLOUR);
+    }
+
+    #[test]
+    fn text_colour_is_near_white_for_clubs_and_spades() {
         let c = Card { id: 0, suit: Suit::Clubs, rank: Rank::Ace, face_up: true };
         let s = Card { id: 0, suit: Suit::Spades, rank: Rank::Ace, face_up: true };
-
-        assert_eq!(text_colour(&h, false, false), RED_SUIT_COLOUR);
-        assert_eq!(text_colour(&d, false, false), DIAMOND_SUIT_COLOUR);
-        assert_eq!(text_colour(&c, false, false), CLUB_SUIT_COLOUR);
+        assert_eq!(text_colour(&c, false, false), BLACK_SUIT_COLOUR);
         assert_eq!(text_colour(&s, false, false), BLACK_SUIT_COLOUR);
-
-        // All four hues must be pairwise distinct — the visual
-        // identification gain of a 4-colour deck depends on hue
-        // separation, so this is the load-bearing invariant.
-        let colours = [
-            text_colour(&h, false, false),
-            text_colour(&d, false, false),
-            text_colour(&c, false, false),
-            text_colour(&s, false, false),
-        ];
-        for i in 0..colours.len() {
-            for j in (i + 1)..colours.len() {
-                assert_ne!(
-                    colours[i], colours[j],
-                    "4-colour deck requires every suit to have a distinct colour",
-                );
-            }
-        }
     }
 
     #[test]
@@ -2149,35 +2101,27 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn text_colour_color_blind_mode_swaps_hearts_to_lime() {
-        // Pre-4-colour-deck this test asserted both red suits
-        // (hearts + diamonds) swapped to lime under CBM. With
-        // hearts the only "red-family" suit now, CBM only
-        // affects hearts; diamonds is gold and stays gold.
-        let hearts = Card { id: 0, suit: Suit::Hearts, rank: Rank::Queen, face_up: true };
-        let cbm_colour = text_colour(&hearts, true, false);
+    fn text_colour_color_blind_mode_swaps_red_suits_to_lime() {
+        let red_card = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Queen, face_up: true };
+        let cbm_colour = text_colour(&red_card, true, false);
         assert_eq!(
             cbm_colour, RED_SUIT_COLOUR_CBM,
-            "color-blind mode must replace the heart suit colour with the CBM lime",
+            "color-blind mode must replace the red suit colour with the CBM lime",
         );
         assert_ne!(
             cbm_colour, RED_SUIT_COLOUR,
-            "CBM lime must be visibly distinct from the default heart suit colour",
+            "CBM lime must be visibly distinct from the default red suit colour",
         );
     }
 
     #[test]
-    fn text_colour_color_blind_mode_does_not_change_non_heart_suits() {
-        // CBM only affects hearts in the 4-colour deck. Diamonds
-        // (gold), clubs (lime), and spades (gray) are already
-        // hue-distinct from the original heart pink and stay
-        // unchanged.
-        let d = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Jack, face_up: true };
-        let c = Card { id: 0, suit: Suit::Clubs, rank: Rank::Jack, face_up: true };
-        let s = Card { id: 0, suit: Suit::Spades, rank: Rank::Jack, face_up: true };
-        assert_eq!(text_colour(&d, true, false), DIAMOND_SUIT_COLOUR);
-        assert_eq!(text_colour(&c, true, false), CLUB_SUIT_COLOUR);
-        assert_eq!(text_colour(&s, true, false), BLACK_SUIT_COLOUR);
+    fn text_colour_color_blind_mode_does_not_change_dark_suits() {
+        let black_card = Card { id: 0, suit: Suit::Clubs, rank: Rank::Jack, face_up: true };
+        assert_eq!(
+            text_colour(&black_card, true, false),
+            BLACK_SUIT_COLOUR,
+            "color-blind mode must not alter dark-suit text colour",
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2217,46 +2161,29 @@ mod tests {
     }
 
     #[test]
-    fn text_colour_color_blind_wins_over_high_contrast_on_hearts() {
-        // When both modes are enabled on hearts, CBM lime wins over
-        // HC red because the CBM lime is itself a high-luminance
-        // accent and the HC boost would pick a different hue,
-        // defeating the purpose of the colour-blind swap.
-        let hearts = Card { id: 0, suit: Suit::Hearts, rank: Rank::Ace, face_up: true };
+    fn text_colour_color_blind_wins_over_high_contrast_on_red_suits() {
+        // When both modes are enabled, red→lime (CBM) wins because
+        // the CBM lime is itself a high-luminance accent and the HC
+        // boost would pick a different hue, defeating the purpose of
+        // the colour-blind swap.
+        let red_card = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Ace, face_up: true };
         assert_eq!(
-            text_colour(&hearts, true, true),
+            text_colour(&red_card, true, true),
             RED_SUIT_COLOUR_CBM,
             "CBM lime must win over HC red when both modes are on",
         );
     }
 
     #[test]
-    fn text_colour_high_contrast_alone_boosts_spades_under_cbm() {
-        // CBM doesn't touch spades, so HC remains the only source
-        // of variation for the spade row when both are on. (Pre-
-        // 4-colour-deck this test used Clubs; in the 4-colour
-        // scheme clubs is lime not gray, so the assertion shifted
-        // to the only suit that's still gray-family.)
-        let spades = Card { id: 0, suit: Suit::Spades, rank: Rank::King, face_up: true };
+    fn text_colour_high_contrast_alone_boosts_dark_suits_under_cbm() {
+        // CBM doesn't touch the dark suits, so HC remains the only
+        // source of variation for the dark row when both are on.
+        let black_card = Card { id: 0, suit: Suit::Clubs, rank: Rank::King, face_up: true };
         assert_eq!(
-            text_colour(&spades, true, true),
+            text_colour(&black_card, true, true),
             TEXT_PRIMARY_HC,
-            "with CBM + HC both on, spades still pick up the HC boost",
+            "with CBM + HC both on, dark suits still pick up the HC boost",
         );
-    }
-
-    #[test]
-    fn text_colour_diamonds_and_clubs_are_immune_to_accessibility_flags() {
-        // Diamonds (gold) and clubs (lime) are already mid-luminance
-        // hue-distinct accents, so neither CBM nor HC has a defined
-        // boost for them. Verify all four flag combinations leave
-        // them at their default suit colour.
-        let d = Card { id: 0, suit: Suit::Diamonds, rank: Rank::King, face_up: true };
-        let c = Card { id: 0, suit: Suit::Clubs, rank: Rank::King, face_up: true };
-        for (cbm, hc) in [(false, false), (false, true), (true, false), (true, true)] {
-            assert_eq!(text_colour(&d, cbm, hc), DIAMOND_SUIT_COLOUR);
-            assert_eq!(text_colour(&c, cbm, hc), CLUB_SUIT_COLOUR);
-        }
     }
 
     // -----------------------------------------------------------------------
