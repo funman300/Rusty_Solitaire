@@ -6,17 +6,89 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Two threads in flight: closing the v0.19.0 punch list (settings opt-out
-for the smart-default sizer, share-link discoverability, the last
-async-pull test flake) and a new performance / portability arc (F3
-diagnostics overlay landing first, then a working Android build
-target via `cargo apk`). The Android build is the load-bearing
-change — `solitaire_app` now compiles into both a desktop `bin` and
-an Android `cdylib` from the same source tree, so subsequent work
-can iterate on a phone or AVD without forking the codebase.
+No threads in flight. v0.20.0 cut on 2026-05-07; CHANGELOG accumulates
+the next cycle here.
+
+## [0.20.0] — 2026-05-07
+
+Two through-lines closed: a full **Android port** (build target,
+first 54 MB APK, JNI-free per-app persistence shim) and the
+**Terminal visual-identity port** that replaces the prior
+Premium-Solitaire palette across every UI surface. The Android
+arc opened in `fb8b2ac` (compile + APK), continued in `4b51e50`
+(`solitaire_data::data_dir` shim closing the CLAUDE.md §10
+`dirs::data_dir() = None` pitfall), and is functional end-to-end
+on a real device — though the runtime artwork is still the legacy
+white-card palette, and JNI ClipboardManager / keyring bridges
+remain stubbed (matching v0.19.0's documented fallback behaviour).
+The Terminal port lands as a top-down stack: the `ui_theme` token
+API in `0d477ac` is load-bearing, and the rest of the cycle is
+downstream applications (modal scaffold, gameplay-feedback,
+toasts, table / card chrome, splash cursor, hint-highlight
+pairing). The card faces and suit-pip palette are deliberately
+NOT migrated — those track PNG artwork that hasn't been
+regenerated yet, and swapping the fallback constants ahead of the
+artwork would mix two visual systems on any code path where
+image loading fails.
+
+The 24 Stitch-rendered mockups in `docs/ui-mockups/` are now
+in-tree (`fa7f98a`); future plugin work should diff against the
+matching mockup before touching pixels.
+
+Two threads from v0.19.0's punch list also closed in this cycle:
+the pull-failure test flake (`67c150b`), the Settings opt-out for
+the smart-default window sizer (`e1b8766`), and the share-link
+discoverability surfacing (`9b065e5`). The remaining v0.19.0
+candidate — the app-icon round — stays open.
 
 ### Added
 
+- **`ui_theme` Terminal design-token system** (`0d477ac`). Single
+  source of truth for the engine's visual identity:
+  base16-eighties palette (cyan primary CTA, lime/lavender/gold/
+  teal/pink semantic accents), 5-rung type scale, 7-rung 4-multiple
+  spacing scale, 3-step radius, 14-rung z-index hierarchy, full
+  motion budget, and four invariant-pinning unit tests. Every
+  downstream port commit in this cycle reads from this module —
+  swapping the palette is now a one-file edit, not a hunt across
+  ~50 plugin files. Card-shadow alphas pinned to 0 (Terminal
+  achieves depth via 1px borders + tonal layering, no
+  `box-shadow`); the rendering path is left intact so a future
+  palette can re-enable shadows without touching consumers.
+- **`ToastVariant` enum + Terminal toast styling** (`a137607`).
+  Toasts now follow `docs/ui-mockups/design-system.md`: opaque
+  `BG_ELEVATED` fill, 1px accent border keyed off
+  `Info` / `Warning` / `Error` / `Celebration` variants, 18px
+  monospaced caption (`TYPE_BODY_LG`), bottom-anchored. All ten
+  call sites pass their semantic variant: achievement / level-up
+  / XP / daily / weekly / challenge → Celebration (lavender);
+  goal-announcement / time-attack / settings volume / auto-complete
+  → Info (teal). Two regression tests pin variant→border mapping
+  to the design tokens and require all four borders to be visually
+  distinct. Queued and immediate toasts use slightly different
+  bottom anchors (6 % vs. 14 %) so a celebration toast spawned
+  alongside a queued info banner layers above it.
+- **Terminal cursor block on the splash overlay** (`cdcadda`).
+  The launch splash now renders the design system's signature
+  `▌` cyan (`ACCENT_PRIMARY`) glyph (96 px, hand-tuned literal)
+  above the wordmark, matching `docs/ui-mockups/splash-mobile.html`.
+  Cursor fades on the same per-frame alpha schedule as the title
+  and subtitle so the brand beat still dissolves as a single
+  layer. Did *not* pull in the mockup's full boot-loader treatment
+  (scanline overlay, ✓ check log, progress bar, ROOT@SOLITAIRE
+  prompt) — those are aesthetic features warranting their own
+  commit.
+- **Terminal design-system spec + 24-mockup library** (`fa7f98a`).
+  `docs/ui-mockups/design-system.md` (palette, type scale, spacing
+  scale, motion budget, component library, accessibility notes —
+  color-blind toggle, high-contrast mode, glyph differentiation,
+  canonical `"Terminal"` card-back theme) and 24 Stitch-rendered
+  mockups (HTML + PNG): 12 redesigned existing screens, 1 desktop
+  home variant, 2 onboarding steps, and 9 missing-plugin screens
+  (splash, challenge, time-attack, weekly-goals, leaderboard,
+  sync, level-up, replay, radial-menu). The spec the rest of this
+  cycle ports against; future plugin work diffs here before
+  touching pixels.
 - **Android build target — first working APK** (`fb8b2ac`).
   `cargo apk build -p solitaire_app --target x86_64-linux-android`
   now produces a 54 MB debug-signed APK at
@@ -84,8 +156,75 @@ can iterate on a phone or AVD without forking the codebase.
   dismisses the Win Summary modal. Three post-v0.18 entries
   that had drifted out of the cheat sheet are now listed.
 
+### Changed
+
+- **Gameplay-feedback colours route through Terminal state
+  tokens** (`ceec4fc`). Selection-highlight tints in
+  `selection_plugin` and the valid-drop marker tint in
+  `cursor_plugin` were hand-tuned RGB literals. Migrated to
+  semantic state tokens: keyboard-drag picking source →
+  `ACCENT_PRIMARY` (cyan focus); keyboard-drag lifted source →
+  `STATE_WARNING` (gold attention); destination → `STATE_SUCCESS`
+  (lime valid-move); `cursor_plugin::MARKER_VALID` →
+  `STATE_SUCCESS` at 0.55 α with a tracking test pinning its RGB
+  to the token. Three stale doc comments in `ui_modal` corrected
+  ("loud yellow CTA" / "magenta secondary accent" → cyan /
+  lavender to match the actual token values).
+- **`table_plugin` chrome migration to Terminal tokens** (`651f406`).
+  `marker_colour` promoted to module-level `pub const
+  PILE_MARKER_DEFAULT_COLOUR` so `cursor_plugin::MARKER_DEFAULT`
+  imports the const directly — replaces the prior
+  duplicated literal kept in sync only by doc comment with a
+  compile-enforced invariant. The empty-tableau "K" placeholder
+  text now uses `TEXT_PRIMARY` at 0.35 α; `HINT_PILE_HIGHLIGHT_COLOUR`
+  retuned from bright `srgb(1.0, 0.85, 0.1)` to the `STATE_WARNING`
+  token (`#ddb26f`) with a tracking test, and the existing "is
+  gold" character test loosened to fit the muted Terminal gold
+  while still rejecting non-warm colours.
+- **`card_plugin` chrome migration to Terminal tokens** (`d752870`).
+  Drag-elevation shadow now sources its colour from
+  `CARD_SHADOW_COLOR` + `CARD_SHADOW_ALPHA_DRAG` so the Terminal
+  "no box-shadow" policy disables the stack shadow in lockstep
+  with the per-card shadows. `RIGHT_CLICK_HIGHLIGHT_COLOUR`
+  retuned from raw green to `STATE_SUCCESS` at 0.6 α with a
+  tracking test. The duplicated `PILE_MARKER_DEFAULT_COLOUR`
+  const dropped — this plugin now imports the promoted const
+  from `table_plugin`. Stock recycle "↺" text moved from raw
+  white-at-0.7-α to `TEXT_PRIMARY.with_alpha(0.7)`. Card-face /
+  suit / card-back palette constants were intentionally NOT
+  migrated (the runtime path renders PNG artwork that's still on
+  the previous "white card" palette).
+- **Hint-source card tint matches the destination pile**
+  (`9891ae4`). `input_plugin`'s hint-source card tint moved from
+  raw bright-yellow `srgba(1.0, 1.0, 0.4, 1.0)` to `STATE_WARNING`,
+  so the source card and the destination pile (which already uses
+  `STATE_WARNING` via `HINT_PILE_HIGHLIGHT_COLOUR`) wear the same
+  attention colour as a coherent pair.
+
 ### Fixed
 
+- **`solitaire_data::data_dir` shim closes the Android persistence
+  gap** (`4b51e50`). `dirs::data_dir()` returns `None` on Android,
+  which silently disabled every persistence path (settings, stats,
+  achievements, replays, game-state, time-attack sessions, user
+  themes). New `solitaire_data::platform::data_dir()` shim falls
+  through to `dirs::data_dir()` on desktop and returns the per-app
+  sandbox at `/data/data/com.solitairequest.app/files` on Android
+  — no JNI needed, since the package id is pinned in
+  `[package.metadata.android]`. Six call sites across
+  `solitaire_data` plus `solitaire_engine/assets/user_dir.rs`
+  migrated. CLAUDE.md §10 already flagged this as a known
+  pitfall; the shim pays it down at the one chokepoint instead
+  of per feature.
+- **`card_shadow_params` test aligned with Terminal "no shadow"
+  intent** (`1d1543e`). The Terminal token system pinned both
+  `CARD_SHADOW_ALPHA_IDLE` and `CARD_SHADOW_ALPHA_DRAG` to 0.0,
+  which made the prior `drag_alpha > idle_alpha` assertion fail
+  (`0 > 0` is false). Loosened to `drag_alpha >= idle_alpha`
+  with a comment naming the new invariant: under Terminal both
+  are 0; under any future palette that re-enables shadows, drag
+  still must not be weaker than idle. The useful regression-guard
+  (catching an accidental swap of the two constants) is preserved.
 - **`pull_failure_sets_error_status` test flake** (`67c150b`).
   The fixed 5-update budget was the last test still subject to
   the AsyncComputeTaskPool starvation mode that v0.19.0's
@@ -96,9 +235,12 @@ can iterate on a phone or AVD without forking the codebase.
 
 ### Stats
 
-- 1170 passing tests / 0 failing (matches v0.19.0; the
-  pull-failure flake fix changed the test's pumping shape but
-  not its count).
+- **1176 passing tests / 0 failing** across the workspace
+  (six new tests this cycle: four `ui_theme` invariant guards
+  for the type / spacing / z-index scales + `scaled_duration`,
+  one toast-variant-border-mapping pair, and four palette-
+  tracking guards on `MARKER_VALID` / `HINT_PILE_HIGHLIGHT_COLOUR`
+  / `RIGHT_CLICK_HIGHLIGHT_COLOUR` / toast-border distinctness).
 - Zero clippy warnings under `--workspace --all-targets -- -D warnings`.
 
 ## [0.19.0] — 2026-05-06
