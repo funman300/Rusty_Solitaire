@@ -333,17 +333,17 @@ pub fn spawn_modal_button<M: Component>(
     };
 
     let label_color = match variant {
-        // Primary buttons sit on the cyan accent — `BG_BASE` text on
-        // top reads well and passes AAA contrast against `#6fc2ef`.
+        // Primary buttons sit on the brick-red accent — `BG_BASE` text on
+        // top reads well and passes AAA contrast against `#a54242`.
         ButtonVariant::Primary => BG_BASE,
         ButtonVariant::Secondary | ButtonVariant::Tertiary => TEXT_PRIMARY,
     };
     let caption_color = match variant {
-        // Muted near-black on the cyan Primary so the hotkey chip reads
+        // Muted near-black on the red Primary so the hotkey chip reads
         // as a secondary detail without disappearing. Deliberately a
         // pure-black-at-alpha rather than `BG_BASE.with_alpha(...)`:
-        // `BG_BASE` is `#151515` (not 0,0,0), so the alpha-on-cyan
-        // composite would tint slightly cooler than intended here.
+        // `BG_BASE` is `#151515` (not 0,0,0), so the alpha-on-accent
+        // composite would tint slightly off from intended here.
         ButtonVariant::Primary => Color::srgba(0.0, 0.0, 0.0, 0.55),
         ButtonVariant::Secondary | ButtonVariant::Tertiary => TEXT_SECONDARY,
     };

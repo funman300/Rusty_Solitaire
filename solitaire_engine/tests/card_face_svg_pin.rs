@@ -76,7 +76,7 @@ const EXPECTED: &[(&str, u64)] = &[
     ("face_JS", 0x52525a2200c07246),
     ("face_QS", 0xb4f0251a2757cbb1),
     ("face_KS", 0x1e1975919bb9a029),
-    ("back_0", 0xf698d0e161eae13a),
+    ("back_0", 0xfd1742ebe330481a),
     ("back_1", 0x446fdc0a3c83a03a),
     ("back_2", 0xcf188fdec9f5819a),
     ("back_3", 0xcaffd02af141743a),

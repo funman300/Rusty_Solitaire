@@ -13,7 +13,7 @@
         fill="url(#scanlines)"/>
 
   <!-- Top-left accent badge (the only theme-varying element). -->
-  <rect x="12" y="12" width="24" height="32" fill="#6fc2ef"/>
+  <rect x="12" y="12" width="24" height="32" fill="#a54242"/>
 
   <!-- Bottom-right "▌RS" monogram in JetBrains-Mono-styled FiraMono. -->
   <text x="244" y="368" font-family="Fira Mono" font-size="24"

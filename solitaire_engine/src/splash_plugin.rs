@@ -1,7 +1,7 @@
 //! Launch splash overlay.
 //!
 //! On app start the engine spawns a fullscreen, high-Z overlay that
-//! reads the Terminal-style "boot screen" — a cyan cursor block, the
+//! reads the Terminal-style "boot screen" — an accent-coloured cursor block, the
 //! "Solitaire Quest" wordmark, a short fixture boot log, a progress
 //! bar, and a footer with the design-system palette swatches and the
 //! build version. The overlay fades in over 300 ms, holds for ~1 s,
@@ -470,8 +470,8 @@ fn spawn_check_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont, labe
 
 /// "▌ ready_" line — visual signature of "boot complete, awaiting
 /// input". The leading `▌` glyph picks up `TEXT_PRIMARY` rather than
-/// `ACCENT_PRIMARY` so it doesn't compete with the big cyan cursor in
-/// the header; the *trailing* 6×12 px cyan pulse Node ([`SplashCursorPulse`])
+/// `ACCENT_PRIMARY` so it doesn't compete with the big accent cursor in
+/// the header; the *trailing* 6×12 px accent pulse Node ([`SplashCursorPulse`])
 /// is what carries the "alive, blinking" signal called for by the
 /// mockup. The pulse's alpha is multiplied with the global fade
 /// timeline by [`pulse_splash_cursor`] so it never fights the
@@ -492,7 +492,7 @@ fn spawn_ready_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
                 line_font.clone(),
                 TextColor(transparent(TEXT_PRIMARY)),
             ));
-            // Trailing 6×12 cyan pulse cursor. Node-with-explicit-
+            // Trailing 6×12 accent pulse cursor. Node-with-explicit-
             // dimensions rather than a `█` text glyph so the size
             // doesn't drift with the line font; matches the mockup's
             // 6×12 px spec literally. Pulse animation lives in
@@ -511,7 +511,7 @@ fn spawn_ready_row(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {
 }
 
 /// Progress bar — a 1 px tall track in `BORDER_SUBTLE` with a 100 %-
-/// width cyan fill, plus a `DONE · 247 ASSETS` caption right-aligned
+/// width accent fill, plus a `DONE · 247 ASSETS` caption right-aligned
 /// below. The "247" is fixture text; the bar is decorative, not a
 /// real progress signal. Capped at 720 px width on desktop.
 fn spawn_progress_bar(parent: &mut ChildSpawnerCommands, line_font: &TextFont) {

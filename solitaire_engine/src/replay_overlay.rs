@@ -5,7 +5,7 @@
 //! - A "▌ replay" label on the left so the player knows the surface is
 //!   under playback control rather than live input.
 //! - A "MOVE N/M" progress chip in the centre, recomputed every frame
-//!   the cursor advances and bordered in cyan ACCENT_PRIMARY so it
+//!   the cursor advances and bordered in `ACCENT_PRIMARY` so it
 //!   reads as a discrete callout.
 //! - A "Stop" button on the right that aborts playback and returns
 //!   control to the player.
@@ -105,7 +105,7 @@ pub struct ReplayStopButton;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayGameCaption;
 
-/// Marker on the cyan "fill" of the bottom-edge scrub bar. The
+/// Marker on the accent "fill" of the bottom-edge scrub bar. The
 /// `Node`'s `width` is rewritten every frame the cursor advances to
 /// `cursor / total` of the bar's full width, so the player has a
 /// continuous visual cue of how far through the replay they are.
@@ -250,7 +250,7 @@ fn spawn_overlay(
                     ..default()
                 })
                 .with_children(|row| {
-                    // Left: column with the cyan "▌ replay" headline
+                    // Left: column with the accent "▌ replay" headline
                     // above and a small `GAME #YYYY-DDD` caption below.
                     // The caption mirrors the mockup's right-anchored
                     // game identifier but stays visually grouped with
@@ -315,7 +315,7 @@ fn spawn_overlay(
 
                     // Right: Stop button. Tertiary variant — the
                     // action is available but not the loudest element
-                    // in the banner; the "Replay" cyan accent owns
+                    // in the banner; the "Replay" primary accent owns
                     // that slot. `spawn_modal_button` gives us hover /
                     // press paint and focus rings for free via the
                     // existing `UiModalPlugin` paint system.
@@ -425,7 +425,7 @@ fn update_progress_text(
     }
 }
 
-/// Repaints the bottom-edge cyan scrub fill to mirror cursor progress.
+/// Repaints the bottom-edge accent scrub fill to mirror cursor progress.
 /// Same change-detection guard as the text updaters — the overlay
 /// already early-exits when nothing moved, so an idle replay leaves the
 /// scrub bar's `Node` untouched.

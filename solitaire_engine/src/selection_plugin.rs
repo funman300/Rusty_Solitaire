@@ -6,7 +6,7 @@
 //!
 //! 1. [`SelectionState`] tracks the *source-pick* mode. `Tab` / `Shift+Tab`
 //!    cycles a focus through piles that have a face-up draggable top card.
-//!    The focused card is decorated with a cyan [`SelectionHighlight`].
+//!    The focused card is decorated with an accent-coloured [`SelectionHighlight`].
 //!
 //! 2. [`KeyboardDragState`] tracks the *destination-pick* mode. Pressing
 //!    `Enter` while a pile is focused enters
@@ -634,7 +634,7 @@ fn clear_selection_on_state_change(
 
 /// Maintains the `SelectionHighlight` outline sprite.
 ///
-/// When a pile is selected (source-pick mode), a cyan sprite is placed
+/// When a pile is selected (source-pick mode), an accent-coloured sprite is placed
 /// at the selected card's position. While
 /// [`KeyboardDragState::Lifted`] the source highlight tints gold and a
 /// second highlight follows the focused destination's top card — visually
@@ -662,7 +662,7 @@ fn update_selection_highlight(
     let card_size = layout.0.card_size;
 
     // Highlight tints follow the Terminal palette's semantic state
-    // tokens: cyan focus/selection while picking the source, gold
+    // tokens: ACCENT_PRIMARY focus/selection while picking the source, gold
     // attention/commitment once the cards are lifted, lime valid-move
     // tint on the destination. Alphas are kept non-zero so the card
     // face beneath remains readable through the wash.

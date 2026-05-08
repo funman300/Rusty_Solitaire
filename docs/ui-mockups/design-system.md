@@ -15,12 +15,12 @@ colors:
   inverse-on-surface: '#151515'
   outline: '#505050'
   outline-variant: '#353535'
-  surface-tint: '#6fc2ef'
-  primary: '#6fc2ef'
+  surface-tint: '#a54242'
+  primary: '#a54242'
   on-primary: '#151515'
-  primary-container: '#1f3a4a'
-  on-primary-container: '#a8dcf5'
-  inverse-primary: '#0e6e99'
+  primary-container: '#3a1f1f'
+  on-primary-container: '#d5a8a8'
+  inverse-primary: '#993e3e'
   secondary: '#acc267'
   on-secondary: '#151515'
   secondary-container: '#2a3320'
@@ -38,7 +38,7 @@ colors:
   surface-variant: '#353535'
   suit-red: '#fb9fb1'
   suit-black: '#d0d0d0'
-  suit-red-cb: '#6fc2ef'
+  suit-red-cb: '#acc267'
   highlight-valid: '#acc267'
   highlight-celebration: '#e1a3ee'
   highlight-warning: '#ddb26f'
@@ -119,14 +119,16 @@ The palette is base16-eighties — a 16-slot terminal palette where indices 00�
 | base09 | `#ddb26f` | orange — used for warning chips |
 | base0A | `#acc267` | yellow/lime — used for `highlight-valid` (drag targets, valid moves) |
 | base0B | `#12cfc0` | green/teal — used for `highlight-info` (toasts, neutral status) |
-| base0C | `#6fc2ef` | cyan/sky — primary CTA, focus ring, `selection`, `suit-red-cb` (color-blind tinted red) |
+| base0C | `#6fc2ef` | cyan/sky — historically the primary CTA; now reserved for ad-hoc accents only |
 | base0D | `#6fc2ef` | (alias) |
+| base08 (project) | `#a54242` | brick red — primary CTA, focus ring, `selection` (project-specific extension; the base16-eighties `base08` slot is `#fb9fb1` pink which we keep as `error`/`suit-red`) |
+| `suit-red-cb` slot | `#acc267` | lime — color-blind-mode swap for red suits (was `#6fc2ef` cyan before the 2026-05-08 primary-accent swap; lime is the next-best non-red base16-eighties accent) |
 | base0E | `#e1a3ee` | violet — used for celebration (level-up, achievement unlock) |
 | base0F | `#fb9fb1` | (alias) |
 
 ### Semantic assignments
 
-- **CTA / Primary action**: cyan `#6fc2ef`. Reserved for "Play," "New Game," "Save," "Resume," and the focus ring on selected cards. Never used decoratively.
+- **CTA / Primary action**: brick red `#a54242`. Reserved for "Play," "New Game," "Save," "Resume," and the focus ring on selected cards. Never used decoratively. (Was cyan `#6fc2ef` before the 2026-05-08 swap.)
 - **Valid-move / drag-target highlight**: lime `#acc267`. Reserved for in-game feedback only. Never appears in chrome.
 - **Celebration**: lavender `#e1a3ee`. Used for level-up flashes, achievement unlock cards, and the daily-streak chip when the streak is active. Quiet otherwise.
 - **Warning / soft alert**: gold `#ddb26f`. Used for "challenge expires in N minutes" chips, sync-pending status, and the daily-seed countdown.
@@ -139,14 +141,14 @@ The palette is base16-eighties — a 16-slot terminal palette where indices 00�
 
 | Suit | Default | Color-blind mode | Glyph differentiation |
 |---|---|---|---|
-| Hearts | `#fb9fb1` (pink) | `#6fc2ef` (cyan) | Solid filled glyph |
-| Diamonds | `#fb9fb1` (pink) | `#6fc2ef` (cyan) | **Outlined glyph (1.5px stroke)** |
+| Hearts | `#fb9fb1` (pink) | `#acc267` (lime) | Solid filled glyph |
+| Diamonds | `#fb9fb1` (pink) | `#acc267` (lime) | **Outlined glyph (1.5px stroke)** |
 | Spades | `#d0d0d0` (foreground) | `#d0d0d0` | Solid filled glyph |
 | Clubs | `#d0d0d0` (foreground) | `#d0d0d0` | **Outlined glyph (1.5px stroke)** |
 
 The outlined-glyph treatment is the **primary** differentiation mechanism. Color is supplementary. This means a player viewing the game on a monochrome display, or with severe red-green deficiency, can still distinguish all four suits without context. This is a hard requirement, not an optional setting.
 
-The "color-blind mode" toggle in Settings only swaps red→cyan; it does not turn the outlined glyphs on or off, because outlined glyphs are always on.
+The "color-blind mode" toggle in Settings only swaps red→lime; it does not turn the outlined glyphs on or off, because outlined glyphs are always on. (Was red→cyan before the 2026-05-08 primary-accent swap; CBM moved to lime to stay hue-distinct from the new red-family primary.)
 
 ## Typography
 
@@ -177,7 +179,7 @@ Depth is created through **tonal layering and 1px outlines**, not blur shadows. 
 - **Level 0 (Background)**: the `#151515` base canvas.
 - **Level 1 (Tableau slots, empty piles)**: 1px dashed outline in `#353535`. Empty foundations show a faint suit glyph at 12% opacity inside the outline.
 - **Level 2 (Cards at rest)**: solid `#1a1a1a` fill, 1px solid border in the suit color (so the suit is detectable at a glance even if the card is partially obscured).
-- **Level 3 (Active / dragged card)**: same border, but glow effect: 0 0 12px of `#6fc2ef` at 40% opacity. **No scale transform** — flatness preserved. Z-index lifts above siblings.
+- **Level 3 (Active / dragged card)**: same border, but glow effect: 0 0 12px of `#a54242` at 40% opacity. **No scale transform** — flatness preserved. Z-index lifts above siblings.
 - **Modals**: full-screen with backdrop `#151515` at 95% opacity (just enough to dim the table without blurring it). Modal panel is `#202020` with a 1px `#505050` border — like a terminal pane.
 - **Toasts**: bottom of screen, `#202020` fill, 1px border in the toast's accent color (info=teal, warning=gold, error=pink, celebration=lavender). 16px monospaced caption.
 
@@ -193,7 +195,7 @@ The shape language is **soft-rounded but tight**:
 - **Avatars / circular indicators**: `rounded-full`.
 - **Card-back pattern corners**: matches the card's `rounded-md`.
 
-Selection highlights use a **2px inset stroke** in `#6fc2ef` following the host shape's corner radius. Never an outer stroke — the outer stroke is reserved for the suit-color hairline.
+Selection highlights use a **2px inset stroke** in `#a54242` following the host shape's corner radius. Never an outer stroke — the outer stroke is reserved for the suit-color hairline.
 
 ## Motion
 
@@ -228,17 +230,17 @@ Flat face design.
 - Background: `#151515`
 - Pattern: horizontal scanlines at 2px pitch in `#1a1a1a` (1px line, 1px gap), full bleed
 - Border: 1px solid `#353535`
-- Top-left badge: a 12×16px solid `#6fc2ef` block (the "terminal cursor"), 6px from the corner
+- Top-left badge: a 12×16px solid `#a54242` block (the "terminal cursor"), 6px from the corner
 - Bottom-right monogram: the characters `▌RS` in JetBrains Mono 12px, color `#505050`, 6px from the corner
 - Corner radius: 8px (matches face)
 
 ### Primary Buttons
 
-Solid `#6fc2ef` fill, `#151515` text, JetBrains Mono Medium 14px uppercase with `+0.08em` tracking. 4px corner radius. Pressed state: darken to `#5aa9d4`. Disabled: `#353535` fill, `#505050` text.
+Solid `#a54242` fill, `#151515` text, JetBrains Mono Medium 14px uppercase with `+0.08em` tracking. 4px corner radius. Pressed state: darken to `#7a3030`. Disabled: `#353535` fill, `#505050` text.
 
 ### Secondary Buttons
 
-Transparent fill, 1px `#505050` border, `#d0d0d0` text. Hover/press: border becomes `#6fc2ef`, text becomes `#6fc2ef`.
+Transparent fill, 1px `#505050` border, `#d0d0d0` text. Hover/press: border becomes `#a54242`, text becomes `#a54242`.
 
 ### HUD Chips
 
@@ -258,7 +260,7 @@ Full-screen backdrop at 95% opacity. Centered panel: `#202020` fill, 1px `#50505
 
 ### Navigation Bar
 
-Fixed at the bottom of in-game screens. Height: 64px. `#202020` fill, 1px top border in `#353535`. Four icon buttons: Undo / Hint / New / Auto-complete. Icons: 24px, 1.5px stroke weight, color `#d0d0d0`. Active/pressed: icon color `#6fc2ef`.
+Fixed at the bottom of in-game screens. Height: 64px. `#202020` fill, 1px top border in `#353535`. Four icon buttons: Undo / Hint / New / Auto-complete. Icons: 24px, 1.5px stroke weight, color `#d0d0d0`. Active/pressed: icon color `#a54242`.
 
 ### Status / Sync Indicator
 
@@ -270,7 +272,7 @@ Top-right corner of the HUD: a 6px circular dot.
 
 ## Accessibility
 
-1. **Color-blind mode** (Settings → Gameplay): swaps red suits' default `#fb9fb1` for `#6fc2ef`. Outlined-glyph differentiation remains active in *all* modes.
+1. **Color-blind mode** (Settings → Gameplay): swaps red suits' default `#fb9fb1` for `#acc267` (lime). Outlined-glyph differentiation remains active in *all* modes.
 2. **High-contrast mode** (Settings → Gameplay): boosts on-surface from `#d0d0d0` to `#f5f5f5`, outline from `#505050` to `#a0a0a0`, suit-red from `#fb9fb1` to `#ff8aa0`.
 3. **Reduce-motion mode** (Settings → Gameplay): disables card-lift transition (instant z-lift), disables CRT scanline effect, disables the warning-chip pulse animation.
 4. **Tabular figures** are mandatory for any number that updates live (timer, score, moves) so they don't reflow.

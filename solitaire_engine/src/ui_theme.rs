@@ -21,8 +21,8 @@ use bevy::prelude::Val;
 use solitaire_data::AnimSpeed;
 
 // ---------------------------------------------------------------------------
-// Colours — Terminal (base16-eighties): near-black surface ramp with a cyan
-// primary accent and lime/lavender/gold/teal/pink semantic accents.
+// Colours — Terminal (base16-eighties): near-black surface ramp with a brick-
+// red primary accent and lime/lavender/gold/teal/pink semantic accents.
 // ---------------------------------------------------------------------------
 
 /// Window backstop and the default text colour on top of `ACCENT_PRIMARY`.
@@ -67,14 +67,17 @@ pub const TEXT_SECONDARY: Color = Color::srgb(0.627, 0.627, 0.627);
 /// Disabled text — greyed-out buttons, locked items. `#505050`.
 pub const TEXT_DISABLED: Color = Color::srgb(0.314, 0.314, 0.314);
 
-/// Cyan primary accent — the CTA colour of the system. Reserved for
-/// primary actions (Play, Resume, Save), focus rings, and selection.
-/// `BG_BASE` text on top of this colour passes AAA contrast. `#6fc2ef`.
-pub const ACCENT_PRIMARY: Color = Color::srgb(0.435, 0.761, 0.937);
+/// Brick-red primary accent — the CTA colour of the system. Reserved
+/// for primary actions (Play, Resume, Save), focus rings, and
+/// selection. `#a54242` (base16-eighties `base08`). Pre-2026-05-08
+/// this slot was cyan `#6fc2ef`; the swap was a project-wide
+/// palette decision recorded in `design-system.md` and the
+/// SESSION_HANDOFF entry that followed Option D.
+pub const ACCENT_PRIMARY: Color = Color::srgb(0.647, 0.259, 0.259);
 
 /// Brightened `ACCENT_PRIMARY` for hover states on primary buttons.
-/// Picks up luminance while keeping the same hue. `#a8dcf5`.
-pub const ACCENT_PRIMARY_HOVER: Color = Color::srgb(0.659, 0.863, 0.961);
+/// Picks up luminance while keeping the same hue. `#c25e5e`.
+pub const ACCENT_PRIMARY_HOVER: Color = Color::srgb(0.761, 0.369, 0.369);
 
 /// Lavender secondary accent — celebratory states (level-up,
 /// achievement unlocked, streak milestones). Used sparingly so it stays
@@ -134,8 +137,8 @@ pub const STOCK_BADGE_BG: Color = BG_ELEVATED_HI;
 /// Foreground (text) colour of the stock-pile remaining-count chip.
 ///
 /// `ACCENT_PRIMARY` keeps the chip readable against the elevated
-/// surface background and matches the cyan accent already used for
-/// other "look here" callouts.
+/// surface background and matches the primary accent already used
+/// for other "look here" callouts.
 pub const STOCK_BADGE_FG: Color = ACCENT_PRIMARY;
 
 /// Sprite-space `Transform.z` for the stock-pile remaining-count chip.
@@ -172,8 +175,8 @@ pub const CARD_SHADOW_ALPHA_IDLE: f32 = 0.0;
 
 /// Alpha for the lifted/dragged card shadow. Set to 0 for the same
 /// reason as [`CARD_SHADOW_ALPHA_IDLE`]. Drag affordance under the
-/// Terminal system is the cyan focus glow + z-index lift, not a deeper
-/// shadow.
+/// Terminal system is the primary-accent focus glow + z-index lift,
+/// not a deeper shadow.
 pub const CARD_SHADOW_ALPHA_DRAG: f32 = 0.0;
 
 /// World-space pixel offset of the resting-state card shadow relative to
@@ -217,7 +220,7 @@ pub const BORDER_STRONG: Color = Color::srgba(0.314, 0.314, 0.314, 1.0);
 /// (matches `ACCENT_PRIMARY`) at 85% alpha so the ring stays legible
 /// against both elevated surfaces and the modal scrim backdrop.
 /// `rgba(111, 194, 239, 0.85)`.
-pub const FOCUS_RING: Color = Color::srgba(0.435, 0.761, 0.937, 0.85);
+pub const FOCUS_RING: Color = Color::srgba(0.647, 0.259, 0.259, 0.85);
 
 // ---------------------------------------------------------------------------
 // Typography scale (px) — 5 rungs replace the prior

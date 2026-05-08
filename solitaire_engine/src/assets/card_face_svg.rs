@@ -38,11 +38,11 @@ const BACK_BORDER: &str = "#353535";
 const BACK_MONOGRAM: &str = "#505050";
 
 /// Five back-theme accent colours. Slot 0 is the canonical "Terminal"
-/// back from the design system; the other four cycle through the
-/// remaining base16-eighties accents so all 5 slots stay visually
-/// distinct without leaving the palette.
+/// back from the design system (matches `ACCENT_PRIMARY`); the other
+/// four cycle through the remaining base16-eighties accents so all 5
+/// slots stay visually distinct without leaving the palette.
 pub const BACK_ACCENTS: [&str; 5] = [
-    "#6fc2ef", // 0 — cyan (Terminal canonical)
+    "#a54242", // 0 — brick red (Terminal canonical, ACCENT_PRIMARY)
     "#acc267", // 1 — lime
     "#e1a3ee", // 2 — lavender
     "#fb9fb1", // 3 — pink

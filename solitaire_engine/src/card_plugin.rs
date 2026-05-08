@@ -98,12 +98,18 @@ pub struct CardImageSet {
 }
 
 /// Suit-colour swap for red-suit cards in colour-blind mode — Terminal
-/// `#6fc2ef` (cyan). Replaces `RED_SUIT_COLOUR` (pink) when CBM is on,
+/// `#acc267` (lime). Replaces `RED_SUIT_COLOUR` (pink) when CBM is on,
 /// providing a hue-distinct alternative that survives the most common
 /// red/green deficiencies. Pre-Terminal this was a *face tint*; the new
 /// design moves CBM differentiation into the suit glyph colour itself
 /// and keeps the face uniformly `CARD_FACE_COLOUR` regardless of CBM.
-const RED_SUIT_COLOUR_CBM: Color = Color::srgb(0.435, 0.761, 0.937);
+///
+/// The CBM swap is lime (not the `ACCENT_PRIMARY` brick-red) because
+/// the primary accent is itself in the red family — using it for
+/// "the not-red CBM alternative" would defeat the purpose. Lime is
+/// the next-best non-red base16-eighties accent; deuteranopia and
+/// protanopia readers see it as visibly distinct from pink.
+const RED_SUIT_COLOUR_CBM: Color = Color::srgb(0.675, 0.761, 0.404);
 
 /// Returns the fallback card-back colour for the given unlocked card-back
 /// index. Production renders backs from PNG artwork; this fallback only
@@ -112,7 +118,7 @@ const RED_SUIT_COLOUR_CBM: Color = Color::srgb(0.435, 0.761, 0.937);
 /// in the same hue family as the on-disk PNG art for that index.
 fn card_back_colour(selected_card_back: usize) -> Color {
     match selected_card_back {
-        0 => Color::srgb(0.435, 0.761, 0.937), // #6fc2ef cyan (Terminal canonical)
+        0 => Color::srgb(0.647, 0.259, 0.259), // #a54242 brick red (Terminal canonical, ACCENT_PRIMARY)
         1 => Color::srgb(0.675, 0.761, 0.404), // #acc267 lime
         2 => Color::srgb(0.882, 0.639, 0.933), // #e1a3ee lavender
         3 => Color::srgb(0.984, 0.624, 0.694), // #fb9fb1 pink
@@ -792,11 +798,15 @@ fn label_for(card: &Card) -> String {
 /// Suit colour for the rank/suit overlay rendered atop the constant
 /// fallback sprite (only fires under `MinimalPlugins` — production
 /// renders the suit glyph baked into the PNG). When `color_blind` is
-/// enabled, red-suit cards swap to `RED_SUIT_COLOUR_CBM` (cyan) — the
-/// "Settings toggle swaps red→cyan" half of the design system's
+/// enabled, red-suit cards swap to `RED_SUIT_COLOUR_CBM` (lime) — the
+/// "Settings toggle swaps red→lime" half of the design system's
 /// colour-blind support. The other half (always-on filled-vs-outlined
 /// glyph differentiation for ♥♠ vs ♦♣) is baked into the PNG art and
 /// has no constant-fallback equivalent.
+///
+/// The CBM swap is lime (not the new brick-red `ACCENT_PRIMARY`)
+/// because the primary accent is itself red-family — the CBM
+/// alternative needs to be hue-distinct from the original red suit.
 fn text_colour(card: &Card, color_blind: bool) -> Color {
     if card.suit.is_red() {
         if color_blind {
@@ -2066,20 +2076,20 @@ mod tests {
     // Pre-Terminal these were `face_colour` tests asserting that CBM
     // tinted the *face background* of red-suit cards. The Terminal
     // design system moves CBM differentiation into the suit *glyph*
-    // colour (red→cyan), so these tests now exercise `text_colour`.
+    // colour (red→lime), so these tests now exercise `text_colour`.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn text_colour_color_blind_mode_swaps_red_suits_to_cyan() {
+    fn text_colour_color_blind_mode_swaps_red_suits_to_lime() {
         let red_card = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Queen, face_up: true };
         let cbm_colour = text_colour(&red_card, true);
         assert_eq!(
             cbm_colour, RED_SUIT_COLOUR_CBM,
-            "color-blind mode must replace the red suit colour with the CBM cyan",
+            "color-blind mode must replace the red suit colour with the CBM lime",
         );
         assert_ne!(
             cbm_colour, RED_SUIT_COLOUR,
-            "CBM red must be visibly distinct from the default red suit colour",
+            "CBM lime must be visibly distinct from the default red suit colour",
         );
     }
 
