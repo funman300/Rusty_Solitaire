@@ -29,12 +29,13 @@ use crate::layout::{Layout, LayoutResource, LayoutSystem};
 use crate::pause_plugin::PausedResource;
 use crate::resources::{DragState, GameStateResource};
 use crate::settings_plugin::{SettingsChangedEvent, SettingsResource};
-use crate::table_plugin::PileMarker;
+use crate::table_plugin::{PileMarker, PILE_MARKER_DEFAULT_COLOUR};
 use crate::font_plugin::FontResource;
 use crate::ui_theme::{
     CARD_SHADOW_ALPHA_DRAG, CARD_SHADOW_ALPHA_IDLE, CARD_SHADOW_COLOR, CARD_SHADOW_LOCAL_Z,
     CARD_SHADOW_OFFSET_DRAG, CARD_SHADOW_OFFSET_IDLE, CARD_SHADOW_PADDING_DRAG,
-    CARD_SHADOW_PADDING_IDLE, STOCK_BADGE_BG, STOCK_BADGE_FG, TYPE_CAPTION, Z_STOCK_BADGE,
+    CARD_SHADOW_PADDING_IDLE, STOCK_BADGE_BG, STOCK_BADGE_FG, TEXT_PRIMARY, TYPE_CAPTION,
+    Z_STOCK_BADGE,
 };
 
 /// Fraction of card height used as vertical offset between face-up tableau cards.
@@ -925,12 +926,17 @@ fn update_drag_shadow(
             commands.entity(e).insert(Transform::from_translation(shadow_pos));
         }
         None => {
-            // Spawn a new shadow sprite.
+            // Spawn a new shadow sprite. Alpha tracks the per-card
+            // CARD_SHADOW_ALPHA_DRAG token so the Terminal palette's
+            // "no box-shadow" policy disables this stack shadow in
+            // lockstep with the per-card shadows. Re-enabling shadows
+            // is then a one-line change in `ui_theme`, not a hunt
+            // through plugin code.
             let e = commands
                 .spawn((
                     ShadowEntity,
                     Sprite {
-                        color: Color::srgba(0.0, 0.0, 0.0, 0.35),
+                        color: CARD_SHADOW_COLOR.with_alpha(CARD_SHADOW_ALPHA_DRAG),
                         custom_size: Some(Vec2::new(card_w + 8.0, card_h + 8.0)),
                         ..default()
                     },
@@ -1024,11 +1030,13 @@ fn tick_hint_highlight(
 // Task #46 — Right-click legal destination highlights
 // ---------------------------------------------------------------------------
 
-/// Color applied to a `PileMarker` sprite when it is a legal destination for
-/// the right-clicked card.
-const RIGHT_CLICK_HIGHLIGHT_COLOUR: Color = Color::srgba(0.2, 0.8, 0.2, 0.6);
-/// Restored color for `PileMarker` sprites when the highlight is cleared.
-const PILE_MARKER_DEFAULT_COLOUR: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
+/// Lime tint applied to a `PileMarker` sprite when it is a legal
+/// destination for the right-clicked card. Same RGB as the design-
+/// system [`STATE_SUCCESS`] token at 60% alpha. Spelled as a literal
+/// because `Alpha::with_alpha` is not yet a `const` trait method on
+/// stable; the tracking test below pins the RGB to `STATE_SUCCESS`
+/// so a palette swap can't drift the two apart silently.
+const RIGHT_CLICK_HIGHLIGHT_COLOUR: Color = Color::srgba(0.675, 0.761, 0.404, 0.6);
 
 /// Counts down `RightClickHighlightTimer` each frame and clears the highlight
 /// when the timer expires.
@@ -1238,11 +1246,16 @@ fn find_top_card_at(
 // ---------------------------------------------------------------------------
 
 /// Sprite colour applied to the stock `PileMarker` when the stock pile is empty,
-/// to signal to the player that there are no more cards to draw.
+/// to signal to the player that there are no more cards to draw. Pure white
+/// at 0.4 alpha — a deliberate brightness-boost over the default marker so
+/// the "empty" state is more visible, not less. Not derived from a palette
+/// token: this is a sprite tint, not chrome colour.
 const STOCK_EMPTY_DIM_COLOUR: Color = Color::srgba(1.0, 1.0, 1.0, 0.4);
 
-/// Sprite colour applied to the stock `PileMarker` when cards remain in stock.
-const STOCK_NORMAL_COLOUR: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
+/// Sprite colour applied to the stock `PileMarker` when cards remain in
+/// stock. Aliased to [`PILE_MARKER_DEFAULT_COLOUR`] so it tracks the rest
+/// of the engine's idle pile-marker tint automatically.
+const STOCK_NORMAL_COLOUR: Color = PILE_MARKER_DEFAULT_COLOUR;
 
 /// Shared logic for updating the stock pile marker's dim state and "↺" label.
 ///
@@ -1283,7 +1296,7 @@ fn apply_stock_empty_indicator<F: bevy::ecs::query::QueryFilter>(
                         StockEmptyLabel,
                         Text2d::new("↺"),
                         TextFont { font_size, ..default() },
-                        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+                        TextColor(TEXT_PRIMARY.with_alpha(0.7)),
                         Transform::from_xyz(0.0, 0.0, 0.1),
                     ));
                 });
@@ -2705,5 +2718,21 @@ mod tests {
             Some(theme_back.id()),
             "after a theme apply the theme_back slot must hold the theme's back handle",
         );
+    }
+
+    /// `RIGHT_CLICK_HIGHLIGHT_COLOUR` is spelled as a literal because
+    /// `Alpha::with_alpha` is not a `const` trait method on stable.
+    /// This test pins its RGB to the design-system `STATE_SUCCESS`
+    /// token so a future palette swap that updates the token but
+    /// forgets the right-click highlight fails loudly here.
+    #[test]
+    fn right_click_highlight_rgb_tracks_state_success_token() {
+        use crate::ui_theme::STATE_SUCCESS;
+        let highlight = RIGHT_CLICK_HIGHLIGHT_COLOUR.to_srgba();
+        let success = STATE_SUCCESS.to_srgba();
+        assert!((highlight.red - success.red).abs() < 1e-6);
+        assert!((highlight.green - success.green).abs() < 1e-6);
+        assert!((highlight.blue - success.blue).abs() < 1e-6);
+        assert!((highlight.alpha - 0.6).abs() < 1e-6);
     }
 }
