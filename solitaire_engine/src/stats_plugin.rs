@@ -32,9 +32,9 @@ use crate::ui_modal::{
     ScrimDismissible,
 };
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BORDER_SUBTLE, RADIUS_SM, STATE_INFO, STATE_WARNING, STREAK_MILESTONES,
-    TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_2,
-    VAL_SPACE_3, VAL_SPACE_4, Z_MODAL_PANEL,
+    ACCENT_PRIMARY, BORDER_SUBTLE, HighContrastBorder, RADIUS_SM, STATE_INFO, STATE_WARNING,
+    STREAK_MILESTONES, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION,
+    TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4, Z_MODAL_PANEL,
 };
 
 /// Bevy resource wrapping the current stats.
@@ -1017,6 +1017,7 @@ fn spawn_stat_cell(parent: &mut ChildSpawnerCommands, value: &str, label: &str) 
                 ..default()
             },
             BorderColor::all(BORDER_SUBTLE),
+            HighContrastBorder::with_default(BORDER_SUBTLE),
         ))
         .with_children(|cell| {
             // Large value label — accent yellow makes the number sing

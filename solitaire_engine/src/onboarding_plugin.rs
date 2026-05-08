@@ -32,8 +32,8 @@ use crate::ui_modal::{
     spawn_modal_header, ButtonVariant,
 };
 use crate::ui_theme::{
-    BORDER_SUBTLE, RADIUS_SM, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_CAPTION, TYPE_BODY, VAL_SPACE_1,
-    VAL_SPACE_2, VAL_SPACE_3, Z_ONBOARDING,
+    BORDER_SUBTLE, HighContrastBorder, RADIUS_SM, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
+    TYPE_CAPTION, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, Z_ONBOARDING,
 };
 
 // ---------------------------------------------------------------------------
@@ -386,6 +386,7 @@ fn spawn_slide_hotkeys(commands: &mut Commands, font_res: Option<&FontResource>)
                         ..default()
                     },
                     BorderColor::all(BORDER_SUBTLE),
+                    HighContrastBorder::with_default(BORDER_SUBTLE),
                 ))
                 .with_children(|chip| {
                     chip.spawn((

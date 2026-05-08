@@ -36,8 +36,8 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 use crate::font_plugin::FontResource;
 use crate::settings_plugin::SettingsResource;
 use crate::ui_theme::{
-    BG_ELEVATED_HI, BORDER_SUBTLE, MOTION_TOOLTIP_DELAY_SECS, RADIUS_SM, TEXT_PRIMARY,
-    TYPE_CAPTION, VAL_SPACE_2, Z_TOOLTIP,
+    BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBorder, MOTION_TOOLTIP_DELAY_SECS, RADIUS_SM,
+    TEXT_PRIMARY, TYPE_CAPTION, VAL_SPACE_2, Z_TOOLTIP,
 };
 
 // ---------------------------------------------------------------------------
@@ -189,6 +189,7 @@ fn spawn_tooltip_overlay(
             },
             BackgroundColor(BG_ELEVATED_HI),
             BorderColor::all(BORDER_SUBTLE),
+            HighContrastBorder::with_default(BORDER_SUBTLE),
             Visibility::Hidden,
             // Pin above the focus ring so a tooltip on a focused element
             // is never occluded by the focus outline.

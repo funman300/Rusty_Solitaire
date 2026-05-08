@@ -14,8 +14,8 @@ use crate::ui_modal::{
     ScrimDismissible,
 };
 use crate::ui_theme::{
-    Z_MODAL_PANEL, BORDER_SUBTLE, RADIUS_SM, SPACE_2, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
-    TYPE_CAPTION, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3,
+    BORDER_SUBTLE, HighContrastBorder, RADIUS_SM, SPACE_2, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
+    TYPE_CAPTION, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
 };
 
 /// Marker on the help overlay root node.
@@ -263,6 +263,7 @@ fn spawn_help_screen(commands: &mut Commands, font_res: Option<&FontResource>) {
                                 ..default()
                             },
                             BorderColor::all(BORDER_SUBTLE),
+                            HighContrastBorder::with_default(BORDER_SUBTLE),
                         ))
                         .with_children(|chip| {
                             chip.spawn((
