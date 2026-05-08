@@ -58,8 +58,9 @@ use crate::settings_plugin::SettingsResource;
 use crate::ui_theme::{
     scaled_duration, ACCENT_PRIMARY, ACCENT_PRIMARY_HOVER, ACCENT_SECONDARY, BG_BASE, BG_ELEVATED,
     BG_ELEVATED_HI, BG_ELEVATED_PRESSED, BG_ELEVATED_TOP, BORDER_STRONG, BORDER_SUBTLE,
-    MOTION_MODAL_SECS, RADIUS_LG, RADIUS_MD, SCRIM, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY_LG,
-    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4, VAL_SPACE_5,
+    HighContrastBorder, MOTION_MODAL_SECS, RADIUS_LG, RADIUS_MD, SCRIM, TEXT_PRIMARY,
+    TEXT_SECONDARY, TYPE_BODY_LG, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_3,
+    VAL_SPACE_4, VAL_SPACE_5,
 };
 
 // ---------------------------------------------------------------------------
@@ -230,6 +231,13 @@ where
                 Transform::from_scale(Vec3::splat(MODAL_ENTER_START_SCALE)),
                 BackgroundColor(BG_ELEVATED),
                 BorderColor::all(BORDER_STRONG),
+                // Honour `Settings::high_contrast_mode`: under HC the
+                // border boosts from `BORDER_STRONG` (#505050) to
+                // `BORDER_SUBTLE_HC` (#a0a0a0) so the modal panel
+                // edge stays clearly visible against the scrim and
+                // surface beneath. `update_high_contrast_borders` in
+                // `settings_plugin` does the per-frame swap.
+                HighContrastBorder::with_default(BORDER_STRONG),
             ))
             .with_children(build_card);
         })

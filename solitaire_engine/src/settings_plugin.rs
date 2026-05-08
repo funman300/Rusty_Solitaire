@@ -34,9 +34,9 @@ use crate::ui_modal::{
 };
 use crate::ui_tooltip::Tooltip;
 use crate::ui_theme::{
-    BG_BASE, BG_ELEVATED, BG_ELEVATED_HI, BORDER_SUBTLE, RADIUS_SM, SPACE_2, STATE_SUCCESS,
-    TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3,
-    Z_MODAL_PANEL,
+    BG_BASE, BG_ELEVATED, BG_ELEVATED_HI, BORDER_SUBTLE, BORDER_SUBTLE_HC, HighContrastBorder,
+    RADIUS_SM, SPACE_2, STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG,
+    TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
 };
 
 /// Side length of a swatch button in the card-back / background pickers.
@@ -364,6 +364,7 @@ impl Plugin for SettingsPlugin {
                     update_anim_speed_text,
                     update_color_blind_text,
                     update_high_contrast_text,
+                    update_high_contrast_borders,
                     update_reduce_motion_text,
                     update_tooltip_delay_text,
                     update_time_bonus_multiplier_text,
@@ -634,6 +635,42 @@ fn update_high_contrast_text(
     }
     for mut text in &mut text_nodes {
         **text = on_off_label(settings.0.high_contrast_mode);
+    }
+}
+
+/// Repaints `BorderColor` on every entity tagged with
+/// [`HighContrastBorder`] based on `Settings::high_contrast_mode`.
+/// Off → the marker's `default_color`; on → `BORDER_SUBTLE_HC`
+/// (`#a0a0a0`). Compares against the current border colour and
+/// only mutates when different so Bevy's change-detection
+/// doesn't trigger repaints every frame.
+///
+/// Spec at `design-system.md` §Accessibility (#2): under HC,
+/// outlines boost from `#505050` (BORDER_STRONG) to `#a0a0a0` so
+/// modal panels, popover edges, and focus-ring carriers stay
+/// legible on low-quality displays / for low-vision users.
+///
+/// Tagged sites in v0.21.x: the modal scaffold's card border
+/// (`ui_modal::spawn_modal`). More sites can be tagged in
+/// follow-ups by adding `HighContrastBorder::with_default(...)`
+/// to their spawn tuple.
+fn update_high_contrast_borders(
+    settings: Res<SettingsResource>,
+    mut borders: Query<(&HighContrastBorder, &mut BorderColor)>,
+) {
+    let high_contrast = settings.0.high_contrast_mode;
+    for (marker, mut border) in borders.iter_mut() {
+        let target = if high_contrast {
+            BORDER_SUBTLE_HC
+        } else {
+            marker.default_color
+        };
+        // Only mutate when actually different — avoids per-frame
+        // change-detection churn. `border.left` is representative
+        // because every tagged site uses `BorderColor::all(...)`.
+        if border.left != target {
+            *border = BorderColor::all(target);
+        }
     }
 }
 

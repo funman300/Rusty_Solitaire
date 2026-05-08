@@ -226,6 +226,32 @@ pub const BORDER_SUBTLE: Color = Color::srgba(0.208, 0.208, 0.208, 1.0);
 /// vision users.
 pub const BORDER_SUBTLE_HC: Color = Color::srgba(0.627, 0.627, 0.627, 1.0);
 
+/// Marker for entities whose [`BorderColor`] should swap to
+/// [`BORDER_SUBTLE_HC`] when `Settings::high_contrast_mode` is on.
+/// Tag any UI node where border legibility is accessibility-critical
+/// — modal panels, popovers, settings rows, focus-ring carriers —
+/// then add the `apply_high_contrast_borders` system to react to
+/// settings changes.
+///
+/// `default_color` records the off-state colour the entity was
+/// spawned with so the system can revert when HC is toggled back
+/// off. Different sites use different defaults (`BORDER_SUBTLE` for
+/// idle popover edges, `BORDER_STRONG` for active modal cards) — the
+/// marker captures whichever one applies at this entity.
+#[derive(bevy::prelude::Component, Debug, Clone, Copy)]
+pub struct HighContrastBorder {
+    /// Border colour to use when high-contrast mode is *off* — the
+    /// site's normal idle / active-state colour.
+    pub default_color: bevy::prelude::Color,
+}
+
+impl HighContrastBorder {
+    /// Convenience constructor — `HighContrastBorder::with_default(BORDER_SUBTLE)`.
+    pub const fn with_default(default_color: bevy::prelude::Color) -> Self {
+        Self { default_color }
+    }
+}
+
 /// Strong border — hover outline, focused button, active popover.
 /// `outline` from the design system. `#505050`.
 pub const BORDER_STRONG: Color = Color::srgba(0.314, 0.314, 0.314, 1.0);
