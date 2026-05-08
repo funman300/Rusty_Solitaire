@@ -1,8 +1,9 @@
 # Solitaire Quest — Session Handoff
 
 **Last updated:** 2026-05-08 — v0.21.2 cut and tagged at `f23df3b`;
-post-cut Toast Warning wiring at `279e23d`. Working tree clean,
-all post-tag work pushed to origin.
+post-cut work shipped: Toast Warning (`279e23d`) and the HC
+dynamic-paint rollout (`c153363`). Working tree clean, all
+post-tag work pushed to origin.
 
 v0.21.2 is a patch release for the post-v0.21.1 polish work:
 extends accessibility (full HC chrome rollout across 8 surfaces;
@@ -19,17 +20,16 @@ resume.
 ## Status at pause
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `f23df3b`; post-cut docs edits and the Toast Warning wiring
-  (`279e23d`) ride on top of that.
+  `f23df3b`; post-cut work (`279e23d` Toast Warning, `c153363`
+  HC dynamic-paint rollout) rides on top of that.
 - **HEAD on origin:** matches local. v0.21.2 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1203 passing / 0 failing** across the workspace
-  (net +8 from the v0.21.2 cut: 7 unit tests covering
-  `compute_expiry_warning_minutes` thresholds + 1 in-Bevy
-  idempotence test for `check_daily_expiry_warning`).
+- **Tests:** **1207 passing / 0 failing** across the workspace
+  (net +12 from the v0.21.2 cut: 8 from Toast Warning wiring;
+  4 from the radial-rim HC truth-table).
 - **Tags on origin:** `v0.9.0` through `v0.21.2`. v0.21.2 is on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
   `04f9bf9`; v0.20.0 stays on `41a009a`.
@@ -48,6 +48,23 @@ resume.
   without an `App`. After this commit every `ToastVariant`
   (Info / Warning / Error / Celebration) has at least one real
   driver — the variant enum is fully load-bearing.
+- **`c153363` — HC rollout to the dynamic-paint sites.** Closes
+  the v0.21.2 carve-out. Re-reading the code revealed only one
+  of three "dynamic-paint" sites was actually a border-paint
+  cycle — HUD action buttons and modal buttons paint
+  *backgrounds* dynamically with static borders, so they take
+  the existing `HighContrastBorder` marker pattern cleanly. The
+  radial menu rim is the only true dynamic-painter (full
+  per-frame respawn of `Sprite` entities); HC is folded into
+  the spawn there with a pure helper (`radial_rim_outline`)
+  that boosts the *focused* rim to `BORDER_SUBTLE_HC` under HC
+  rather than `BORDER_STRONG` — naive marker substitution would
+  invert the focused-vs-resting hierarchy because
+  `BORDER_SUBTLE_HC` (#a0a0a0) is lighter than `BORDER_STRONG`
+  (#505050). After this commit, every UI surface in the v0.21.x
+  accessibility arc either carries the marker or has HC folded
+  into its own spawn cycle. No "un-tagged because race-risk"
+  surfaces remain.
 
 For the v0.21.2 contents themselves, see `CHANGELOG.md` §
 [0.21.2].
@@ -111,16 +128,21 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   audio + visual + text rejection-feedback stool.
 - *High-contrast accessibility mode — closed 2026-05-08 by
   `c5787c6` + `07e0357` (engine + UI) + v0.21.2's HC chrome
-  rollout (`c9af1ea` + `d87761d` + `ec804d5`).* Card text
-  rendering plus 8 chrome surfaces (modal scaffold, tooltip,
+  rollout (`c9af1ea` + `d87761d` + `ec804d5`) + post-cut
+  dynamic-paint rollout (`c153363`).* Card text rendering plus
+  8 static-border chrome surfaces (modal scaffold, tooltip,
   onboarding key chips, help panel key chips, stats panel
   cells, home Level/XP/Score row, home mode buttons, home
   mode-hotkey chips, 4 settings panel surfaces) all boost
-  borders to `BORDER_SUBTLE_HC` under HC. Dynamic-paint sites
-  (HUD action buttons, modal buttons, radial menu rim) stay
-  un-tagged because their existing paint cycles would race the
-  HC system; remain open for a future iteration that needs a
-  different shape (folding HC into the dynamic-paint logic).
+  borders to `BORDER_SUBTLE_HC` under HC via the
+  `HighContrastBorder` marker. The previously-carved-out
+  dynamic-paint sites are now also covered: HUD action buttons
+  and modal buttons take the same marker (their paint cycles
+  only mutate `BackgroundColor`, so no race); the radial menu
+  rim folds HC into its per-frame spawn via
+  `radial_rim_outline` so the focused rim boosts to
+  `BORDER_SUBTLE_HC` under HC (preserving focused-vs-resting
+  hierarchy that naive marker substitution would invert).
 - *Reduced-motion mode — closed 2026-05-08 by `c5787c6` +
   v0.21.2's `ed152e2`.* `effective_slide_secs` forces 0 on
   card animations; `pulse_splash_cursor` skips the per-frame
@@ -233,13 +255,15 @@ Working directory: <Rusty_Solitaire clone path on this machine>.
 Branch: master. v0.21.2 is tagged at f23df3b (cut 2026-05-08, a
 patch release rolling up accessibility extensions, replay polish,
 and the first real `ToastVariant::Error` consumer). v0.21.1 stays
-at daa655a, v0.21.0 at 04f9bf9. Working tree clean. Toast Warning
-variant wired post-cut at `279e23d` — every `ToastVariant` now has
-at least one real driver. See CHANGELOG.md § [0.21.2] + the
-"Since the v0.21.2 cut" section above for full detail.
+at daa655a, v0.21.0 at 04f9bf9. Working tree clean. Post-cut
+work shipped: Toast Warning variant (`279e23d`) and the HC
+dynamic-paint rollout (`c153363`) — accessibility arc is fully
+closed, every `ToastVariant` has at least one real driver. See
+CHANGELOG.md § [0.21.2] + the "Since the v0.21.2 cut" section
+above for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. All workspace tests
-pass (1203+; check with `cargo test --workspace`), clippy clean.
+pass (1207+; check with `cargo test --workspace`), clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -273,14 +297,6 @@ DECISION TO ASK THE PLAYER FIRST:
      wired into Settings. The biggest open arc by scope; rolls
      up several Phase Android dependencies (Keystore,
      ClipboardManager).
-  D. HC + reduce-motion for dynamic-paint sites — v0.21.2
-     finished HC for *static-border* surfaces (8 tagged); the
-     dynamic-paint sites (HUD action buttons, modal buttons,
-     radial menu rim) stay un-tagged because their existing
-     paint cycles would race the `update_high_contrast_borders`
-     system. Wiring HC into those needs a different shape —
-     either fold HC into the dynamic-paint logic, or have HC
-     consult the hover/focus state. Half-day to a day.
 
 WORKFLOW NOTES:
   - Use the system git config (already correct).
@@ -304,5 +320,9 @@ WORKFLOW NOTES:
     a "this does X" doc comment, verify the code actually does
     X and add a test if not. Two layers, two checks.
 
-OPEN AT THE START: ask which of A–D. Don't pick unilaterally.
+OPEN AT THE START: ask which of A–C. Don't pick unilaterally.
+Note: every remaining option is multi-session by nature (A is
+gated on Android tooling, B and C are explicitly multi-session
+arcs). A fresh session is a better fit for any of them than the
+tail of a long working stretch.
 ```
