@@ -173,6 +173,22 @@ pub struct ReplayOverlayScrubFill;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayWinMoveMarker;
 
+/// Marker for the fixed-position notches on the scrub bar — five 1px
+/// vertical ticks at 0 % / 25 % / 50 % / 75 % / 100 % that give the
+/// player visual anchor points for "where am I, relative to the
+/// quarter-marks of the replay." Mirrors the notch ladder in the
+/// screen-takeover mockup at
+/// `docs/ui-mockups/replay-overlay-mobile.html`.
+///
+/// Static — positions are set at spawn time and never change. The
+/// notches paint in [`BORDER_SUBTLE`] which is the same colour as the
+/// unfilled track, so visibility comes from extending the notch
+/// **vertically past** the 1px track (5px tall, anchored 2px above
+/// the track top) rather than from colour contrast. Same trick the
+/// WIN MOVE marker uses.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayScrubNotch;
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -487,6 +503,31 @@ fn spawn_overlay(
                             BackgroundColor(STATE_SUCCESS),
                         ));
                     }
+                    // Fixed quarter-mark notches: five 1px vertical
+                    // ticks at 0 / 25 / 50 / 75 / 100 % that give the
+                    // player visual anchor points without needing to
+                    // mentally bisect the bar. Painted in
+                    // BORDER_SUBTLE — same colour as the unfilled
+                    // track — so visibility comes from extending past
+                    // the 1px track height (5px tall, anchored 2px
+                    // above the track top) rather than colour
+                    // contrast. Spawned *after* the WIN MOVE marker
+                    // so a notch and the marker landing on the same
+                    // percentage paint the marker on top.
+                    for pct in scrub_notch_positions() {
+                        track.spawn((
+                            ReplayOverlayScrubNotch,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(pct),
+                                top: Val::Px(-2.0),
+                                width: Val::Px(1.0),
+                                height: Val::Px(5.0),
+                                ..default()
+                            },
+                            BackgroundColor(BORDER_SUBTLE),
+                        ));
+                    }
                 });
         });
 
@@ -529,6 +570,16 @@ fn scrub_pct(state: &ReplayPlaybackState) -> f32 {
             frac * 100.0
         }
     }
+}
+
+/// Pure helper — returns the fixed scrub-bar notch positions as
+/// percentages along the track. Five evenly-spaced notches at the
+/// quarter-marks: `[0, 25, 50, 75, 100]`. Function (rather than
+/// const) so the unit-test surface is obvious and a future
+/// regression — e.g. someone simplifying to three notches — fails
+/// at the helper test rather than at visual review.
+fn scrub_notch_positions() -> [f32; 5] {
+    [0.0, 25.0, 50.0, 75.0, 100.0]
 }
 
 /// Pure helper — returns the WIN MOVE marker's left-edge position as
@@ -1429,6 +1480,107 @@ mod tests {
             win_marker_count(&mut app),
             0,
             "marker must despawn with the rest of the overlay tree"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // scrub_notch_positions + ReplayOverlayScrubNotch spawn behaviour
+    // -----------------------------------------------------------------------
+
+    fn scrub_notch_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayScrubNotch>()
+            .iter(app.world())
+            .count()
+    }
+
+    /// Pure-helper guard. Locks in the five-notch ladder at the
+    /// quarter-marks. A future simplification to fewer notches (or a
+    /// shift to non-quarter spacing) must touch this test, surfacing
+    /// the visual change at review time.
+    #[test]
+    fn scrub_notch_positions_are_quarter_marks() {
+        assert_eq!(
+            scrub_notch_positions(),
+            [0.0, 25.0, 50.0, 75.0, 100.0],
+            "scrub notches must sit at the five quarter-mark percentages",
+        );
+    }
+
+    /// Five notch entities spawn alongside the rest of the overlay
+    /// tree on `Inactive → Playing`. Cardinality matches
+    /// `scrub_notch_positions().len()`.
+    #[test]
+    fn scrub_notches_spawn_with_overlay() {
+        let mut app = headless_app();
+        app.update();
+        assert_eq!(scrub_notch_count(&mut app), 0);
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            scrub_notch_count(&mut app),
+            scrub_notch_positions().len(),
+            "exactly one notch entity per quarter-mark must spawn",
+        );
+    }
+
+    /// Notches share the overlay tree's lifecycle — they despawn on
+    /// `Playing → Inactive` along with the banner root.
+    #[test]
+    fn scrub_notches_despawn_with_overlay() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(scrub_notch_count(&mut app), 5);
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            scrub_notch_count(&mut app),
+            0,
+            "notches must despawn with the rest of the overlay tree",
+        );
+    }
+
+    /// Notches are independent of `win_move_index` — a replay with no
+    /// win marker still gets the full five-notch ladder (notches give
+    /// quarter-mark anchor points; the win marker is an additional
+    /// overlay on top of them, not a replacement).
+    #[test]
+    fn scrub_notches_spawn_even_without_win_marker() {
+        let mut app = headless_app();
+        // Default constructor → win_move_index: None.
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            scrub_notch_count(&mut app),
+            5,
+            "notches and win marker are independent — no marker doesn't drop the notches",
         );
     }
 
