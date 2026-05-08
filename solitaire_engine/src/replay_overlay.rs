@@ -32,8 +32,8 @@ use crate::replay_playback::{stop_replay_playback, ReplayPlaybackState};
 use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY,
-    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY,
+    TYPE_BODY, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -134,6 +134,23 @@ pub struct ReplayOverlayGameCaption;
 /// players with different scanning preferences.
 #[derive(Component, Debug)]
 pub struct ReplayOverlayScrubFill;
+
+/// Marker for the WIN MOVE tick on the scrub bar — a small absolute-
+/// positioned `Node` anchored at `replay.win_move_index / total` along
+/// the track. Painted in [`STATE_SUCCESS`] so the player can see at a
+/// glance where the winning move sits relative to the playback cursor.
+///
+/// Static — the position is set at spawn time and never changes during
+/// playback (the underlying replay's `win_move_index` is immutable
+/// while `Playing`). Despawned with the rest of the overlay tree when
+/// the replay state transitions back to `Inactive`.
+///
+/// Spawned only when the active replay carries
+/// [`Replay::win_move_index`](solitaire_data::Replay::win_move_index)
+/// `= Some(_)` — older replays loaded from disk pre-date the field
+/// and have no win index to surface.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayWinMoveMarker;
 
 // ---------------------------------------------------------------------------
 // Plugin
@@ -375,6 +392,7 @@ fn spawn_overlay(
             // first-frame paint already reflects state instead of
             // popping from 0 → cursor on the first tick.
             let initial_scrub_pct = scrub_pct(state);
+            let win_pct = win_move_marker_pct(state);
             banner
                 .spawn((
                     Node {
@@ -394,6 +412,27 @@ fn spawn_overlay(
                         },
                         BackgroundColor(ACCENT_PRIMARY),
                     ));
+                    // WIN MOVE marker — small green tick anchored at
+                    // `win_move_index / total`. Spawned only when the
+                    // active replay carries the field; older replays
+                    // pre-dating `win_move_index` simply don't get a
+                    // marker. Centered vertically on the 1px track via
+                    // a 3px-tall node offset 1px above the track top so
+                    // 1px sits above and 1px below the track line.
+                    if let Some(pct) = win_pct {
+                        track.spawn((
+                            ReplayOverlayWinMoveMarker,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(pct),
+                                top: Val::Px(-1.0),
+                                width: Val::Px(2.0),
+                                height: Val::Px(3.0),
+                                ..default()
+                            },
+                            BackgroundColor(STATE_SUCCESS),
+                        ));
+                    }
                 });
         });
 
@@ -436,6 +475,33 @@ fn scrub_pct(state: &ReplayPlaybackState) -> f32 {
             frac * 100.0
         }
     }
+}
+
+/// Pure helper — returns the WIN MOVE marker's left-edge position as
+/// a percentage of the scrub track, or `None` when no marker should
+/// be drawn.
+///
+/// `None` is returned in any of these cases:
+/// - The state isn't `Playing` (no replay attached).
+/// - The replay's `win_move_index` is `None` (older replay loaded
+///   from disk pre-dating the field).
+/// - The replay's move list is empty (shouldn't happen for real wins,
+///   but guards the divide-by-zero).
+///
+/// The percentage clamps to `[0, 100]` so a malformed
+/// `win_move_index >= total` (defensive — shouldn't happen) doesn't
+/// position the marker outside the track.
+fn win_move_marker_pct(state: &ReplayPlaybackState) -> Option<f32> {
+    let ReplayPlaybackState::Playing { replay, .. } = state else {
+        return None;
+    };
+    let idx = replay.win_move_index?;
+    let total = replay.moves.len();
+    if total == 0 {
+        return None;
+    }
+    let frac = (idx as f32 / total as f32).clamp(0.0, 1.0);
+    Some(frac * 100.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,6 +1144,128 @@ mod tests {
             scrub_fill_pct(&mut app),
             100.0,
             "Completed state must read as a fully-filled track",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // win_move_marker_pct + ReplayOverlayWinMoveMarker spawn behaviour
+    // -----------------------------------------------------------------------
+
+    fn win_marker_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayWinMoveMarker>()
+            .iter(app.world())
+            .count()
+    }
+
+    #[test]
+    fn win_move_marker_pct_is_none_for_inactive() {
+        assert_eq!(win_move_marker_pct(&ReplayPlaybackState::Inactive), None);
+    }
+
+    #[test]
+    fn win_move_marker_pct_is_none_for_completed() {
+        // `Completed` carries no replay so the marker has no data to
+        // anchor against — the overlay treats this as "no marker".
+        assert_eq!(win_move_marker_pct(&ReplayPlaybackState::Completed), None);
+    }
+
+    #[test]
+    fn win_move_marker_pct_is_none_when_replay_lacks_field() {
+        // Synthetic replay constructor leaves win_move_index as None
+        // (legacy / pre-`ab857bb` path).
+        let state = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 0,
+            secs_to_next: 0.5,
+        };
+        assert_eq!(win_move_marker_pct(&state), None);
+    }
+
+    #[test]
+    fn win_move_marker_pct_is_some_at_correct_position() {
+        // 10 moves, win at index 9 → marker sits at 90 % of the track.
+        // Matches the recording semantic: cursor reaches the marker
+        // exactly when the about-to-apply move IS the win move.
+        let state = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10).with_win_move_index(Some(9)),
+            cursor: 0,
+            secs_to_next: 0.5,
+        };
+        assert_eq!(win_move_marker_pct(&state), Some(90.0));
+    }
+
+    #[test]
+    fn win_move_marker_pct_clamps_to_track_bounds() {
+        // Defensive: if a malformed replay carried `win_move_index >=
+        // total`, the marker must still sit on the track, not past it.
+        let state = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(5).with_win_move_index(Some(99)),
+            cursor: 0,
+            secs_to_next: 0.5,
+        };
+        assert_eq!(win_move_marker_pct(&state), Some(100.0));
+    }
+
+    #[test]
+    fn marker_spawned_when_replay_has_win_move_index() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8).with_win_move_index(Some(7)),
+                cursor: 0,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(
+            win_marker_count(&mut app),
+            1,
+            "marker entity must spawn when replay carries Some(win_move_index)"
+        );
+    }
+
+    #[test]
+    fn marker_not_spawned_when_replay_lacks_win_move_index() {
+        let mut app = headless_app();
+        // Default constructor → win_move_index: None (legacy replay).
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8),
+                cursor: 0,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(
+            win_marker_count(&mut app),
+            0,
+            "no marker should spawn for a replay pre-dating the field"
+        );
+    }
+
+    #[test]
+    fn marker_despawns_when_replay_state_returns_to_inactive() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8).with_win_move_index(Some(7)),
+                cursor: 0,
+                secs_to_next: 0.5,
+            },
+        );
+        app.update();
+        assert_eq!(win_marker_count(&mut app), 1);
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            win_marker_count(&mut app),
+            0,
+            "marker must despawn with the rest of the overlay tree"
         );
     }
 }
