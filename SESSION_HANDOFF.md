@@ -21,16 +21,17 @@ resume.
 ## Status at pause
 
 - **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `3d92a91`; the post-cut `Replay::win_move_index` data field
-  (`ab857bb`) rides on top of that.
+  `3d92a91`; post-cut work on B-2 (`ab857bb` data field +
+  `52befa6` WIN MOVE marker UI) rides on top of that.
 - **HEAD on origin:** matches local. v0.21.3 is fully on origin.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1212 passing / 0 failing** across the workspace
+- **Tests:** **1220 passing / 0 failing** across the workspace
   (1207 from v0.21.3's stats + 5 from `ab857bb`'s
-  `win_move_index` coverage).
+  `win_move_index` coverage + 8 from `52befa6`'s WIN MOVE marker
+  pure-helper truth-table + spawn lifecycle).
 - **Tags on origin:** `v0.9.0` through `v0.21.3`. v0.21.3 is on
   `3d92a91`; v0.21.2 stays on `f23df3b`; v0.21.1 stays on
   `daa655a`; v0.21.0 stays on `04f9bf9`; v0.20.0 stays on
@@ -47,12 +48,25 @@ resume.
   builder; for fresh recordings the value is always
   `Some(moves.len() - 1)` because recording freezes on win, but
   storing it explicitly lets the playback UI read the WIN MOVE
-  position directly without re-deriving on every render. UI
-  consumption (the WIN MOVE marker on the scrub bar, plus the
-  broader screen-takeover work — move-log scroller, mini-tableau
-  preview, playback controls) lands in subsequent commits. 5 new
+  position directly without re-deriving on every render. 5 new
   tests (1207 → 1212): default, builder set / set-None, on-disk
   round-trip, legacy-JSON-loads-with-None backward-compat.
+- **`52befa6` — WIN MOVE marker on the scrub bar.** Second
+  commit on B-2 — the UI that consumes the data field. New
+  `ReplayOverlayWinMoveMarker` component spawned as a sibling
+  to `ReplayOverlayScrubFill` under the 1px scrub track,
+  absolute-positioned at `replay.win_move_index / total` along
+  the bar. Painted in `STATE_SUCCESS` (green) so the marker
+  reads as "this is where the win lives." Pure helper
+  `win_move_marker_pct` returns `None` for any state where the
+  marker shouldn't draw (Inactive, Completed, replay missing
+  the field, empty move list); percentage clamps to `[0, 100]`
+  defensively. Lifecycle is spawn-time only — the marker is
+  immutable during a single playback because the underlying
+  `Replay` doesn't change while `Playing`. Despawned with the
+  overlay tree on transition back to `Inactive`. 8 new tests
+  (1212 → 1220): pure-helper truth table + spawn-presence /
+  spawn-absence / despawn-lifecycle observables.
 
 ## Open punch list
 
@@ -90,14 +104,11 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   a WIN MOVE marker on the scrub bar. Banner-local pieces all
   shipped in v0.21.0 (`c84d9f4` + `6204db8` + `54005d5` +
   `e080b49`); the floating MOVE chip above the focused card
-  shipped in v0.21.2 (`2fb2d63`). The data-layer prerequisite
-  for the WIN MOVE marker — `Replay::win_move_index:
-  Option<usize>` — landed post-v0.21.3 in `ab857bb` (additive
-  serde-default field; populated at the recording site;
-  exhaustively tested). What still needs to land for the
-  screen-takeover: the WIN MOVE scrub-bar marker UI (consumes
-  the new field), a move-log scroller, a mini-tableau preview,
-  and playback controls. Multi-session.
+  shipped in v0.21.2 (`2fb2d63`). The WIN MOVE scrub-bar marker
+  shipped post-v0.21.3 in `ab857bb` (data field) +
+  `52befa6` (UI). What still needs to land: a move-log
+  scroller, a mini-tableau preview, and playback controls
+  (play/pause/step). Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -274,15 +285,17 @@ DECISION TO ASK THE PLAYER FIRST:
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
   B. Replay-overlay screen-takeover redesign — multi-session
-     work: WIN MOVE marker on the scrub bar (data field
-     `Replay::win_move_index` already landed in `ab857bb`, just
-     needs UI consumption), move-log scroller, mini-tableau
-     preview, playback controls. The smaller floating-MOVE-chip
-     piece of B already shipped in v0.21.2 (`2fb2d63`); the
-     data-layer prerequisite shipped post-v0.21.3 in `ab857bb`.
-     The natural next commit on B is the WIN MOVE marker UI on
-     the scrub bar — finite, single-system, consumes the new
-     field directly.
+     work. WIN MOVE marker shipped post-v0.21.3 (`ab857bb` data
+     field + `52befa6` UI). What still needs to land:
+     move-log scroller, mini-tableau preview, playback controls
+     (play/pause/step buttons + keyboard accelerators). The
+     smaller floating-MOVE-chip piece shipped in v0.21.2
+     (`2fb2d63`). The natural next finite commit on B is
+     **playback controls** — the existing Stop button is the
+     only player-facing accelerator; adding play/pause is a
+     bounded UI + state-machine extension that exercises the
+     existing `ReplayPlaybackState::Playing { secs_to_next, ..
+     }` machinery without needing new data shapes.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
