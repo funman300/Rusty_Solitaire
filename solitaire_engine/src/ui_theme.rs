@@ -61,6 +61,11 @@ pub const BG_HUD_BAND: Color = Color::srgba(0.125, 0.125, 0.125, 1.0);
 /// `#d0d0d0`.
 pub const TEXT_PRIMARY: Color = Color::srgb(0.816, 0.816, 0.816);
 
+/// High-contrast variant of [`TEXT_PRIMARY`] — `#f5f5f5`. Boosted
+/// luminance for the Settings → Accessibility → High-contrast mode
+/// toggle. Spec at `design-system.md` §Accessibility (#2).
+pub const TEXT_PRIMARY_HC: Color = Color::srgb(0.961, 0.961, 0.961);
+
 /// Secondary text — captions, hints, muted labels. `#a0a0a0`.
 pub const TEXT_SECONDARY: Color = Color::srgb(0.627, 0.627, 0.627);
 
@@ -211,6 +216,15 @@ pub const CARD_SHADOW_LOCAL_Z: f32 = -0.05;
 /// aesthetic uses solid 1px borders rather than translucent washes.
 /// `#353535`.
 pub const BORDER_SUBTLE: Color = Color::srgba(0.208, 0.208, 0.208, 1.0);
+
+/// High-contrast variant of [`BORDER_SUBTLE`] — `#a0a0a0`. Lifts
+/// outlines from near-invisible to clearly visible for the
+/// Settings → Accessibility → High-contrast mode toggle. Spec at
+/// `design-system.md` §Accessibility (#2): outline jumps from
+/// `#505050` to `#a0a0a0` so card borders, popover edges, and
+/// focus rings are legible on low-quality displays / for low-
+/// vision users.
+pub const BORDER_SUBTLE_HC: Color = Color::srgba(0.627, 0.627, 0.627, 1.0);
 
 /// Strong border — hover outline, focused button, active popover.
 /// `outline` from the design system. `#505050`.

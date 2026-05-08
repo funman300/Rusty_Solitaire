@@ -13,7 +13,7 @@
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
-use solitaire_data::AnimSpeed;
+use solitaire_data::{AnimSpeed, Settings};
 
 use crate::achievement_plugin::display_name_for;
 use crate::auto_complete_plugin::AutoCompleteState;
@@ -196,7 +196,7 @@ fn init_slide_duration(
     mut dur: ResMut<EffectiveSlideDuration>,
 ) {
     if let Some(s) = settings {
-        dur.slide_secs = anim_speed_to_secs(&s.0.animation_speed);
+        dur.slide_secs = effective_slide_secs(&s.0);
     }
 }
 
@@ -205,7 +205,20 @@ fn sync_slide_duration(
     mut dur: ResMut<EffectiveSlideDuration>,
 ) {
     for ev in events.read() {
-        dur.slide_secs = anim_speed_to_secs(&ev.0.animation_speed);
+        dur.slide_secs = effective_slide_secs(&ev.0);
+    }
+}
+
+/// Resolves the player's effective per-slide animation duration —
+/// pre-Settings the same as `anim_speed_to_secs(&settings.animation_speed)`,
+/// but reduce-motion mode forces it to `0.0` regardless of the
+/// `AnimSpeed` selection so cards snap instantly to their target
+/// position. Spec at `design-system.md` §Accessibility (#3).
+fn effective_slide_secs(settings: &Settings) -> f32 {
+    if settings.reduce_motion_mode {
+        0.0
+    } else {
+        anim_speed_to_secs(&settings.animation_speed)
     }
 }
 
@@ -731,6 +744,45 @@ mod tests {
             .add_plugins(AnimationPlugin);
         app.update(); // PostStartup: spawns cards
         app
+    }
+
+    #[test]
+    fn effective_slide_secs_zeros_out_under_reduce_motion() {
+        // Reduce-motion forces slide_secs to 0.0 regardless of the
+        // AnimSpeed selection — cards snap instantly. Spec at
+        // `design-system.md` §Accessibility (#3).
+        let s = Settings {
+            animation_speed: AnimSpeed::Normal,
+            reduce_motion_mode: true,
+            ..Settings::default()
+        };
+        assert_eq!(effective_slide_secs(&s), 0.0);
+
+        let s = Settings {
+            animation_speed: AnimSpeed::Fast,
+            reduce_motion_mode: true,
+            ..Settings::default()
+        };
+        assert_eq!(effective_slide_secs(&s), 0.0, "Fast + reduce-motion still 0.0");
+    }
+
+    #[test]
+    fn effective_slide_secs_falls_through_to_anim_speed_when_motion_unchecked() {
+        // With reduce-motion off, the resolver is just a pass-through
+        // to anim_speed_to_secs — preserves the existing AnimSpeed
+        // ladder for players who aren't using the accessibility flag.
+        for speed in [AnimSpeed::Normal, AnimSpeed::Fast, AnimSpeed::Instant] {
+            let s = Settings {
+                animation_speed: speed,
+                reduce_motion_mode: false,
+                ..Settings::default()
+            };
+            assert_eq!(
+                effective_slide_secs(&s),
+                anim_speed_to_secs(&speed),
+                "without reduce-motion the effective duration must equal the AnimSpeed mapping",
+            );
+        }
     }
 
     #[test]

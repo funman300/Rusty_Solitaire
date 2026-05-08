@@ -34,8 +34,8 @@ use crate::font_plugin::FontResource;
 use crate::ui_theme::{
     CARD_SHADOW_ALPHA_DRAG, CARD_SHADOW_ALPHA_IDLE, CARD_SHADOW_COLOR, CARD_SHADOW_LOCAL_Z,
     CARD_SHADOW_OFFSET_DRAG, CARD_SHADOW_OFFSET_IDLE, CARD_SHADOW_PADDING_DRAG,
-    CARD_SHADOW_PADDING_IDLE, STOCK_BADGE_BG, STOCK_BADGE_FG, TEXT_PRIMARY, TYPE_CAPTION,
-    Z_STOCK_BADGE,
+    CARD_SHADOW_PADDING_IDLE, STOCK_BADGE_BG, STOCK_BADGE_FG, TEXT_PRIMARY, TEXT_PRIMARY_HC,
+    TYPE_CAPTION, Z_STOCK_BADGE,
 };
 
 /// Fraction of card height used as vertical offset between face-up tableau cards.
@@ -65,6 +65,17 @@ const FONT_SIZE_FRAC: f32 = 0.28;
 pub const CARD_FACE_COLOUR: Color = Color::srgb(0.102, 0.102, 0.102);
 /// Suit colour for hearts + diamonds — Terminal `#fb9fb1` (suit-pink).
 pub const RED_SUIT_COLOUR: Color = Color::srgb(0.984, 0.624, 0.694);
+/// High-contrast variant of [`RED_SUIT_COLOUR`] — `#ff8aa0`. Lifted
+/// chroma + luminance for the Settings → Accessibility → High-
+/// contrast mode toggle. Spec at `design-system.md` §Accessibility
+/// (#2): suit-red boosts from `#fb9fb1` to `#ff8aa0` so red suits
+/// remain unambiguously distinguishable from foreground gray on
+/// low-quality displays. Independent of `RED_SUIT_COLOUR_CBM`
+/// (lime) — high-contrast is *additive* over the default colour
+/// palette; CBM is a *replacement* of red with a hue-distinct
+/// alternative. The two modes can stack; CBM wins when both are on
+/// because the CBM lime is itself a high-contrast colour.
+pub const RED_SUIT_COLOUR_HC: Color = Color::srgb(1.000, 0.541, 0.627);
 /// Suit colour for spades + clubs — Terminal `#d0d0d0` (TEXT_PRIMARY).
 pub const BLACK_SUIT_COLOUR: Color = Color::srgb(0.816, 0.816, 0.816);
 
@@ -506,7 +517,8 @@ fn sync_cards_startup(
         let selected_back = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
         let back_colour = card_back_colour(selected_back);
         let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
-        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities, card_images.as_deref(), selected_back);
+        let high_contrast = settings.as_ref().is_some_and(|s| s.0.high_contrast_mode);
+        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, high_contrast, &entities, card_images.as_deref(), selected_back);
     }
 }
 
@@ -529,7 +541,8 @@ fn sync_cards_on_change(
         let selected_back = settings.as_ref().map_or(0, |s| s.0.selected_card_back);
         let back_colour = card_back_colour(selected_back);
         let color_blind = settings.as_ref().is_some_and(|s| s.0.color_blind_mode);
-        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, &entities, card_images.as_deref(), selected_back);
+        let high_contrast = settings.as_ref().is_some_and(|s| s.0.high_contrast_mode);
+        sync_cards(commands, &game.0, &layout.0, slide_secs, back_colour, color_blind, high_contrast, &entities, card_images.as_deref(), selected_back);
     }
 }
 
@@ -541,6 +554,7 @@ fn sync_cards(
     slide_secs: f32,
     back_colour: Color,
     color_blind: bool,
+    high_contrast: bool,
     entities: &Query<(Entity, &CardEntity, &Transform, Option<&CardAnimation>)>,
     card_images: Option<&CardImageSet>,
     selected_back: usize,
@@ -573,10 +587,10 @@ fn sync_cards(
             Some(&(entity, cur, has_anim)) => {
                 update_card_entity(
                     &mut commands, entity, card, position, z, layout,
-                    slide_secs, back_colour, color_blind, cur, has_anim, card_images, selected_back,
+                    slide_secs, back_colour, color_blind, high_contrast, cur, has_anim, card_images, selected_back,
                 )
             }
-            None => spawn_card_entity(&mut commands, card, position, z, layout, back_colour, color_blind, card_images, selected_back),
+            None => spawn_card_entity(&mut commands, card, position, z, layout, back_colour, color_blind, high_contrast, card_images, selected_back),
         }
     }
 }
@@ -661,6 +675,7 @@ fn spawn_card_entity(
     layout: &Layout,
     back_colour: Color,
     color_blind: bool,
+    high_contrast: bool,
     card_images: Option<&CardImageSet>,
     selected_back: usize,
 ) {
@@ -690,7 +705,7 @@ fn spawn_card_entity(
                     font_size: layout.card_size.x * FONT_SIZE_FRAC,
                     ..default()
                 },
-                TextColor(text_colour(card, color_blind)),
+                TextColor(text_colour(card, color_blind, high_contrast)),
                 Transform::from_xyz(0.0, 0.0, 0.01),
                 label_visibility(card),
             ));
@@ -709,6 +724,7 @@ fn update_card_entity(
     slide_secs: f32,
     back_colour: Color,
     color_blind: bool,
+    high_contrast: bool,
     cur: Vec3,
     has_card_animation: bool,
     card_images: Option<&CardImageSet>,
@@ -762,7 +778,7 @@ fn update_card_entity(
                     font_size: layout.card_size.x * FONT_SIZE_FRAC,
                     ..default()
                 },
-                TextColor(text_colour(card, color_blind)),
+                TextColor(text_colour(card, color_blind, high_contrast)),
                 Transform::from_xyz(0.0, 0.0, 0.01),
                 label_visibility(card),
             ));
@@ -797,23 +813,35 @@ fn label_for(card: &Card) -> String {
 
 /// Suit colour for the rank/suit overlay rendered atop the constant
 /// fallback sprite (only fires under `MinimalPlugins` — production
-/// renders the suit glyph baked into the PNG). When `color_blind` is
-/// enabled, red-suit cards swap to `RED_SUIT_COLOUR_CBM` (lime) — the
-/// "Settings toggle swaps red→lime" half of the design system's
-/// colour-blind support. The other half (always-on filled-vs-outlined
-/// glyph differentiation for ♥♠ vs ♦♣) is baked into the PNG art and
-/// has no constant-fallback equivalent.
+/// renders the suit glyph baked into the PNG). Two independent
+/// accessibility flags compose:
 ///
-/// The CBM swap is lime (not the new brick-red `ACCENT_PRIMARY`)
-/// because the primary accent is itself red-family — the CBM
-/// alternative needs to be hue-distinct from the original red suit.
-fn text_colour(card: &Card, color_blind: bool) -> Color {
+/// - `color_blind`: red-suit cards swap to `RED_SUIT_COLOUR_CBM`
+///   (lime) — the "Settings toggle swaps red→lime" half of the
+///   design system's colour-blind support. CBM is a hue-replacement
+///   for red, so HC has no further effect on red when CBM is on
+///   (the lime is itself a high-contrast colour).
+/// - `high_contrast`: when CBM is off, red suits boost to
+///   `RED_SUIT_COLOUR_HC` (`#ff8aa0` from the spec); black suits
+///   boost from `#d0d0d0` to `#f5f5f5` (`TEXT_PRIMARY_HC`).
+///
+/// The other half of CBM support (always-on filled-vs-outlined
+/// glyph differentiation for ♥♠ vs ♦♣) is baked into the PNG art
+/// and has no constant-fallback equivalent.
+fn text_colour(card: &Card, color_blind: bool, high_contrast: bool) -> Color {
     if card.suit.is_red() {
         if color_blind {
+            // CBM lime wins — the colour-blind swap replaces the
+            // red hue entirely, and the lime is already high-
+            // luminance, so an HC boost on top has nothing to do.
             RED_SUIT_COLOUR_CBM
+        } else if high_contrast {
+            RED_SUIT_COLOUR_HC
         } else {
             RED_SUIT_COLOUR
         }
+    } else if high_contrast {
+        TEXT_PRIMARY_HC
     } else {
         BLACK_SUIT_COLOUR
     }
@@ -1769,8 +1797,8 @@ mod tests {
             rank: Rank::Ace,
             face_up: true,
         };
-        assert_eq!(text_colour(&h, false), RED_SUIT_COLOUR);
-        assert_eq!(text_colour(&d, false), RED_SUIT_COLOUR);
+        assert_eq!(text_colour(&h, false, false), RED_SUIT_COLOUR);
+        assert_eq!(text_colour(&d, false, false), RED_SUIT_COLOUR);
     }
 
     #[test]
@@ -1787,8 +1815,8 @@ mod tests {
             rank: Rank::Ace,
             face_up: true,
         };
-        assert_eq!(text_colour(&c, false), BLACK_SUIT_COLOUR);
-        assert_eq!(text_colour(&s, false), BLACK_SUIT_COLOUR);
+        assert_eq!(text_colour(&c, false, false), BLACK_SUIT_COLOUR);
+        assert_eq!(text_colour(&s, false, false), BLACK_SUIT_COLOUR);
     }
 
     #[test]
@@ -2082,7 +2110,7 @@ mod tests {
     #[test]
     fn text_colour_color_blind_mode_swaps_red_suits_to_lime() {
         let red_card = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Queen, face_up: true };
-        let cbm_colour = text_colour(&red_card, true);
+        let cbm_colour = text_colour(&red_card, true, false);
         assert_eq!(
             cbm_colour, RED_SUIT_COLOUR_CBM,
             "color-blind mode must replace the red suit colour with the CBM lime",
@@ -2097,9 +2125,71 @@ mod tests {
     fn text_colour_color_blind_mode_does_not_change_black_suits() {
         let black_card = Card { id: 0, suit: Suit::Clubs, rank: Rank::Jack, face_up: true };
         assert_eq!(
-            text_colour(&black_card, true),
+            text_colour(&black_card, true, false),
             BLACK_SUIT_COLOUR,
             "color-blind mode must not alter black-suit text colour",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // text_colour (pure) — high-contrast mode
+    //
+    // Spec at `design-system.md` §Accessibility (#2): on-surface
+    // boosts to `#f5f5f5` (TEXT_PRIMARY_HC) and suit-red to
+    // `#ff8aa0` (RED_SUIT_COLOUR_HC). Independent of CBM:
+    // the two flags compose, with CBM winning on red when both
+    // are on (the CBM lime is itself a high-contrast colour, so
+    // an HC bump on top has no further effect).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn text_colour_high_contrast_boosts_red_suits_to_hc_red() {
+        let red_card = Card { id: 0, suit: Suit::Hearts, rank: Rank::Five, face_up: true };
+        assert_eq!(
+            text_colour(&red_card, false, true),
+            RED_SUIT_COLOUR_HC,
+            "high-contrast mode must boost red suits to the HC red variant",
+        );
+        assert_ne!(
+            text_colour(&red_card, false, true),
+            RED_SUIT_COLOUR,
+            "HC red must be visibly distinct from the default red suit colour",
+        );
+    }
+
+    #[test]
+    fn text_colour_high_contrast_boosts_black_suits_to_hc_white() {
+        let black_card = Card { id: 0, suit: Suit::Spades, rank: Rank::Two, face_up: true };
+        assert_eq!(
+            text_colour(&black_card, false, true),
+            TEXT_PRIMARY_HC,
+            "high-contrast mode must boost black suits to TEXT_PRIMARY_HC",
+        );
+    }
+
+    #[test]
+    fn text_colour_color_blind_wins_over_high_contrast_on_red_suits() {
+        // When both modes are enabled, red→lime (CBM) wins because
+        // the CBM lime is itself a high-luminance accent and the HC
+        // boost would pick a different hue, defeating the purpose of
+        // the colour-blind swap.
+        let red_card = Card { id: 0, suit: Suit::Diamonds, rank: Rank::Ace, face_up: true };
+        assert_eq!(
+            text_colour(&red_card, true, true),
+            RED_SUIT_COLOUR_CBM,
+            "CBM lime must win over HC red when both modes are on",
+        );
+    }
+
+    #[test]
+    fn text_colour_high_contrast_alone_does_not_change_black_suits_under_cbm() {
+        // CBM doesn't touch black suits, so HC remains the only
+        // source of variation for the black row when both are on.
+        let black_card = Card { id: 0, suit: Suit::Clubs, rank: Rank::King, face_up: true };
+        assert_eq!(
+            text_colour(&black_card, true, true),
+            TEXT_PRIMARY_HC,
+            "with CBM + HC both on, black suits still pick up the HC boost",
         );
     }
 

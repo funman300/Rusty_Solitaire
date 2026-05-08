@@ -117,6 +117,24 @@ pub struct Settings {
     /// solely on colour.
     #[serde(default)]
     pub color_blind_mode: bool,
+    /// When `true`, boost foreground text + suit-red glyphs to higher-
+    /// luminance variants for better legibility on low-quality displays
+    /// or for low-vision users.  Per `design-system.md` §Accessibility:
+    /// on-surface `#d0d0d0` → `#f5f5f5`, suit-red `#fb9fb1` → `#ff8aa0`,
+    /// outline `#505050` → `#a0a0a0`.  Older `settings.json` files
+    /// written before this field existed deserialize cleanly to
+    /// `false` thanks to `#[serde(default)]`.
+    #[serde(default)]
+    pub high_contrast_mode: bool,
+    /// When `true`, suppresses non-essential motion: card-lift slide
+    /// transitions become instant snaps, splash scanline / cursor pulse
+    /// animations are disabled, and the warning-chip pulse holds at
+    /// rest.  Per `design-system.md` §Accessibility — the WCAG-required
+    /// reduce-motion mode.  Older `settings.json` files written before
+    /// this field existed deserialize cleanly to `false` thanks to
+    /// `#[serde(default)]`.
+    #[serde(default)]
+    pub reduce_motion_mode: bool,
     /// Window size and screen position to restore on next launch. `None`
     /// means "use platform defaults" — set on first run, then populated
     /// as the player resizes / moves the window. Older `settings.json`
@@ -314,6 +332,8 @@ impl Default for Settings {
             selected_background: 0,
             first_run_complete: false,
             color_blind_mode: false,
+            high_contrast_mode: false,
+            reduce_motion_mode: false,
             window_geometry: None,
             selected_theme_id: default_theme_id(),
             shown_achievement_onboarding: false,
