@@ -35,10 +35,10 @@ resume.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1232 passing / 0 failing** across the workspace
-  (1228 in v0.21.4 + 4 from `fe68861`'s scrub-notch tests).
-  Detail in `CHANGELOG.md` § [0.21.4] § Stats; post-cut delta
-  tracked here.
+- **Tests:** **1236 passing / 0 failing** across the workspace
+  (1228 in v0.21.4 + 4 from `fe68861`'s scrub-notch tests + 4
+  from `d322abf`'s notch-label tests). Detail in `CHANGELOG.md`
+  § [0.21.4] § Stats; post-cut delta tracked here.
 - **Tags on origin:** `v0.9.0` through `v0.21.4`. v0.21.4 is on
   `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
   `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
@@ -64,11 +64,35 @@ resume.
   on the same percentage paint the marker on top. Mirrors the
   notch ladder in `docs/ui-mockups/replay-overlay-mobile.html`.
   4 new tests; 1228 → 1232.
+- **`d322abf` — `feat(replay): add percentage labels under
+  scrub-bar notches`.** First **layout-changing** commit in B-2's
+  screen-takeover arc. Banner height grew from 60 → 76 px to make
+  room for a 16 px label row beneath the 1 px scrub track; the
+  top row's `flex_grow: 1.0` still consumes the same 59 px so no
+  ripples on existing content. Pure helper `scrub_notch_labels()`
+  returns the fixed `["0%", "25%", "50%", "75%", "100%"]` array,
+  paired index-for-index with `scrub_notch_positions()`. Spawn
+  loop applies an "endpoints flush, middle three percent-anchored"
+  positioning pattern (Bevy 0.18 UI has no clean
+  `translate-x: -50%` primitive, so endpoints flush against
+  banner edges and middle three accept slight right-of-notch
+  offset). Label colour is `TEXT_SECONDARY` (mockup's
+  `BORDER_SUBTLE` reads as too low-contrast at 12 px against
+  `BG_ELEVATED_HI`). 4 new tests; 1232 → 1236.
 
-Next finite step on B-2: percentage labels (`0%`, `25%`, …)
-under each notch — needs the banner height to grow from 60 px to
-~76 px to accommodate ~10 px of label space, so it's a real
-layout change rather than another decoration commit.
+Banner geometry is now mutable — every prior B-2 commit fit
+inside fixed 60 px space, but the labels commit established the
+"grow the container, add a new flex-column child" precedent. The
+next sub-pieces need significantly more vertical room and follow
+the same shape.
+
+Next finite step on B-2: a **keybind-hint footer** at the bottom
+of the banner (e.g. `[SPACE] pause`). Tiny scope — surfaces the
+existing Space accelerator visually (UI-first §3.3). Or jump
+straight to the move-log card / mini-tableau preview, both of
+which need a much larger banner-height grow (effectively the
+takeover container itself). Footer keeps the cadence small;
+move-log/preview is the bigger arc.
 
 ## Open punch list
 
@@ -112,12 +136,15 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
   accelerator) shipped post-v0.21.3 in `fbe48ac`. Quarter-mark
   scrub notches (5 ticks at 0/25/50/75/100 %) shipped
   post-v0.21.4 in `fe68861` — first decoration step toward the
-  takeover layout. What still needs to land: percentage labels
-  under each notch (forces the banner to grow from 60 px to
-  ~76 px so it's a real layout change), then a move-log scroller
-  and a mini-tableau preview — both screen-takeover-only pieces
-  that need a larger layout reflow than the existing banner can
-  carry. Multi-session.
+  takeover layout. Percentage labels under each notch shipped
+  post-v0.21.4 in `d322abf` — first **layout-changing** commit
+  (banner 60 → 76 px to make room for a 16 px label row).
+  Banner geometry is now mutable. What still needs to land: a
+  keybind-hint footer (small carve-out) and the bigger pieces —
+  a move-log scroller and a mini-tableau preview — both
+  screen-takeover-only pieces that need a much larger banner
+  height grow (effectively the takeover container itself).
+  Multi-session.
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -270,9 +297,10 @@ v0.21.1 at daa655a, v0.21.0 at 04f9bf9. Working tree clean. See
 CHANGELOG.md § [0.21.4] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Post-cut HEAD is
-`fe68861` (one carved-out commit on top of v0.21.4 — scrub-bar
-notches). All workspace tests pass (1232; check with
-`cargo test --workspace`), clippy clean.
+`d322abf` (two carved-out commits on top of v0.21.4 — scrub-bar
+notches `fe68861`, then notch labels `d322abf`). All workspace
+tests pass (1236; check with `cargo test --workspace`), clippy
+clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -302,13 +330,17 @@ DECISION TO ASK THE PLAYER FIRST:
      playback controls. The smaller floating-MOVE-chip piece
      shipped in v0.21.2 (`2fb2d63`). Post-v0.21.4: quarter-
      mark scrub notches shipped in `fe68861` (5 ticks at
-     0/25/50/75/100 %). The natural next finite step is
-     **percentage labels under each notch** — small but
-     forces the banner height to grow from 60 px to ~76 px,
-     making it the first real layout change in the arc.
-     After that: move-log scroller and mini-tableau preview,
-     both screen-takeover-only pieces that need more vertical
-     real estate than the banner can carry. Mockup at
+     0/25/50/75/100 %), and percentage labels under each
+     notch shipped in `d322abf` (banner grew 60 → 76 px to
+     accommodate a 16 px label row — first layout change in
+     the arc, banner geometry is now mutable). The natural
+     next finite step is a **keybind-hint footer** at the
+     bottom of the banner (e.g. `[SPACE] pause`) — small
+     carve-out that surfaces the existing Space accelerator
+     visually (UI-first §3.3). After that: move-log scroller
+     and mini-tableau preview, both screen-takeover-only
+     pieces that need a much larger banner-height grow
+     (effectively the takeover container itself). Mockup at
      `docs/ui-mockups/replay-overlay-mobile.html`.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
