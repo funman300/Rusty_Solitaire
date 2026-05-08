@@ -15,11 +15,11 @@
     <path d="M16,4 C 13,4 10,7 10,10 C 10,12 11,13 12,14 C 9,14 4,17 4,21 C 4,24 7,27 10,27 C 12,27 14,26 14,24 L 13,30 L 19,30 L 18,24 C 18,26 20,27 22,27 C 25,27 28,24 28,21 C 28,17 23,14 20,14 C 21,13 22,12 22,10 C 22,7 19,4 16,4 Z" fill="none" stroke="#d0d0d0" stroke-width="3"/>
   </g>
 
-  <!-- Bottom-right large suit glyph, 64 × 64, rotated 180° so it
-       reads upside-down (the convention for inverted-corner
-       indicators). The transform pipeline lands the glyph's visible
-       bottom-right at (242, 350) and visible top-left at (178, 286). -->
-  <g transform="translate(242 350) rotate(180) scale(2)">
+  <!-- Bottom-right large suit glyph at (178, 286), 64 × 64.
+       Visible bottom-right at (242, 350), visible top-left at
+       (178, 286). Same upright orientation as the top-left small
+       glyph — no 180° rotation applied. -->
+  <g transform="translate(178 286) scale(2)">
     <path d="M16,4 C 13,4 10,7 10,10 C 10,12 11,13 12,14 C 9,14 4,17 4,21 C 4,24 7,27 10,27 C 12,27 14,26 14,24 L 13,30 L 19,30 L 18,24 C 18,26 20,27 22,27 C 25,27 28,24 28,21 C 28,17 23,14 20,14 C 21,13 22,12 22,10 C 22,7 19,4 16,4 Z" fill="none" stroke="#d0d0d0" stroke-width="3"/>
   </g>
 </svg>

@@ -217,7 +217,7 @@ Flat face design.
 - Background: `#1a1a1a`
 - Border: 1px solid in suit color (pink for hearts/diamonds, foreground gray for spades/clubs)
 - Top-left: rank in JetBrains Mono Bold 18px + small suit glyph (10px)
-- Bottom-right: large suit glyph (32px), rotated 180°
+- Bottom-right: large suit glyph (32px), upright (same orientation as the top-left small glyph — single-orientation digital play does not benefit from the traditional 180° inverted-corner indicator)
 - Corner radius: 8px
 - Suit differentiation: hearts and spades have **filled** glyphs; diamonds and clubs have **outlined** glyphs (1.5px stroke)
 

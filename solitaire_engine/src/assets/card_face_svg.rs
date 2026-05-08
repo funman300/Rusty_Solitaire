@@ -220,6 +220,13 @@ pub fn face_svg(rank: Rank, suit: Suit) -> String {
     // because the bundled `FiraMono` font doesn't carry usable
     // U+2660-2666 glyphs at the requested size. See `suit_path_d`
     // for the rationale.
+    //
+    // Both glyphs render in the same upright orientation. The
+    // traditional playing-card convention rotates the bottom-right
+    // indicator 180° so the card reads correctly when flipped, but
+    // most digital decks have abandoned that — single-orientation
+    // play doesn't benefit from the inverted-corner readback. See
+    // `design-system.md` § Game Cards for the spec deviation.
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="384" viewBox="0 0 256 384">
   <rect x="1" y="1" width="254" height="382" rx="16" ry="16"
@@ -238,11 +245,11 @@ pub fn face_svg(rank: Rank, suit: Suit) -> String {
     <path d="{path_d}" {small_glyph_attrs}/>
   </g>
 
-  <!-- Bottom-right large suit glyph, 64 × 64, rotated 180° so it
-       reads upside-down (the convention for inverted-corner
-       indicators). The transform pipeline lands the glyph's visible
-       bottom-right at (242, 350) and visible top-left at (178, 286). -->
-  <g transform="translate(242 350) rotate(180) scale(2)">
+  <!-- Bottom-right large suit glyph at (178, 286), 64 × 64.
+       Visible bottom-right at (242, 350), visible top-left at
+       (178, 286). Same upright orientation as the top-left small
+       glyph — no 180° rotation applied. -->
+  <g transform="translate(178 286) scale(2)">
     <path d="{path_d}" {large_glyph_attrs}/>
   </g>
 </svg>"##
