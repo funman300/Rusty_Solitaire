@@ -6957,6 +6957,8 @@ dependencies = [
  "keyring",
  "solitaire_data",
  "solitaire_engine",
+ "tiny-skia 0.12.0",
+ "winit",
 ]
 
 [[package]]

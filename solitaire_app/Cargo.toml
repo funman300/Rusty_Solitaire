@@ -22,16 +22,25 @@ bevy             = { workspace = true }
 solitaire_engine = { workspace = true }
 solitaire_data   = { workspace = true }
 
-# `keyring`'s default-store init only matters on platforms with a
-# real keychain backend (Linux Secret Service, macOS Keychain,
-# Windows Credential Store). The crate also pulls `rpassword`
-# transitively, which uses `libc::__errno_location` — a symbol
-# Android's bionic doesn't expose. Target-gating keeps
-# `cargo apk build` viable; the call site in `lib.rs` has its own
-# `cfg(not(target_os = "android"))` guard so the desktop init path
-# is unchanged.
+# Desktop-only deps. `keyring`'s default-store init only matters on
+# platforms with a real keychain backend (Linux Secret Service,
+# macOS Keychain, Windows Credential Store), and its transitive
+# `rpassword` uses `libc::__errno_location` — a symbol Android's
+# bionic doesn't expose. `winit` is promoted from a transitive
+# Bevy 0.18 → bevy_winit 0.18 → winit 0.30 dep to a direct dep so
+# the `Window::icon` wiring in `set_window_icon` can construct
+# `winit::window::Icon` values (bevy_winit 0.18 doesn't re-export
+# `Icon`). Android draws its launcher icon from the APK manifest,
+# so neither dep matters there. Target-gating keeps `cargo apk
+# build` viable; the desktop call sites have their own
+# `cfg(not(target_os = "android"))` guards.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-keyring          = { workspace = true }
+keyring   = { workspace = true }
+winit     = { version = "0.30", default-features = false }
+# `tiny-skia` is already in the workspace deps for `solitaire_engine`;
+# `solitaire_app` consumes it directly only on the desktop icon path
+# (PNG → raw RGBA decode for `set_window_icon`).
+tiny-skia = { workspace = true }
 
 # --- Android packaging metadata (read by `cargo-apk`) -------------------
 #
