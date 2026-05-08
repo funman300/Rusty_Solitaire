@@ -2,7 +2,7 @@
 //!
 //! The overlay is a thin top-of-window banner with three pieces of UI:
 //!
-//! - A "Replay" label on the left so the player knows the surface is
+//! - A "▌ replay" label on the left so the player knows the surface is
 //!   under playback control rather than live input.
 //! - A "Move N of M" progress indicator in the centre, recomputed every
 //!   frame the cursor advances.
@@ -10,7 +10,7 @@
 //!   control to the player.
 //!
 //! When playback finishes ([`ReplayPlaybackState::Completed`]) the banner
-//! label swaps to "Replay complete" and stays visible until the playback
+//! label swaps to "▌ replay complete" and stays visible until the playback
 //! core auto-clears the resource back to [`ReplayPlaybackState::Inactive`]
 //! a few seconds later, at which point the overlay despawns.
 //!
@@ -52,7 +52,7 @@ pub const Z_REPLAY_OVERLAY: i32 = Z_DROP_OVERLAY as i32 + 5;
 
 /// Total height of the banner in pixels. Thin enough to leave the
 /// gameplay surface visible underneath, tall enough to comfortably fit
-/// the headline-sized "Replay" label.
+/// the headline-sized "▌ replay" label.
 const BANNER_HEIGHT: f32 = 48.0;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
@@ -69,8 +69,10 @@ const BANNER_ALPHA: f32 = 0.92;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayRoot;
 
-/// Marker on the left-hand banner label `Text`. Carries either "Replay"
-/// (during playback) or "Replay complete" (once finished); the
+/// Marker on the left-hand banner label `Text`. Carries either
+/// "▌ replay" (during playback) or "▌ replay complete" (once
+/// finished — the cursor-block prefix matches the splash boot-screen
+/// idiom so the surface reads as a Terminal output line); the
 /// completion-text-update system swaps the contents in place.
 #[derive(Component, Debug)]
 pub struct ReplayOverlayBannerText;
@@ -174,7 +176,7 @@ fn react_to_state_change(
 }
 
 /// Spawns the banner — a flex-row Node anchored to the top edge of the
-/// window with three children: the "Replay" / "Replay complete" label,
+/// window with three children: the "▌ replay" / "▌ replay complete" label,
 /// the centred progress text, and the right-aligned Stop button.
 fn spawn_overlay(
     commands: &mut Commands,
@@ -184,9 +186,9 @@ fn spawn_overlay(
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
 
     let banner_label = if state.is_completed() {
-        "Replay complete"
+        "\u{258C} replay complete" // ▌ — cursor-block prefix; matches the splash boot-screen convention.
     } else {
-        "Replay"
+        "\u{258C} replay" // ▌
     };
     let progress_label = format_progress(state);
 
@@ -335,8 +337,8 @@ fn scrub_pct(state: &ReplayPlaybackState) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// Overwrites the banner label whenever the resource changes — covers the
-/// `Playing → Completed` transition by swapping "Replay" for
-/// "Replay complete" in place without despawning the overlay.
+/// `Playing → Completed` transition by swapping "▌ replay" for
+/// "▌ replay complete" in place without despawning the overlay.
 fn update_banner_label(
     state: Res<ReplayPlaybackState>,
     mut q: Query<&mut Text, With<ReplayOverlayBannerText>>,
@@ -345,9 +347,9 @@ fn update_banner_label(
         return;
     }
     let label = if state.is_completed() {
-        "Replay complete"
+        "\u{258C} replay complete" // ▌
     } else if state.is_playing() {
-        "Replay"
+        "\u{258C} replay" // ▌
     } else {
         return;
     };
@@ -504,7 +506,7 @@ mod tests {
     }
 
     /// Going `Inactive → Playing` spawns exactly one overlay root and
-    /// the banner label reads "Replay".
+    /// the banner label reads "▌ replay".
     #[test]
     fn overlay_spawns_when_playback_starts() {
         let mut app = headless_app();
@@ -528,7 +530,7 @@ mod tests {
             1,
             "exactly one ReplayOverlayRoot must spawn on Inactive → Playing",
         );
-        assert_eq!(banner_text(&mut app), "Replay");
+        assert_eq!(banner_text(&mut app), "\u{258C} replay");
     }
 
     /// The progress-text entity reads `"Move {cursor} of {total}"` for a
@@ -621,7 +623,7 @@ mod tests {
 
     /// On `Playing → Completed` the banner label updates in place rather
     /// than respawning. The overlay must still be present, and the label
-    /// must read "Replay complete".
+    /// must read "▌ replay complete".
     #[test]
     fn overlay_text_changes_on_completed() {
         let mut app = headless_app();
@@ -634,7 +636,7 @@ mod tests {
             },
         );
         app.update();
-        assert_eq!(banner_text(&mut app), "Replay");
+        assert_eq!(banner_text(&mut app), "\u{258C} replay");
 
         set_state(&mut app, ReplayPlaybackState::Completed);
         app.update();
@@ -646,7 +648,7 @@ mod tests {
         );
         assert_eq!(
             banner_text(&mut app),
-            "Replay complete",
+            "\u{258C} replay complete",
             "banner label must swap on Playing → Completed",
         );
     }

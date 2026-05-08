@@ -1,39 +1,103 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-07 — v0.20.0 cut. Two through-lines closed
-in this cycle: a full **Terminal visual-identity port** (token system
-in `ui_theme` plus downstream chrome migrations across modal scaffold,
-gameplay-feedback, toasts, and the table / card / splash surfaces)
-and the **Android persistence shim** that closes the
-`dirs::data_dir() = None` pitfall flagged in CLAUDE.md §10. The
-Android *build* target landed earlier in the cycle (`fb8b2ac`); this
-session paid down the persistence half so a real APK can survive a
-cold start. The 24 Stitch-rendered mockups are now in-tree under
-`docs/ui-mockups/`; future plugin work diffs against the matching
-mockup before touching pixels.
+**Last updated:** 2026-05-07 — v0.20.0 cut and tagged at `41a009a`,
+two post-cut commits sit on top of the tag, and a constructive
+`replay_overlay` WIP is checked out in the working tree. The cut
+itself shipped two through-lines: a full **Terminal visual-identity
+port** (token system, modal scaffold, gameplay-feedback, toasts,
+table / card chrome, splash cursor) and the **Android persistence
+shim** that closes the `dirs::data_dir() = None` pitfall flagged in
+CLAUDE.md §10. Since the cut, two more pieces landed: the rules-
+based desktop-adaptation spec (closes the spec gap exposed when we
+noticed 23 of 24 mockups were mobile-only) and the splash boot-
+screen port (full mockup-spec splash with header, boot log,
+progress bar, palette swatches, version footer, ~496 LOC of
+`splash_plugin.rs` rewrite + `SplashFadable` scaffold refactor).
 
 ## Status at pause
 
-- **HEAD on origin:** the v0.20.0 docs commit (the one that lands
-  this file + CHANGELOG cut). Tag not yet pushed; cut whenever
-  feels right.
-- **Working tree:** clean apart from the still-untracked `artwork/`
-  directory (intentional — the card PNGs there are mid-flight for
-  the Terminal aesthetic and committing now would freeze a
-  transitional state).
-- **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
-  clean.
-- **Tests:** **1176 passing / 0 failing** across the workspace.
-  Six new tests this cycle: four `ui_theme` invariant guards
-  (type / spacing / z-index scales + `scaled_duration`), one
-  toast-variant-border-mapping pair, and four palette-tracking
-  guards on `MARKER_VALID` / `HINT_PILE_HIGHLIGHT_COLOUR` /
-  `RIGHT_CLICK_HIGHLIGHT_COLOUR` / toast-border distinctness. No
-  known flakes.
-- **Tags on origin:** `v0.9.0` through `v0.19.0`. v0.20.0 not yet
-  tagged.
+- **HEAD locally:** `cacb19c` (splash boot-screen port).
+- **HEAD on origin:** `41a009a` (the v0.20.0 cut). Local master is
+  **2 commits ahead of origin** — `39b8496` (desktop-adaptation
+  spec) and `cacb19c` are not yet pushed. Decide whether to roll
+  these into v0.20.1 / v0.21.0-candidates before pushing.
+- **Working tree:** dirty —
+  `solitaire_engine/src/replay_overlay.rs` carries a constructive
+  WIP for a 1px scrub-bar at the bottom edge of the replay banner
+  (~120 LOC). Compiles with one missing piece: `update_scrub_fill`
+  is referenced in the plugin's `add_systems` chain but the
+  function body was never written. **The working tree does not
+  compile. HEAD itself is clean** (verified by stashing the WIP
+  and running `cargo check -p solitaire_engine` against the
+  committed state — passes). Resume by writing the missing
+  function (see "Open punch list → replay_overlay scrub bar").
+- **`artwork/` directory:** still untracked. Intentional.
+- **Build at HEAD (WIP stashed):**
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- **Tests at HEAD (WIP stashed):** **1178 passing / 0 failing**
+  across the workspace. Up from 1176 at the v0.20.0 cut: the
+  splash boot-screen port adds two new tests
+  (`splash_renders_terminal_boot_screen_content` and
+  `fadables_start_transparent_and_reach_full_alpha`).
+- **Tags on origin:** `v0.9.0` through `v0.20.0`. v0.20.0 is on
+  `41a009a`.
 
-## What shipped in v0.20.0
+## Since the v0.20.0 cut (un-pushed)
+
+### `39b8496` `docs(ui): add Terminal desktop-adaptation spec`
+
+`docs/ui-mockups/desktop-adaptation.md` — 283 lines covering
+viewport assumptions, seven universal adaptation rules, and per-
+screen geometry rules for the priority surfaces (Game Table, Win
+Summary, Settings, Help, Pause, Home, Splash, Stats, and the
+modal-pattern screens Profile / Achievements / Theme Picker /
+Daily Challenge). Closes the spec gap — 23 of 24 mockups were
+mobile-only, but the v0.20.0 token-port pass was already layout-
+agnostic so nothing shipped broken. The spec matters for *next*
+ports.
+
+**Why rules > visual mockups for this gap:** Stitch's
+`generate_variants` API timed out on the layout-only adaptation
+prompt (server-side flake, not a prompt-shape issue — confirmed
+by polling `list_screens` with no new variant landing). A markdown
+rules file applies to every screen including the 9 missing-plugin
+surfaces (splash, challenge, time-attack, weekly-goals,
+leaderboard, sync, level-up, replay-overlay, radial-menu) that
+aren't in the Stitch project at all. It's also referenceable from
+code comments and commit messages without loading an image.
+
+### `cacb19c` `feat(engine): port the splash to the Terminal boot-screen treatment`
+
+Implements the full mockup-spec splash from
+`docs/ui-mockups/splash-mobile.html` plus the desktop adaptation
+rules:
+
+- **Header**: cursor block (96 px `▌`), wordmark ("Solitaire
+  Quest"), 192 px divider, "TERMINAL EDITION" subtitle.
+- **Boot log**: three ✓ check rows (`assets loaded`,
+  `theme: terminal`, `progress restored`) + a `▌ ready_` line.
+  Capped at 480 px width on desktop (else 70 % viewport).
+- **Progress bar**: 1 px track (`BORDER_SUBTLE`) with a 100 %-
+  width cyan (`ACCENT_PRIMARY`) fill + `DONE · 247 ASSETS`
+  caption. Capped at 720 px on desktop (else 80 %).
+- **Footer**: `BASE16-EIGHTIES` label, eight palette swatches
+  (12 × 12 px each — one per named token in the design system),
+  version line.
+
+**Refactored the alpha-fade scaffold** from per-marker queries
+(`SplashTitle` / `SplashSubtitle` / `SplashCursor`) to a single
+`SplashFadable { base_color: Color }` + `SplashFadableBg`
+variant. ~15 fadable elements share one global query each;
+adding more is one component-attach, not three new query types.
+
+**Skipped, with rationale captured in the commit:**
+- Scanline overlay (needs a tiled-pattern asset or custom shader).
+- Pulsing cursor on the "ready_" line (would fight the global
+  fade timeline).
+- "RUSTY SOLITAIRE" wordmark from the mockup (the actual product
+  is "Solitaire Quest"; the mockup leaked the repo name).
+
+## What shipped in v0.20.0 (frozen at `41a009a`)
 
 ### Terminal visual-identity port
 
@@ -67,6 +131,8 @@ reads from it, so swapping the palette is now a one-file edit:
   (artwork dependency — see open-list item below).
 - **Splash cursor** (`cdcadda`). The signature `▌` cyan glyph
   (96 px) added above the wordmark, matching the spec.
+  *Subsequently expanded post-cut by `cacb19c` into the full
+  boot-screen treatment.*
 - **Hint-source / dest pairing** (`9891ae4`). `input_plugin`'s
   source-card tint now matches the destination pile's
   `STATE_WARNING`.
@@ -97,6 +163,35 @@ reads from it, so swapping the palette is now a one-file edit:
   flake fix (`67c150b`).
 
 ## Open punch list
+
+### In flight (resume here first)
+
+- **`replay_overlay` scrub bar.** The working tree carries a
+  WIP that adds a 1px-tall scrub bar at the bottom edge of the
+  replay banner — track in `BORDER_SUBTLE`, fill in
+  `ACCENT_PRIMARY`, width = `cursor / total` of the bar. The
+  banner has been restructured from a single row (`flex-row`,
+  `justify-between`) to a column with the existing content row +
+  the new scrub bar. New marker `ReplayOverlayScrubFill`,
+  `scrub_pct` helper function, and a reference to a system
+  `update_scrub_fill` in the plugin's `add_systems` chain — but
+  **the function body was never written**, so the working tree
+  doesn't compile. Resume by:
+  1. Writing `fn update_scrub_fill(state, mut q)` that reads
+     `ReplayPlaybackState` and writes
+     `Node::width = Val::Percent(scrub_pct(&state))` on every
+     `ReplayOverlayScrubFill` entity, with a `state.is_changed()`
+     early-exit (mirrors the existing `update_progress_text`
+     shape).
+  2. Adding two tests: scrub fill at 0 % when cursor = 0; scrub
+     fill at 100 % on `Completed`.
+  3. Commit message draft already implied by the WIP scope:
+     `feat(engine): scrub-bar fill on the replay overlay`.
+  WIP-only mockup elements deliberately left out: WIN MOVE
+  marker (needs a `win_move_index` data-layer field that doesn't
+  exist), 0/25/50/75/100 % notch labels (aesthetic-only), full
+  playback toolbar / move-log / mini tableau (screen-takeover
+  redesign, not a banner enhancement).
 
 ### Phase Android (build + persistence shipped; runtime gaps remain)
 
@@ -131,22 +226,28 @@ reads from it, so swapping the palette is now a one-file edit:
   intentionally unmigrated and should swap in lockstep with the
   artwork. Largest visible payoff remaining in the visual-
   identity arc.
-- **Splash boot-loader richness.** The mockup
-  (`docs/ui-mockups/splash-mobile.html`) calls for a scanline
-  overlay, ✓ lime check log lines, pulsing cursor, ROOT@SOLITAIRE
-  prompt, and a loading bar — none of which v0.20.0's
-  cursor-glyph-only port pulled in. Aesthetic feature, its own
-  commit.
-- **Replay-overlay redesign.** The mockup
-  (`docs/ui-mockups/replay-overlay-mobile.html`) envisions a
-  much richer surface (terminal `▌replay.tsx` header, move log
-  scroll, MOVE 47/87 chip, WIN MOVE callout, status bar) versus
-  the current top banner. Aesthetic feature.
-- **Toast Warning / Error variants.** The new `ToastVariant`
-  enum has slots for `Warning` (gold) and `Error` (pink) but no
-  in-engine event uses them yet (the four current toast events
-  all map to Info or Celebration). Wire when a warning- or
-  error-flavoured toast event materialises.
+- **Splash boot-loader scanline overlay.** `cacb19c` shipped the
+  rest of the boot screen but skipped the scanline overlay
+  (1px lines at 2 px pitch in `#1a1a1a` over the whole splash,
+  30 % opacity). Needs a tiled-pattern asset (a 2 × 2 px PNG) or
+  a custom shader. Pure aesthetic, no behaviour change.
+- **Splash cursor pulse.** The "ready_" line's mockup pulses a
+  cyan 6 × 12 px block at the end of the text. `cacb19c`
+  skipped this because a per-element pulse fights the global
+  `SplashFadable` fade timeline. Either layer the pulse on top
+  of the fade (multiply alphas) or accept the static cursor.
+- **Replay-overlay full redesign.** The scrub-bar WIP above is
+  the *minimum* of the mockup. The full mockup
+  (`docs/ui-mockups/replay-overlay-mobile.html`) is a screen-
+  takeover with a mini-tableau preview, playback controls,
+  move-log scroll, status bar, and a WIN MOVE marker. That's a
+  multi-session redesign with data-layer impact (move log
+  scroller, win-move detection). The current banner-overlay
+  behaviour is intentionally preserved for now.
+- **Toast Warning / Error variants.** The `ToastVariant` enum
+  has slots for `Warning` (gold) and `Error` (pink) but no
+  in-engine event uses them yet. Wire when a warning- or error-
+  flavoured toast event materialises.
 
 ### Carried forward from v0.19.0
 
@@ -175,8 +276,22 @@ reads from it, so swapping the palette is now a one-file edit:
 
 ### Process notes
 
+- **The desktop-adaptation spec is the canonical reference for
+  geometry decisions** when porting any future plugin. Read
+  `docs/ui-mockups/desktop-adaptation.md` first; apply the
+  universal rules to every surface; consult the per-screen
+  table for the priority surfaces. The 9 missing-plugin screens
+  (splash now ported; eight remaining) inherit the universal
+  rules without dedicated guidance.
+- **Stitch `generate_variants` is unreliable for layout-only
+  adaptation prompts** as of 2026-05-07. The first call timed
+  out and no variant ever landed in `list_screens`. If a future
+  session wants visual desktop mockups, prefer
+  `generate_screen_from_text` with a fresh narrow prompt per
+  screen rather than `generate_variants` against existing
+  mobile screens.
 - **Token-port pattern.** v0.20.0's chrome-migration commits
-  set a reusable shape for "centralized design system applied
+  set a reusable shape for "centralised design system applied
   across N plugins":
   1. Constants module (`ui_theme.rs`) is the source of truth.
   2. Const sites that can't call `Alpha::with_alpha` (not yet
@@ -192,46 +307,52 @@ reads from it, so swapping the palette is now a one-file edit:
   4. Domain colours (suit pips, card faces, lerp helpers) stay
      as literals with a comment naming the rationale; only UI
      chrome routes through tokens.
-- **Audit before migrating wide.** Before touching any plugin,
-  grep for the literal pattern (`Color::srgb\(|Color::srgba\(|
-  Color::WHITE|Color::BLACK`) and classify each hit as domain
-  vs. chrome. Most plugins after the modal scaffold port turned
-  out to be 100 % token-correct already; the audit prevents
-  wasted churn.
+- **`SplashFadable` scaffolding pattern** (introduced in
+  `cacb19c`). Any future overlay that needs to fade `N >> 3`
+  elements together should follow the same shape: one tiny
+  marker carrying the full-alpha base colour, one global query
+  that lerps every marker's alpha each frame, no per-element
+  query plumbing. Cleanly outscales the `Without<X>, Without<Y>`
+  query exclusion pattern that the old splash was hitting at
+  three siblings.
 
 ### Canonical remote
 
 `github.com/funman300/Rusty_Solitaire` is the canonical repo.
-Always push there.
+Always push there. **Local master is currently 2 commits ahead
+of origin** — `git push` is the next durability step (or roll
+the post-cut commits into v0.20.1).
 
-### Design direction (now Terminal — base16-eighties)
+### Design direction (Terminal — base16-eighties)
 
 - **Tone:** retro-terminal / synthwave — flat depth (no box-shadows),
   monospaced-forward typography (JetBrains Mono / FiraMono), tight
   16 px edge margins, 8 px card radius.
-- **Palette:** near-black surface ramp (`#151515` / `#202020` / `#2a2a2a`
-  / `#353535`), cyan primary CTA (`#6fc2ef`), lime success
-  (`#acc267`), gold warning (`#ddb26f`), pink error / suit-red
-  (`#fb9fb1`), lavender celebration (`#e1a3ee`), teal info
-  (`#12cfc0`).
-- **Two-color suits.** Red = `#fb9fb1`, black = `#d0d0d0`. Outlined
-  glyphs for diamonds & clubs are *always on*; the Settings
-  "color-blind mode" toggle only swaps red → cyan.
-
-(Was: Midnight Purple base + Balatro yellow primary + warm magenta.
-Replaced this cycle.)
+- **Palette:** near-black surface ramp (`#151515` / `#202020` /
+  `#2a2a2a` / `#353535`), cyan primary CTA (`#6fc2ef`), lime
+  success (`#acc267`), gold warning (`#ddb26f`), pink error /
+  suit-red (`#fb9fb1`), lavender celebration (`#e1a3ee`), teal
+  info (`#12cfc0`).
+- **Two-color suits.** Red = `#fb9fb1`, black = `#d0d0d0`.
+  Outlined glyphs for diamonds & clubs are *always on*; the
+  Settings "color-blind mode" toggle only swaps red → cyan.
 
 ## Resume prompt
 
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.20.0 just cut on 2026-05-07; CHANGELOG's new
-[Unreleased] section is empty pending the next cycle's threads.
+Branch: master. v0.20.0 is tagged at 41a009a; two post-cut commits
+sit on top locally (39b8496 desktop-adaptation spec, cacb19c splash
+boot-screen port) — these have NOT been pushed yet.
 
-State: HEAD on the v0.20.0 docs commit. Tag not pushed yet — last
-pushed tag is v0.19.0. Working tree clean apart from the
-intentionally-untracked `artwork/`.
+State: HEAD locally at cacb19c. Working tree is dirty:
+solitaire_engine/src/replay_overlay.rs carries a constructive WIP
+for a 1px scrub-bar at the bottom of the replay banner. The WIP
+references a function `update_scrub_fill` in the plugin's
+add_systems chain but the body was never written — `cargo check`
+fails on the working tree until the function is added. HEAD itself
+(WIP stashed) is clean: 1178 tests pass, clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -239,8 +360,10 @@ READ FIRST (in order, before doing anything):
   3. CLAUDE.md           — unified-3.0 rule set
   4. CLAUDE_SPEC.md      — formal architecture spec
   5. ARCHITECTURE.md     — crate responsibilities + data flow
-  6. docs/ui-mockups/    — design system + 24-mockup library
-                           (Terminal aesthetic — landed in fa7f98a)
+  6. docs/ui-mockups/    — design system + 24-mockup library +
+                           desktop-adaptation.md (the rules-based
+                           companion to the mockups; read this
+                           before any plugin port)
   7. docs/android/*      — Android setup + build runbook
   8. ~/.claude/projects/<this-project>/memory/MEMORY.md
                          — saved feedback / project context
@@ -248,26 +371,27 @@ READ FIRST (in order, before doing anything):
                            fresh machine)
 
 DECISION TO ASK THE PLAYER FIRST:
-  A. Push v0.20.0 tag — `git tag v0.20.0 && git push --tags`. If
-     the player wants the cut formalised before any new work.
-  B. APK launch verification — `adb install` + `adb logcat` on
-     bevy_test AVD or an x86_64 device. Now that persistence is
-     wired (4b51e50), shake out remaining runtime bugs.
-  C. Card-face artwork regeneration — generate Terminal-aesthetic
+  A. Finish the replay_overlay scrub-bar WIP. Write
+     `update_scrub_fill`, add tests, commit. Tractable in one
+     session; the WIP is fully scoped (see SESSION_HANDOFF.md →
+     "In flight").
+  B. Push the post-cut commits to origin. Either as-is on master
+     or rolled into a v0.20.1 cut (CHANGELOG entry + tag).
+     Mechanical, but local master diverges from origin until done.
+  C. Card-face artwork regeneration. Generate Terminal-aesthetic
      card PNGs (dark face, light suit pips), then migrate
      CARD_FACE_COLOUR / RED_SUIT_COLOUR / BLACK_SUIT_COLOUR /
      CARD_FACE_COLOUR_RED_CBM in lockstep. Largest visible
-     payoff remaining in the visual-identity arc.
-  D. Splash boot-loader richness — port the scanline overlay,
-     ✓ check log, pulsing cursor, ROOT@SOLITAIRE prompt, and
-     loading bar from docs/ui-mockups/splash-mobile.html. Pure
-     polish; no behavioural change.
+     payoff remaining in the visual-identity arc. Multi-session.
+  D. Splash scanline overlay + cursor pulse. The two pieces of
+     the mockup `cacb19c` skipped. Pure polish; no behaviour
+     change.
   E. App icon round — re-run artwork/Icon Export.html (the
      export PNGs are not currently in `artwork/`), then wire
      Window::icon + generate .icns / .ico. Half-day task. No
      cert dependency.
-  F. JNI ClipboardManager / Keystore bridge — replaces the
-     Android stubs for Stats clipboard share + sync auth.
+  F. APK launch verification on AVD / device + the JNI bridges
+     it would shake out (ClipboardManager, Keystore).
 
 WORKFLOW NOTES:
   - Use the system git config (already correct).
