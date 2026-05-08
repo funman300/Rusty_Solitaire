@@ -64,8 +64,12 @@
 
 use std::time::Duration;
 
+use bevy::asset::RenderAssetUsages;
+use bevy::image::Image;
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::ui::widget::NodeImageMode;
 
 use crate::font_plugin::FontResource;
 use crate::settings_plugin::SettingsResource;
@@ -165,6 +169,24 @@ struct SplashFadableBg {
 #[derive(Component, Debug)]
 struct SplashCursorPulse;
 
+/// Marks an [`ImageNode`] whose `color` tint should fade with the
+/// global splash timeline. The per-tick write is `tint = (1, 1, 1,
+/// global_alpha)`, so the GPU composite is `texture_α × global_α` —
+/// per-pixel transparency in the texture (e.g. the 30 %-alpha
+/// scanline rows) is preserved while the whole image still fades
+/// in / out with the splash. The alternative of cramming the alpha
+/// into [`SplashFadableBg`] doesn't work because that writer
+/// *overwrites* the base-colour alpha rather than multiplying it.
+#[derive(Component, Debug)]
+struct SplashFadableImage;
+
+/// Marker on the fullscreen scanline overlay. Distinct from
+/// [`SplashFadableImage`] so tests can locate the overlay without
+/// scanning every fadable image (there's only ever one, but the
+/// marker makes the query intent explicit).
+#[derive(Component, Debug)]
+struct SplashScanlineOverlay;
+
 // ---------------------------------------------------------------------------
 // Systems
 // ---------------------------------------------------------------------------
@@ -187,6 +209,7 @@ fn spawn_splash(
     mut commands: Commands,
     font_res: Option<Res<FontResource>>,
     settings: Option<Res<SettingsResource>>,
+    images: Option<ResMut<Assets<Image>>>,
 ) {
     if let Some(settings) = settings.as_deref()
         && settings.0.first_run_complete
@@ -195,6 +218,13 @@ fn spawn_splash(
     }
 
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
+
+    // Generate the scanline texture handle up-front (when the asset
+    // store is available — always true in production; opt-out under
+    // bare `MinimalPlugins` test fixtures so existing tests that
+    // don't init `Assets<Image>` keep working with the rest of the
+    // splash content unchanged).
+    let scanline_handle = images.map(|mut images| images.add(build_scanline_image()));
 
     commands
         .spawn((
@@ -224,7 +254,78 @@ fn spawn_splash(
             spawn_header_section(root, &font_handle);
             spawn_centre_section(root, &font_handle);
             spawn_footer_section(root, &font_handle);
+            // Scanline overlay sits last so it renders on top of the
+            // boot-screen content. Absolute-positioned to fill the
+            // root; `NodeImageMode::Tiled` repeats the 2×2 source
+            // texture across the whole viewport.
+            if let Some(handle) = scanline_handle {
+                root.spawn((
+                    SplashScanlineOverlay,
+                    SplashFadableImage,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    ImageNode {
+                        image: handle,
+                        // Start fully transparent so the very first
+                        // frame matches every other fadable; the
+                        // first `advance_splash` tick lifts this to
+                        // `(1, 1, 1, global_alpha)`.
+                        color: Color::srgba(1.0, 1.0, 1.0, 0.0),
+                        image_mode: NodeImageMode::Tiled {
+                            tile_x: true,
+                            tile_y: true,
+                            stretch_value: 1.0,
+                        },
+                        ..default()
+                    },
+                ));
+            }
         });
+}
+
+/// Pure helper — builds the 2×2 source texture for the scanline
+/// overlay. Top row is fully transparent; bottom row is `#1a1a1a` at
+/// ~30 % alpha (76 / 255 ≈ 0.298). Tiled across the splash by
+/// `NodeImageMode::Tiled`, the result is a 2 px-pitch horizontal
+/// scanline pattern at the alpha called for in the mockup.
+///
+/// The tilable unit is 2 px tall (one transparent, one tinted) by
+/// any width — 2 px wide here is the minimum that still satisfies
+/// `RenderAssetUsages::RENDER_WORLD`'s validation; the GPU samples
+/// the same column for every horizontal position.
+fn build_scanline_image() -> Image {
+    // Per-pixel RGBA bytes. Order is row-major top-to-bottom.
+    let pixels: Vec<u8> = vec![
+        // Row 0: transparent.
+        0, 0, 0, 0, 0, 0, 0, 0, // Row 1: #1a1a1a at ~30 % alpha (26, 26, 26, 76).
+        26, 26, 26, 76, 26, 26, 26, 76,
+    ];
+    // 2 × 2 pixels × 4 bytes per RGBA8 pixel = 16 bytes. Hard-coded
+    // because `TextureFormat::pixel_size()` returns a `Result` in this
+    // Bevy version and a `debug_assert_eq!` shouldn't carry the
+    // unwrap noise.
+    debug_assert_eq!(
+        pixels.len(),
+        16,
+        "scanline pixel buffer must be 2x2 RGBA8",
+    );
+    Image::new(
+        Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    )
 }
 
 /// Header section: cursor block, wordmark, divider, "TERMINAL EDITION"
@@ -643,6 +744,7 @@ fn advance_splash(
     mut roots: Query<(Entity, &mut SplashAge, &mut BackgroundColor), With<SplashRoot>>,
     mut fadable_texts: Query<(&SplashFadable, &mut TextColor)>,
     mut fadable_bgs: Query<(&SplashFadableBg, &mut BackgroundColor), Without<SplashRoot>>,
+    mut fadable_images: Query<&mut ImageNode, With<SplashFadableImage>>,
 ) {
     for (entity, mut age, mut bg) in &mut roots {
         age.0 = age.0.saturating_add(time.delta());
@@ -662,6 +764,14 @@ fn advance_splash(
             let mut c = fadable.base_color;
             c.set_alpha(alpha);
             bg_color.0 = c;
+        }
+        // ImageNode tints fade by overwriting alpha on a white base so
+        // per-pixel texture transparency (e.g. the 30 %-alpha scanline
+        // rows) survives the multiplication on the GPU.
+        for mut image in &mut fadable_images {
+            let mut c = image.color;
+            c.set_alpha(alpha);
+            image.color = c;
         }
     }
 }
@@ -726,6 +836,13 @@ mod tests {
         app.add_plugins(MinimalPlugins).add_plugins(SplashPlugin);
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<ButtonInput<MouseButton>>();
+        // `MinimalPlugins` doesn't pull `AssetPlugin`, so init the
+        // image store explicitly — same pattern as
+        // `settings_plugin::tests`. Without this, `spawn_splash`'s
+        // `Option<ResMut<Assets<Image>>>` falls through and the
+        // scanline overlay is silently skipped, which would defeat
+        // the new tests.
+        app.init_resource::<Assets<Image>>();
         app.update();
         app
     }
@@ -1041,6 +1158,76 @@ mod tests {
             mid_text_alphas.iter().all(|a| *a >= 0.9),
             "fadable text alphas should be at full alpha during the hold; got {mid_text_alphas:?}"
         );
+    }
+
+    /// Pure-helper guard for [`build_scanline_image`]. Asserts the
+    /// generated texture matches the spec literally:
+    ///
+    /// * 2 × 2 RGBA8 sRGB.
+    /// * Top row fully transparent (`α = 0`).
+    /// * Bottom row `#1a1a1a` (26, 26, 26) at ~30 % alpha (76 / 255).
+    ///
+    /// Locks the bytes so a future tweak to the colour or alpha
+    /// can't silently drift the visible scanline appearance.
+    #[test]
+    fn build_scanline_image_has_expected_2x2_rgba_bytes() {
+        let image = build_scanline_image();
+        let size = image.size();
+        assert_eq!(size.x, 2, "scanline texture width should be 2 px");
+        assert_eq!(size.y, 2, "scanline texture height should be 2 px");
+
+        let bytes = image
+            .data
+            .as_ref()
+            .expect("scanline texture should ship with raw byte data");
+        assert_eq!(
+            bytes.as_slice(),
+            &[
+                0, 0, 0, 0, 0, 0, 0, 0, // top row: transparent
+                26, 26, 26, 76, 26, 26, 26, 76, // bottom row: #1a1a1a @ ~30 % alpha
+            ],
+            "scanline pixel buffer drifted from the mockup spec",
+        );
+    }
+
+    /// End-to-end: the scanline overlay is spawned as a child of the
+    /// splash root and its `ImageNode.color` tint fades from
+    /// transparent up toward full alpha as `advance_splash` runs.
+    /// Pinning both lets a future regression in either spawn placement
+    /// or the new fade-images branch surface here rather than in a
+    /// visual review.
+    #[test]
+    fn scanline_overlay_spawns_and_fades_with_splash() {
+        let mut app = headless_app();
+
+        let initial_alpha = scanline_tint_alpha(&mut app)
+            .expect("scanline overlay must spawn with the splash root");
+        assert!(
+            initial_alpha <= 0.05,
+            "scanline tint should start near 0; got {initial_alpha}",
+        );
+
+        // Advance past the fade-in window. Tint should now be near 1.
+        let _ = advance_by(&mut app, MOTION_SPLASH_FADE_SECS + 0.4);
+        if count_splash_roots(&mut app) == 0 {
+            return; // already past fade-out under the test clock — skip.
+        }
+        let mid_alpha = scanline_tint_alpha(&mut app)
+            .expect("scanline overlay should still exist during the hold");
+        assert!(
+            mid_alpha >= 0.9,
+            "scanline tint should reach full alpha during the hold; got {mid_alpha}",
+        );
+    }
+
+    /// Read the unique scanline overlay's `ImageNode.color` tint
+    /// alpha. Returns `None` if the overlay isn't in the world (e.g.
+    /// the splash already despawned, or this tick is pre-spawn).
+    fn scanline_tint_alpha(app: &mut App) -> Option<f32> {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&ImageNode, With<SplashScanlineOverlay>>();
+        q.iter(app.world()).next().map(|img| img.color.alpha())
     }
 
     /// Pure-helper guard. The pulse factor is a sine wave shifted into
