@@ -1,44 +1,40 @@
 # Solitaire Quest — Session Handoff
 
 **Last updated:** 2026-05-07 — v0.20.0 cut and tagged at `41a009a`,
-two post-cut commits sit on top of the tag, and a constructive
-`replay_overlay` WIP is checked out in the working tree. The cut
-itself shipped two through-lines: a full **Terminal visual-identity
-port** (token system, modal scaffold, gameplay-feedback, toasts,
-table / card chrome, splash cursor) and the **Android persistence
-shim** that closes the `dirs::data_dir() = None` pitfall flagged in
-CLAUDE.md §10. Since the cut, two more pieces landed: the rules-
-based desktop-adaptation spec (closes the spec gap exposed when we
-noticed 23 of 24 mockups were mobile-only) and the splash boot-
-screen port (full mockup-spec splash with header, boot log,
-progress bar, palette swatches, version footer, ~496 LOC of
-`splash_plugin.rs` rewrite + `SplashFadable` scaffold refactor).
+four post-cut commits sit on top of the tag, working tree is clean.
+The cut itself shipped two through-lines: a full **Terminal visual-
+identity port** (token system, modal scaffold, gameplay-feedback,
+toasts, table / card chrome, splash cursor) and the **Android
+persistence shim** that closes the `dirs::data_dir() = None` pitfall
+flagged in CLAUDE.md §10. Since the cut, four more pieces landed:
+the rules-based desktop-adaptation spec (closes the spec gap
+exposed when we noticed 23 of 24 mockups were mobile-only), the
+splash boot-screen port (full mockup-spec splash with header, boot
+log, progress bar, palette swatches, version footer + the
+`SplashFadable` scaffold refactor), the replay-overlay scrub bar
+(1 px cyan fill at the bottom of the banner, mirroring
+cursor / total), and the replay banner label port to the
+`▌ replay` cursor-block treatment that aligns it with the splash
+boot-screen idiom.
 
 ## Status at pause
 
-- **HEAD locally:** `cacb19c` (splash boot-screen port).
+- **HEAD locally:** `6204db8` (replay banner label port).
 - **HEAD on origin:** `41a009a` (the v0.20.0 cut). Local master is
-  **2 commits ahead of origin** — `39b8496` (desktop-adaptation
-  spec) and `cacb19c` are not yet pushed. Decide whether to roll
-  these into v0.20.1 / v0.21.0-candidates before pushing.
-- **Working tree:** dirty —
-  `solitaire_engine/src/replay_overlay.rs` carries a constructive
-  WIP for a 1px scrub-bar at the bottom edge of the replay banner
-  (~120 LOC). Compiles with one missing piece: `update_scrub_fill`
-  is referenced in the plugin's `add_systems` chain but the
-  function body was never written. **The working tree does not
-  compile. HEAD itself is clean** (verified by stashing the WIP
-  and running `cargo check -p solitaire_engine` against the
-  committed state — passes). Resume by writing the missing
-  function (see "Open punch list → replay_overlay scrub bar").
+  **4 commits ahead of origin** — `39b8496`, `cacb19c`, `c84d9f4`,
+  and `6204db8` are not yet pushed. Decide whether to roll these
+  into v0.20.1 / v0.21.0-candidates before pushing.
+- **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
-- **Build at HEAD (WIP stashed):**
-  `cargo clippy --workspace --all-targets -- -D warnings` clean.
-- **Tests at HEAD (WIP stashed):** **1178 passing / 0 failing**
-  across the workspace. Up from 1176 at the v0.20.0 cut: the
-  splash boot-screen port adds two new tests
-  (`splash_renders_terminal_boot_screen_content` and
-  `fadables_start_transparent_and_reach_full_alpha`).
+- **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
+  clean.
+- **Tests:** **1180 passing / 0 failing** across the workspace.
+  Up from 1176 at the v0.20.0 cut: the splash boot-screen port
+  added two (`splash_renders_terminal_boot_screen_content`,
+  `fadables_start_transparent_and_reach_full_alpha`) and the
+  replay scrub-bar finish added two more
+  (`scrub_pct_covers_state_corners`,
+  `overlay_scrub_fill_tracks_cursor`).
 - **Tags on origin:** `v0.9.0` through `v0.20.0`. v0.20.0 is on
   `41a009a`.
 
@@ -96,6 +92,37 @@ adding more is one component-attach, not three new query types.
   fade timeline).
 - "RUSTY SOLITAIRE" wordmark from the mockup (the actual product
   is "Solitaire Quest"; the mockup leaked the repo name).
+
+### `c84d9f4` `feat(engine): scrub fill bar + per-frame updater for replay overlay`
+
+Closes the WIP described in the prior handoff. Adds the 1 px cyan
+scrub bar called for in `docs/ui-mockups/replay-overlay-mobile.html`:
+a track in `BORDER_SUBTLE` spans the bottom edge of the banner and
+the cyan `ACCENT_PRIMARY` fill mirrors `cursor / total` via a new
+`ReplayOverlayScrubFill` component + `update_scrub_fill` system.
+The pure `scrub_pct` helper is shared between the spawn path
+(initial fill width) and the per-frame updater so the first paint
+already reflects state instead of popping `0 → cursor` on the
+first tick — same shape as the existing `format_progress` /
+`update_progress_text` split. Two new tests cover the four corners
+of `scrub_pct` and an end-to-end drive of `ReplayPlaybackState`
+asserting `Node.width` on the unique scrub-fill entity. Same
+change-detection guard as the text updaters, so an idle replay
+leaves the node untouched.
+
+Header text treatment, move-log scroll, MOVE chip, and WIN MOVE
+callout from the same mockup are still open — separate commits.
+
+### `6204db8` `feat(engine): port replay banner label to ▌ cursor-block treatment`
+
+Aligns the replay overlay's headline with the splash boot-screen
+idiom landed in `cacb19c`: `Replay` → `▌ replay` and
+`Replay complete` → `▌ replay complete`. The cursor block (`▌`,
+U+258C) prefixed to a lowercased label reads as a Terminal output
+line rather than a generic UI title, tightening the family
+resemblance between the two top-level overlay surfaces. Pure
+text-content change; no behavioural shift, no new components, no
+new systems.
 
 ## What shipped in v0.20.0 (frozen at `41a009a`)
 
@@ -164,35 +191,6 @@ reads from it, so swapping the palette is now a one-file edit:
 
 ## Open punch list
 
-### In flight (resume here first)
-
-- **`replay_overlay` scrub bar.** The working tree carries a
-  WIP that adds a 1px-tall scrub bar at the bottom edge of the
-  replay banner — track in `BORDER_SUBTLE`, fill in
-  `ACCENT_PRIMARY`, width = `cursor / total` of the bar. The
-  banner has been restructured from a single row (`flex-row`,
-  `justify-between`) to a column with the existing content row +
-  the new scrub bar. New marker `ReplayOverlayScrubFill`,
-  `scrub_pct` helper function, and a reference to a system
-  `update_scrub_fill` in the plugin's `add_systems` chain — but
-  **the function body was never written**, so the working tree
-  doesn't compile. Resume by:
-  1. Writing `fn update_scrub_fill(state, mut q)` that reads
-     `ReplayPlaybackState` and writes
-     `Node::width = Val::Percent(scrub_pct(&state))` on every
-     `ReplayOverlayScrubFill` entity, with a `state.is_changed()`
-     early-exit (mirrors the existing `update_progress_text`
-     shape).
-  2. Adding two tests: scrub fill at 0 % when cursor = 0; scrub
-     fill at 100 % on `Completed`.
-  3. Commit message draft already implied by the WIP scope:
-     `feat(engine): scrub-bar fill on the replay overlay`.
-  WIP-only mockup elements deliberately left out: WIN MOVE
-  marker (needs a `win_move_index` data-layer field that doesn't
-  exist), 0/25/50/75/100 % notch labels (aesthetic-only), full
-  playback toolbar / move-log / mini tableau (screen-takeover
-  redesign, not a banner enhancement).
-
 ### Phase Android (build + persistence shipped; runtime gaps remain)
 
 - **APK launch verification on AVD / device.** `adb install` then
@@ -236,14 +234,21 @@ reads from it, so swapping the palette is now a one-file edit:
   skipped this because a per-element pulse fights the global
   `SplashFadable` fade timeline. Either layer the pulse on top
   of the fade (multiply alphas) or accept the static cursor.
-- **Replay-overlay full redesign.** The scrub-bar WIP above is
-  the *minimum* of the mockup. The full mockup
-  (`docs/ui-mockups/replay-overlay-mobile.html`) is a screen-
-  takeover with a mini-tableau preview, playback controls,
-  move-log scroll, status bar, and a WIN MOVE marker. That's a
-  multi-session redesign with data-layer impact (move log
-  scroller, win-move detection). The current banner-overlay
-  behaviour is intentionally preserved for now.
+- **Replay-overlay enrichments beyond the scrub bar.** The scrub
+  bar (`c84d9f4`) and the `▌ replay` cursor-block label
+  (`6204db8`) are the *minimum* of the mockup
+  (`docs/ui-mockups/replay-overlay-mobile.html`). Tractable
+  banner additions still open: a right-aligned `GAME #N · MOVES`
+  caption (mirrors the `▌replay.tsx` left-aligned filename motif),
+  a `MOVE 47/87` chip floating above the focused card during
+  playback (would need to thread the cursor through to the card
+  layer). The full mockup's screen-takeover treatment — mini-
+  tableau preview, playback controls, move-log scroll, WIN MOVE
+  marker on the scrub bar — is a multi-session redesign with
+  data-layer impact (move-log scroller; the WIN MOVE marker
+  needs a `win_move_index` field on `Replay` that doesn't yet
+  exist). Banner-overlay behaviour is intentionally preserved
+  for now.
 - **Toast Warning / Error variants.** The `ToastVariant` enum
   has slots for `Warning` (gold) and `Error` (pink) but no
   in-engine event uses them yet. Wire when a warning- or error-
@@ -319,7 +324,7 @@ reads from it, so swapping the palette is now a one-file edit:
 ### Canonical remote
 
 `github.com/funman300/Rusty_Solitaire` is the canonical repo.
-Always push there. **Local master is currently 2 commits ahead
+Always push there. **Local master is currently 4 commits ahead
 of origin** — `git push` is the next durability step (or roll
 the post-cut commits into v0.20.1).
 
@@ -342,17 +347,13 @@ the post-cut commits into v0.20.1).
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.20.0 is tagged at 41a009a; two post-cut commits
+Branch: master. v0.20.0 is tagged at 41a009a; four post-cut commits
 sit on top locally (39b8496 desktop-adaptation spec, cacb19c splash
-boot-screen port) — these have NOT been pushed yet.
+boot-screen port, c84d9f4 replay scrub-bar finish, 6204db8 replay
+banner ▌ cursor-block label) — these have NOT been pushed yet.
 
-State: HEAD locally at cacb19c. Working tree is dirty:
-solitaire_engine/src/replay_overlay.rs carries a constructive WIP
-for a 1px scrub-bar at the bottom of the replay banner. The WIP
-references a function `update_scrub_fill` in the plugin's
-add_systems chain but the body was never written — `cargo check`
-fails on the working tree until the function is added. HEAD itself
-(WIP stashed) is clean: 1178 tests pass, clippy clean.
+State: HEAD locally at 6204db8. Working tree is clean. 1180 tests
+pass, clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -371,21 +372,25 @@ READ FIRST (in order, before doing anything):
                            fresh machine)
 
 DECISION TO ASK THE PLAYER FIRST:
-  A. Finish the replay_overlay scrub-bar WIP. Write
-     `update_scrub_fill`, add tests, commit. Tractable in one
-     session; the WIP is fully scoped (see SESSION_HANDOFF.md →
-     "In flight").
-  B. Push the post-cut commits to origin. Either as-is on master
+  A. Push the post-cut commits to origin. Either as-is on master
      or rolled into a v0.20.1 cut (CHANGELOG entry + tag).
      Mechanical, but local master diverges from origin until done.
-  C. Card-face artwork regeneration. Generate Terminal-aesthetic
+  B. Splash polish — scanline overlay + cursor pulse. The two
+     pieces of the mockup `cacb19c` skipped (scanline needs a
+     tiled-pattern asset or shader; pulse needs to layer on top
+     of the SplashFadable timeline). Pure polish; no behaviour
+     change.
+  C. Replay-overlay enrichments beyond the scrub bar. Tractable
+     banner additions still open: a right-aligned
+     `GAME #N · MOVES` caption, a `MOVE 47/87` chip floating
+     above the focused card during playback. Stops short of the
+     screen-takeover redesign (move-log scroll, mini tableau,
+     WIN MOVE marker — multi-session, data-layer impact).
+  D. Card-face artwork regeneration. Generate Terminal-aesthetic
      card PNGs (dark face, light suit pips), then migrate
      CARD_FACE_COLOUR / RED_SUIT_COLOUR / BLACK_SUIT_COLOUR /
      CARD_FACE_COLOUR_RED_CBM in lockstep. Largest visible
      payoff remaining in the visual-identity arc. Multi-session.
-  D. Splash scanline overlay + cursor pulse. The two pieces of
-     the mockup `cacb19c` skipped. Pure polish; no behaviour
-     change.
   E. App icon round — re-run artwork/Icon Export.html (the
      export PNGs are not currently in `artwork/`), then wire
      Window::icon + generate .icns / .ico. Half-day task. No
