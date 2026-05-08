@@ -208,8 +208,9 @@ fn spawn_overlay(
             GlobalZIndex(Z_REPLAY_OVERLAY),
         ))
         .with_children(|banner| {
-            // Left: "Replay" label in the loud yellow accent so it reads
-            // unmistakably as a non-gameplay surface.
+            // Left: "Replay" label in the cyan primary accent
+            // (`ACCENT_PRIMARY`) so it reads unmistakably as a
+            // non-gameplay surface.
             banner.spawn((
                 ReplayOverlayBannerText,
                 Text::new(banner_label),
@@ -236,7 +237,7 @@ fn spawn_overlay(
 
             // Right: Stop button. Tertiary variant — the action is
             // available but not the loudest element in the banner; the
-            // "Replay" yellow accent owns that slot. `spawn_modal_button`
+            // "Replay" cyan accent owns that slot. `spawn_modal_button`
             // gives us hover / press paint and focus rings for free via
             // the existing `UiModalPlugin` paint system.
             banner

@@ -35,7 +35,7 @@ use crate::card_plugin::{
     CardEntity, HintHighlight, HintHighlightTimer, STACK_FAN_FRAC, TABLEAU_FACEDOWN_FAN_FRAC,
     TABLEAU_FAN_FRAC,
 };
-use crate::ui_theme::MOTION_DRAG_REJECT_SECS;
+use crate::ui_theme::{MOTION_DRAG_REJECT_SECS, STATE_WARNING};
 use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::events::{
@@ -335,8 +335,11 @@ pub fn emit_hint_visuals(
         for (entity, card_entity, mut sprite) in card_entities.iter_mut() {
             if card_entity.card_id == card_id {
                 // Tint the card gold without replacing the Sprite (which would
-                // discard the image handle set by CardImageSet).
-                sprite.color = Color::srgba(1.0, 1.0, 0.4, 1.0);
+                // discard the image handle set by CardImageSet). Uses the
+                // design-system `STATE_WARNING` token so the source-card
+                // tint matches the destination pile highlight, both of
+                // which signal "look here" for the hint.
+                sprite.color = STATE_WARNING;
                 commands.entity(entity)
                     .insert(HintHighlight { remaining: 2.0 })
                     .insert(HintHighlightTimer(2.0));
