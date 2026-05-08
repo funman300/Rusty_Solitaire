@@ -1,7 +1,9 @@
 # Solitaire Quest — Session Handoff
 
 **Last updated:** 2026-05-07 — v0.20.0 cut and tagged at `41a009a`,
-four post-cut commits sit on top of the tag, working tree is clean.
+several post-cut commits sit on top of the tag (see `git log
+--oneline origin/master..HEAD` for the live list), working tree is
+clean.
 The cut itself shipped two through-lines: a full **Terminal visual-
 identity port** (token system, modal scaffold, gameplay-feedback,
 toasts, table / card chrome, splash cursor) and the **Android
@@ -19,11 +21,15 @@ boot-screen idiom.
 
 ## Status at pause
 
-- **HEAD locally:** `6204db8` (replay banner label port).
+- **HEAD locally:** see `git rev-parse HEAD`. Most recent narrative
+  entry below names the latest substantive commit; this status line
+  intentionally avoids hard-coding the SHA so a docs-only edit
+  doesn't immediately stale the handoff.
 - **HEAD on origin:** `41a009a` (the v0.20.0 cut). Local master is
-  **4 commits ahead of origin** — `39b8496`, `cacb19c`, `c84d9f4`,
-  and `6204db8` are not yet pushed. Decide whether to roll these
-  into v0.20.1 / v0.21.0-candidates before pushing.
+  ahead of origin by the post-cut commits enumerated under "Since
+  the v0.20.0 cut" below; run `git log --oneline origin/master..HEAD`
+  for the live count. Decide whether to roll these into
+  v0.20.1 / v0.21.0-candidates before pushing.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
@@ -337,9 +343,10 @@ reads from it, so swapping the palette is now a one-file edit:
 ### Canonical remote
 
 `github.com/funman300/Rusty_Solitaire` is the canonical repo.
-Always push there. **Local master is currently 4 commits ahead
-of origin** — `git push` is the next durability step (or roll
-the post-cut commits into v0.20.1).
+Always push there. **Local master has unpushed post-cut commits**
+— run `git log --oneline origin/master..HEAD` for the live list;
+`git push` is the next durability step (or roll the post-cut
+commits into v0.20.1).
 
 ### Design direction (Terminal — base16-eighties)
 
@@ -360,13 +367,15 @@ the post-cut commits into v0.20.1).
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.20.0 is tagged at 41a009a; four post-cut commits
-sit on top locally (39b8496 desktop-adaptation spec, cacb19c splash
+Branch: master. v0.20.0 is tagged at 41a009a; several post-cut
+commits sit on top locally and have NOT been pushed yet — run
+`git log --oneline origin/master..HEAD` for the live list (current
+substantives: 39b8496 desktop-adaptation spec, cacb19c splash
 boot-screen port, c84d9f4 replay scrub-bar finish, 6204db8 replay
-banner ▌ cursor-block label) — these have NOT been pushed yet.
+banner ▌ cursor-block label, plus any handoff edits since).
 
-State: HEAD locally at 6204db8. Working tree is clean. 1180 tests
-pass, clippy clean.
+State: HEAD locally — see `git rev-parse HEAD`. Working tree is
+clean. 1180 tests pass, clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
