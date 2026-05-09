@@ -23,7 +23,9 @@ use bevy::input::touch::{TouchInput, TouchPhase, Touches};
 use bevy::input::ButtonInput;
 use bevy::math::{Vec2, Vec3};
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, PrimaryWindow, WindowMode};
+use bevy::window::PrimaryWindow;
+#[cfg(not(target_os = "android"))]
+use bevy::window::{MonitorSelection, WindowMode};
 use solitaire_core::card::{Card, Suit};
 use solitaire_core::game_state::GameState;
 use solitaire_core::pile::PileType;
@@ -110,8 +112,11 @@ impl Plugin for InputPlugin {
                 )
                     .chain(),
             )
-            .add_systems(Update, handle_fullscreen)
-            .add_systems(Update, reset_hint_cycle_on_state_change)
+            .add_systems(Update, reset_hint_cycle_on_state_change);
+        // F11 fullscreen toggle is desktop-only; Android windows are always full-screen.
+        #[cfg(not(target_os = "android"))]
+        app.add_systems(Update, handle_fullscreen);
+        app
             // Async hint pipeline: state-change drop runs before the
             // poll system so a move applied this frame cancels any
             // in-flight task before its result can be surfaced.
@@ -424,6 +429,7 @@ fn reset_hint_cycle_on_state_change(
 
 /// `F11` toggles between borderless-fullscreen and windowed mode.
 /// Not gated by the pause flag — the player can always resize the window.
+#[cfg(not(target_os = "android"))]
 fn handle_fullscreen(
     keys: Res<ButtonInput<KeyCode>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
