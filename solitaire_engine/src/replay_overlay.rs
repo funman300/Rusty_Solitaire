@@ -33,6 +33,7 @@ use crate::replay_playback::{
     step_backwards_replay_playback, step_replay_playback, stop_replay_playback,
     toggle_pause_replay_playback, ReplayPlaybackState,
 };
+use solitaire_core::pile::PileType;
 use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
@@ -94,6 +95,12 @@ const KEYBIND_FOOTER_HEIGHT: f32 = 16.0;
 /// `just_pressed` always fires immediately; this interval gates
 /// only the *repeat* fires while the key remains held.
 const SCRUB_REPEAT_INTERVAL_SECS: f32 = 0.1;
+
+/// Total height of the bottom-edge Move Log panel in pixels. Two
+/// vertical content rows (header + active-row) at `TYPE_CAPTION`
+/// and `TYPE_BODY` plus standard vertical padding lands at
+/// 11 + 8 + 14 + 12 ≈ 45; round to 56 for headroom.
+const MOVE_LOG_PANEL_HEIGHT: f32 = 56.0;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
@@ -268,6 +275,39 @@ struct ReplayScrubKeyHold {
 #[derive(Component, Debug)]
 pub struct ReplayOverlayKeybindFooter;
 
+/// Marker on the bottom-edge **Move Log** panel — a separate root
+/// UI entity (not a child of the banner) that sits anchored to the
+/// viewport's bottom edge. Carries a header (`▌ MOVE LOG · N/M`)
+/// plus a row showing the most-recently-applied move.
+///
+/// Spawned by `spawn_overlay` alongside the banner and the
+/// floating progress chip; despawned by `react_to_state_change`
+/// on the same `Playing → Inactive` transition. Same lifecycle
+/// pattern as `ReplayFloatingProgressChip` — a sibling root, not
+/// a banner child, because it lives at a different screen anchor.
+///
+/// First slice of the move-log mockup at
+/// `docs/ui-mockups/replay-overlay-mobile.html` § "Move Log Card".
+/// Subsequent commits add prev/next rows and scrolling.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayMoveLogPanel;
+
+/// Marker on the move-log panel's header `Text`. Carries
+/// `▌ MOVE LOG · N/M` while a replay is playing; the
+/// `update_move_log_header` system repaints it as the cursor
+/// advances.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayMoveLogHeader;
+
+/// Marker on the move-log panel's active-row `Text`. Carries the
+/// most-recently-applied move's text (`47 │ waste → tableau 5`)
+/// when `cursor > 0`; empty when no moves have been applied yet
+/// (initial spawn) or in `Completed`/`Inactive` states. The
+/// `update_move_log_active_row` system repaints it as the cursor
+/// advances.
+#[derive(Component, Debug)]
+pub struct ReplayOverlayMoveLogActiveRow;
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -311,6 +351,8 @@ impl Plugin for ReplayOverlayPlugin {
                     update_progress_text,
                     update_floating_progress_chip,
                     update_scrub_fill,
+                    update_move_log_header,
+                    update_move_log_active_row,
                     update_pause_button_label,
                     handle_pause_button,
                     handle_step_button,
@@ -338,6 +380,7 @@ fn react_to_state_change(
     state: Res<ReplayPlaybackState>,
     existing: Query<Entity, With<ReplayOverlayRoot>>,
     floating_chips: Query<Entity, With<ReplayFloatingProgressChip>>,
+    move_log_panels: Query<Entity, With<ReplayOverlayMoveLogPanel>>,
     font_res: Option<Res<FontResource>>,
 ) {
     if !state.is_changed() {
@@ -358,6 +401,12 @@ fn react_to_state_change(
         // Despawn separately on the same state transition so both
         // disappear together when the replay ends.
         for entity in &floating_chips {
+            commands.entity(entity).despawn();
+        }
+        // Move-log panel is also a separate root entity (sibling
+        // of the banner anchored to the viewport's bottom edge),
+        // so the banner-root despawn doesn't reach it either.
+        for entity in &move_log_panels {
             commands.entity(entity).despawn();
         }
     }
@@ -389,6 +438,10 @@ fn spawn_overlay(
     // the labels closure, so it's still alive for the footer
     // spawn afterwards — single shared clone covers both.
     let font_handle_for_labels = font_handle.clone();
+    // Third clone for the move-log panel — a separate root
+    // entity spawned after the banner closure closes. Mirrors the
+    // floating-chip clone reasoning.
+    let font_handle_for_move_log = font_handle.clone();
 
     let banner_label = if state.is_completed() {
         "\u{258C} replay complete" // ▌ — cursor-block prefix; matches the splash boot-screen convention.
@@ -778,6 +831,78 @@ fn spawn_overlay(
         Transform::from_xyz(0.0, 0.0, 100.0),
         Visibility::Hidden,
     ));
+
+    // Move-log panel — a separate root UI entity anchored to the
+    // viewport's bottom edge. Carries a `▌ MOVE LOG · N/M` header
+    // plus a row showing the most-recently-applied move.
+    // Sibling-of-banner pattern (not a banner child) because the
+    // panel lives at a different screen anchor and has its own
+    // spawn/despawn lifecycle synced via `react_to_state_change`.
+    let banner_bg = Color::srgba(
+        BG_ELEVATED_HI.to_srgba().red,
+        BG_ELEVATED_HI.to_srgba().green,
+        BG_ELEVATED_HI.to_srgba().blue,
+        BANNER_ALPHA,
+    );
+    commands
+        .spawn((
+            ReplayOverlayMoveLogPanel,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Px(MOVE_LOG_PANEL_HEIGHT),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                justify_content: JustifyContent::Center,
+                padding: UiRect::axes(VAL_SPACE_4, VAL_SPACE_2),
+                row_gap: VAL_SPACE_1,
+                border: UiRect::top(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(banner_bg),
+            BorderColor::all(BORDER_SUBTLE),
+            // Same z-stack rationale as the banner — above gameplay,
+            // below modals.
+            ZIndex(Z_REPLAY_OVERLAY),
+            GlobalZIndex(Z_REPLAY_OVERLAY),
+            // HC marker so the top border bumps under HC mode.
+            // Without it the panel reads as floating loose because
+            // the border that anchors it to the gameplay area above
+            // is near-invisible at #505050.
+            HighContrastBorder::with_default(BORDER_SUBTLE),
+        ))
+        .with_children(|panel| {
+            // Header row: `▌ MOVE LOG · N/M` in ACCENT_PRIMARY for
+            // the cursor-block prefix consistency with the banner
+            // headline.
+            panel.spawn((
+                ReplayOverlayMoveLogHeader,
+                Text::new(format_move_log_header(state)),
+                TextFont {
+                    font: font_handle_for_move_log.clone(),
+                    font_size: TYPE_CAPTION,
+                    ..default()
+                },
+                TextColor(ACCENT_PRIMARY),
+            ));
+            // Active move row. Empty at spawn time when cursor=0;
+            // the per-frame update system populates it as the
+            // cursor advances. TYPE_BODY gives the row a bit more
+            // weight than the header — it's the load-bearing
+            // information.
+            panel.spawn((
+                ReplayOverlayMoveLogActiveRow,
+                Text::new(format_active_move_row(state)),
+                TextFont {
+                    font: font_handle_for_move_log,
+                    font_size: TYPE_BODY,
+                    ..default()
+                },
+                TextColor(TEXT_PRIMARY),
+            ));
+        });
 }
 
 /// Pure helper — returns the scrub-fill width as a percentage of the
@@ -977,6 +1102,40 @@ fn update_floating_progress_chip(
     }
 }
 
+/// Repaints the move-log panel's `▌ MOVE LOG · N/M` header text
+/// whenever [`ReplayPlaybackState`] changes. Cheap — early-exits
+/// when nothing moved so an idle replay leaves the text mesh
+/// untouched.
+fn update_move_log_header(
+    state: Res<ReplayPlaybackState>,
+    mut q: Query<&mut Text, With<ReplayOverlayMoveLogHeader>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    let label = format_move_log_header(&state);
+    for mut text in &mut q {
+        **text = label.clone();
+    }
+}
+
+/// Repaints the move-log panel's active-row text whenever
+/// [`ReplayPlaybackState`] changes. Same change-detection guard
+/// as the header updater. Empty string at `cursor == 0` (no move
+/// applied yet) and in non-`Playing` states; populated otherwise.
+fn update_move_log_active_row(
+    state: Res<ReplayPlaybackState>,
+    mut q: Query<&mut Text, With<ReplayOverlayMoveLogActiveRow>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    let label = format_active_move_row(&state);
+    for mut text in &mut q {
+        **text = label.clone();
+    }
+}
+
 /// Repaints the bottom-edge accent scrub fill to mirror cursor progress.
 /// Same change-detection guard as the text updaters — the overlay
 /// already early-exits when nothing moved, so an idle replay leaves the
@@ -1026,6 +1185,76 @@ fn format_progress(state: &ReplayPlaybackState) -> String {
         None if state.is_completed() => "REPLAY COMPLETE".to_string(),
         None => String::new(),
     }
+}
+
+/// Pure helper — formats a [`PileType`] as a short, lowercase,
+/// 1-indexed display string for the move-log row. `Foundation(2)`
+/// renders as `"foundation 3"` rather than `"foundation 2"` so
+/// players see human-friendly numbers; the underlying enum
+/// remains 0-indexed.
+///
+/// Returns `String` rather than `&'static str` because the
+/// `Foundation` / `Tableau` variants need formatting; the static
+/// variants (`Stock`, `Waste`) still allocate but the cost is
+/// trivial against the per-frame update cadence.
+fn format_pile(p: &PileType) -> String {
+    match p {
+        PileType::Stock => "stock".to_string(),
+        PileType::Waste => "waste".to_string(),
+        PileType::Foundation(i) => format!("foundation {}", i + 1),
+        PileType::Tableau(i) => format!("tableau {}", i + 1),
+    }
+}
+
+/// Pure helper — formats a [`ReplayMove`] as the body of a
+/// move-log row. `StockClick` reads as `"stock cycle"`; `Move`
+/// reads as `"{from} → {to}"` using [`format_pile`] for both
+/// endpoints. The `count` field is omitted from the row body —
+/// at row scale it adds visual noise without meaningful
+/// information for the typical 1-card moves.
+fn format_move_body(m: &ReplayMove) -> String {
+    match m {
+        ReplayMove::StockClick => "stock cycle".to_string(),
+        ReplayMove::Move { from, to, .. } => {
+            format!("{} \u{2192} {}", format_pile(from), format_pile(to))
+        }
+    }
+}
+
+/// Pure helper — formats the move-log panel's header text. Reads
+/// `▌ MOVE LOG · N/M` while playing, where `N` is the count of
+/// moves applied so far and `M` is the total in the replay. The
+/// cursor-block prefix (`▌`) matches the splash and replay-banner
+/// motifs. Empty in `Inactive` (no replay attached); reads
+/// `▌ MOVE LOG · COMPLETE` in `Completed`.
+fn format_move_log_header(state: &ReplayPlaybackState) -> String {
+    match state {
+        ReplayPlaybackState::Playing { replay, cursor, .. } => {
+            format!("\u{258C} MOVE LOG \u{00B7} {}/{}", cursor, replay.moves.len())
+        }
+        ReplayPlaybackState::Completed => "\u{258C} MOVE LOG \u{00B7} COMPLETE".to_string(),
+        ReplayPlaybackState::Inactive => String::new(),
+    }
+}
+
+/// Pure helper — formats the active-row text for the move-log
+/// panel. Returns `"{idx} │ {body}"` for the most-recently-applied
+/// move (`replay.moves[cursor - 1]`), where `idx` is 1-indexed for
+/// player display. Returns the empty string for `cursor == 0`
+/// (no move applied yet — panel renders the header alone) and for
+/// non-`Playing` states.
+fn format_active_move_row(state: &ReplayPlaybackState) -> String {
+    let ReplayPlaybackState::Playing { replay, cursor, .. } = state else {
+        return String::new();
+    };
+    if *cursor == 0 {
+        return String::new();
+    }
+    let applied_idx = *cursor - 1;
+    let Some(m) = replay.moves.get(applied_idx) else {
+        return String::new();
+    };
+    format!("{} \u{2502} {}", *cursor, format_move_body(m))
 }
 
 // ---------------------------------------------------------------------------
@@ -2265,6 +2494,239 @@ mod tests {
             scrub_notch_count(&mut app),
             5,
             "notches and win marker are independent — no marker doesn't drop the notches",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Move Log panel: helpers + spawn cardinality + lifecycle
+    // -----------------------------------------------------------------------
+
+    fn move_log_panel_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayMoveLogPanel>()
+            .iter(app.world())
+            .count()
+    }
+
+    fn move_log_header_text(app: &mut App) -> String {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Text, With<ReplayOverlayMoveLogHeader>>();
+        q.iter(app.world())
+            .next()
+            .map(|t| t.0.clone())
+            .unwrap_or_default()
+    }
+
+    fn move_log_active_row_text(app: &mut App) -> String {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Text, With<ReplayOverlayMoveLogActiveRow>>();
+        q.iter(app.world())
+            .next()
+            .map(|t| t.0.clone())
+            .unwrap_or_default()
+    }
+
+    /// Pile formatter pins the "lowercase + 1-indexed" contract.
+    /// `Foundation(2)` displays as `"foundation 3"` rather than
+    /// the underlying 0-index — players see human-friendly numbers.
+    #[test]
+    fn format_pile_uses_one_indexed_lowercase_names() {
+        use solitaire_core::pile::PileType;
+        assert_eq!(format_pile(&PileType::Stock), "stock");
+        assert_eq!(format_pile(&PileType::Waste), "waste");
+        assert_eq!(format_pile(&PileType::Foundation(0)), "foundation 1");
+        assert_eq!(format_pile(&PileType::Foundation(2)), "foundation 3");
+        assert_eq!(format_pile(&PileType::Tableau(0)), "tableau 1");
+        assert_eq!(format_pile(&PileType::Tableau(6)), "tableau 7");
+    }
+
+    /// Move-body formatter renders `StockClick` as a label and
+    /// `Move` as a `from → to` arrow. The `count` field is
+    /// deliberately omitted — at row scale it adds noise.
+    #[test]
+    fn format_move_body_handles_both_variants() {
+        use solitaire_core::pile::PileType;
+        use solitaire_data::ReplayMove;
+        assert_eq!(format_move_body(&ReplayMove::StockClick), "stock cycle");
+        assert_eq!(
+            format_move_body(&ReplayMove::Move {
+                from: PileType::Waste,
+                to: PileType::Tableau(4),
+                count: 1,
+            }),
+            "waste \u{2192} tableau 5",
+            "Move variant must render as `{{from}} → {{to}}` with 1-indexed pile numbers",
+        );
+    }
+
+    /// Header text covers all three state branches:
+    /// `Playing` → `▌ MOVE LOG · N/M`,
+    /// `Completed` → `▌ MOVE LOG · COMPLETE`,
+    /// `Inactive` → empty.
+    #[test]
+    fn format_move_log_header_covers_state_branches() {
+        let playing = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 3,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        assert_eq!(format_move_log_header(&playing), "\u{258C} MOVE LOG \u{00B7} 3/10");
+        assert_eq!(
+            format_move_log_header(&ReplayPlaybackState::Completed),
+            "\u{258C} MOVE LOG \u{00B7} COMPLETE",
+        );
+        assert_eq!(format_move_log_header(&ReplayPlaybackState::Inactive), "");
+    }
+
+    /// Active-row text is empty at cursor 0 (no move applied yet)
+    /// and populated otherwise. The displayed index is 1-based —
+    /// when cursor=N, the most-recently-applied move is at
+    /// `replay.moves[N - 1]` and the row reads `"N | ..."`.
+    #[test]
+    fn format_active_move_row_handles_cursor_zero_and_positive() {
+        let cursor_zero = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 0,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        assert_eq!(
+            format_active_move_row(&cursor_zero),
+            "",
+            "cursor=0 means no move applied yet; row stays empty",
+        );
+
+        let cursor_three = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 3,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        // synthetic_replay produces all StockClicks, so the body
+        // is "stock cycle". The displayed index is 3 (cursor),
+        // matching the most-recently-applied move at moves[2].
+        assert_eq!(
+            format_active_move_row(&cursor_three),
+            "3 \u{2502} stock cycle",
+            "row body must read `cursor │ {{move body}}` with the 1-based displayed index",
+        );
+    }
+
+    /// Move-log panel spawns alongside the rest of the overlay
+    /// tree on `Inactive → Playing`. Cardinality is exactly one
+    /// (singleton bottom-edge panel).
+    #[test]
+    fn move_log_panel_spawns_with_overlay() {
+        let mut app = headless_app();
+        app.update();
+        assert_eq!(move_log_panel_count(&mut app), 0);
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_panel_count(&mut app),
+            1,
+            "exactly one move-log panel must spawn with the overlay",
+        );
+    }
+
+    /// Spawned panel's header reads `▌ MOVE LOG · N/M` matching
+    /// the helper output for the active state. Pins the spawn-path
+    /// against drift between the helper and the actual painted
+    /// text.
+    #[test]
+    fn move_log_panel_header_paints_helper_string() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8),
+                cursor: 2,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_header_text(&mut app),
+            "\u{258C} MOVE LOG \u{00B7} 2/8",
+        );
+    }
+
+    /// Active-row text repaints when the cursor advances. Drives
+    /// the resource through cursor=0 → cursor=2 transitions and
+    /// asserts the row text follows.
+    #[test]
+    fn move_log_active_row_repaints_on_cursor_advance() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_active_row_text(&mut app),
+            "",
+            "cursor=0 must paint an empty row",
+        );
+
+        // Advance cursor to 2 (most-recently-applied move is moves[1]).
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 2,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_active_row_text(&mut app),
+            "2 \u{2502} stock cycle",
+            "active row must repaint to the cursor's position when state changes",
+        );
+    }
+
+    /// Panel shares the overlay tree's lifecycle — it despawns on
+    /// `Playing → Inactive` along with the banner root.
+    #[test]
+    fn move_log_panel_despawns_with_overlay() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(move_log_panel_count(&mut app), 1);
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            move_log_panel_count(&mut app),
+            0,
+            "panel must despawn with the rest of the overlay tree",
         );
     }
 
