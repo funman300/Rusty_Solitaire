@@ -3986,9 +3986,6 @@ mod tests {
     /// silently flip the intended stacking.
     #[test]
     fn dim_layer_z_is_below_replay_chrome() {
-        assert!(
-            Z_REPLAY_DIM < Z_REPLAY_OVERLAY,
-            "dim layer (z={Z_REPLAY_DIM}) must be below replay chrome (z={Z_REPLAY_OVERLAY})",
-        );
+        const { assert!(Z_REPLAY_DIM < Z_REPLAY_OVERLAY) }
     }
 }

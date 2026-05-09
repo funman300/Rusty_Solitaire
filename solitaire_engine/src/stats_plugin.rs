@@ -29,12 +29,13 @@ use crate::resources::GameStateResource;
 use crate::time_attack_plugin::TimeAttackResource;
 use crate::ui_modal::{
     spawn_modal, spawn_modal_actions, spawn_modal_button, spawn_modal_header, ButtonVariant,
-    ScrimDismissible,
+    ModalButton, ScrimDismissible,
 };
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BORDER_SUBTLE, HighContrastBorder, RADIUS_SM, STATE_INFO, STATE_WARNING,
-    STREAK_MILESTONES, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG, TYPE_CAPTION,
-    TYPE_HEADLINE, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4, Z_MODAL_PANEL,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBorder, RADIUS_SM, STATE_INFO,
+    STATE_WARNING, STREAK_MILESTONES, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG,
+    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_3, VAL_SPACE_4,
+    Z_MODAL_PANEL,
 };
 
 /// Bevy resource wrapping the current stats.
@@ -120,6 +121,13 @@ pub struct ReplayNextButton;
 /// repaint system can rewrite the label as the selection changes.
 #[derive(Component, Debug)]
 pub struct ReplaySelectorCaption;
+
+/// Marker on the detail text node that shows the selected replay's
+/// `"{duration} win on {date}"` + optional `"· Shareable"` badge.
+/// Repainted by `repaint_replay_selector_detail` whenever the
+/// selection or history changes.
+#[derive(Component, Debug)]
+pub struct ReplaySelectorDetail;
 
 /// Marker component on each per-mode bests row in the stats overlay.
 ///
@@ -223,7 +231,12 @@ impl Plugin for StatsPlugin {
             .add_systems(Update, handle_copy_share_link_button)
             .add_systems(
                 Update,
-                (handle_replay_selector_buttons, repaint_replay_selector_caption).chain(),
+                (
+                    handle_replay_selector_buttons,
+                    repaint_replay_selector_caption,
+                    repaint_replay_selector_detail,
+                )
+                    .chain(),
             )
             .add_systems(Update, scroll_stats_panel);
     }
@@ -439,6 +452,39 @@ fn repaint_replay_selector_caption(
     }
 }
 
+/// Repaints the `ReplaySelectorDetail` text node whenever the
+/// selection or history changes. Shows `"{duration} win on {date}"` for
+/// the selected replay, with a `"· Shareable"` badge when the replay
+/// carries a sync-uploaded share URL. Empty when the history is empty.
+fn repaint_replay_selector_detail(
+    history: Res<ReplayHistoryResource>,
+    selected: Res<SelectedReplayIndex>,
+    mut q: Query<&mut Text, With<ReplaySelectorDetail>>,
+) {
+    if !history.is_changed() && !selected.is_changed() {
+        return;
+    }
+    let label = replay_selector_detail(&history.0.replays, selected.0);
+    for mut text in &mut q {
+        **text = label.clone();
+    }
+}
+
+/// Pure helper: render the detail line for the selected replay. Returns
+/// `"{duration} win on {date}"` plus a `" \u{2022} Shareable"` badge
+/// when a share URL is present. Empty when the history slice is empty.
+pub fn replay_selector_detail(replays: &[solitaire_data::Replay], index: usize) -> String {
+    let Some(r) = replays.get(index.min(replays.len().saturating_sub(1))) else {
+        return String::new();
+    };
+    let base = format_replay_caption(r);
+    if r.share_url.is_some() {
+        format!("{base} \u{2022} Shareable") // ·
+    } else {
+        base
+    }
+}
+
 /// Pure helper: render the selector caption shown next to the Prev /
 /// Next chips. Returns `"No replays"` when the history is empty,
 /// otherwise `"Replay {1-based index} / {total}"`.
@@ -618,14 +664,14 @@ fn toggle_stats_screen(
     if let Ok(entity) = screens.single() {
         commands.entity(entity).despawn();
     } else {
-        let selected = latest_replay.0.replays.get(selected_index.0);
         spawn_stats_screen(
             &mut commands,
             &stats.0,
             progress.as_deref().map(|p| &p.0),
             time_attack.as_deref(),
             font_res.as_deref(),
-            selected,
+            &latest_replay.0.replays,
+            selected_index.0,
         );
     }
 }
@@ -651,7 +697,8 @@ fn spawn_stats_screen(
     progress: Option<&PlayerProgress>,
     time_attack: Option<&TimeAttackResource>,
     font_res: Option<&FontResource>,
-    latest_replay: Option<&Replay>,
+    replays: &[Replay],
+    selected_index: usize,
 ) {
     // --- primary stat cells ---
     // First-launch zero-state: when no games have been played yet, render
@@ -859,31 +906,84 @@ fn spawn_stats_screen(
                     ));
                 }
 
-            // --- Latest replay caption ---
-            // Surfaces the most recent winning game so the player can spot
-            // whether their last victory has been recorded. The Watch
-            // Replay action below is what the player clicks to revisit it.
-            //
-            // When the displayed replay carries a `share_url` (uploaded
-            // to a sync server, persisted by v0.19.0's share-link
-            // contract), append a "Shareable" badge so the player can
-            // tell at a glance whether the Copy share link button below
-            // will produce a URL — without it the button surfaces a
-            // toast explaining why nothing was copied, which is more
-            // friction than necessary when a quick visual cue suffices.
-            let replay_caption = match latest_replay {
-                Some(r) => {
-                    let base = format!("Latest win: {}", format_replay_caption(r));
-                    if r.share_url.is_some() {
-                        format!("{base} \u{2022} Shareable")
-                    } else {
-                        base
-                    }
-                }
-                None => "No replay recorded yet \u{2014} win a game first.".to_string(),
-            };
+            // --- Replay selector ---
+            // Prev / Next chips step through the full replay history;
+            // `repaint_replay_selector_caption` and
+            // `repaint_replay_selector_detail` keep both text nodes
+            // live as the selection changes. Using `ModalButton` on
+            // the chips plugs them into the existing modal-button
+            // hover/press paint loop at no extra cost.
+            body.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_3,
+                ..default()
+            })
+            .with_children(|row| {
+                // ← Prev chip
+                row.spawn((
+                    ReplayPrevButton,
+                    ModalButton(ButtonVariant::Secondary),
+                    Button,
+                    Node {
+                        padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
+                        ..default()
+                    },
+                    BackgroundColor(BG_ELEVATED_HI),
+                    BorderColor::all(BORDER_SUBTLE),
+                    HighContrastBorder::with_default(BORDER_SUBTLE),
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("\u{2190}"),
+                        font_row.clone(),
+                        TextColor(TEXT_PRIMARY),
+                    ));
+                });
+
+                // "Replay N / M" caption — rewritten live by
+                // `repaint_replay_selector_caption`.
+                row.spawn((
+                    ReplaySelectorCaption,
+                    Text::new(replay_selector_caption(selected_index, replays.len())),
+                    font_row.clone(),
+                    TextColor(TEXT_SECONDARY),
+                ));
+
+                // → Next chip
+                row.spawn((
+                    ReplayNextButton,
+                    ModalButton(ButtonVariant::Secondary),
+                    Button,
+                    Node {
+                        padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(RADIUS_SM)),
+                        ..default()
+                    },
+                    BackgroundColor(BG_ELEVATED_HI),
+                    BorderColor::all(BORDER_SUBTLE),
+                    HighContrastBorder::with_default(BORDER_SUBTLE),
+                ))
+                .with_children(|b| {
+                    b.spawn((
+                        Text::new("\u{2192}"),
+                        font_row.clone(),
+                        TextColor(TEXT_PRIMARY),
+                    ));
+                });
+            });
+
+            // Detail line: rewritten live by `repaint_replay_selector_detail`.
             body.spawn((
-                Text::new(replay_caption),
+                ReplaySelectorDetail,
+                Text::new(replay_selector_detail(replays, selected_index)),
                 font_row.clone(),
                 TextColor(TEXT_SECONDARY),
             ));
@@ -1668,6 +1768,140 @@ mod tests {
             collected.is_empty(),
             "expected no WinStreakMilestoneEvent for non-threshold streak crossing 1 → 2, got {collected:?}",
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Prev/Next replay selector spawn-site tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn selector_row_spawns_when_stats_screen_opens() {
+        let mut app = headless_app();
+        // Pre-populate a replay so the selector has something to show.
+        {
+            let mut hist = app.world_mut().resource_mut::<ReplayHistoryResource>();
+            hist.0.replays.push(make_test_replay(90, None));
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        app.update();
+
+        let prev = app
+            .world_mut()
+            .query::<&ReplayPrevButton>()
+            .iter(app.world())
+            .count();
+        let next = app
+            .world_mut()
+            .query::<&ReplayNextButton>()
+            .iter(app.world())
+            .count();
+        let caption = app
+            .world_mut()
+            .query::<&ReplaySelectorCaption>()
+            .iter(app.world())
+            .count();
+        let detail = app
+            .world_mut()
+            .query::<&ReplaySelectorDetail>()
+            .iter(app.world())
+            .count();
+        assert_eq!(prev, 1, "expected one ReplayPrevButton");
+        assert_eq!(next, 1, "expected one ReplayNextButton");
+        assert_eq!(caption, 1, "expected one ReplaySelectorCaption");
+        assert_eq!(detail, 1, "expected one ReplaySelectorDetail");
+    }
+
+    #[test]
+    fn selector_caption_initial_text_is_replay_one_of_one() {
+        let mut app = headless_app();
+        {
+            let mut hist = app.world_mut().resource_mut::<ReplayHistoryResource>();
+            hist.0.replays.push(make_test_replay(120, None));
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        app.update();
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Text, With<ReplaySelectorCaption>>();
+        let texts: Vec<String> = q.iter(app.world()).map(|t| t.0.clone()).collect();
+        assert_eq!(texts.len(), 1);
+        assert_eq!(
+            texts[0],
+            "Replay 1 / 1",
+            "caption must show '1 / 1' for a single-replay history"
+        );
+    }
+
+    #[test]
+    fn selector_detail_initial_text_matches_replay_caption() {
+        let mut app = headless_app();
+        {
+            let mut hist = app.world_mut().resource_mut::<ReplayHistoryResource>();
+            hist.0.replays.push(make_test_replay(65, None)); // 65s → "1:05"
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyS);
+        app.update();
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&Text, With<ReplaySelectorDetail>>();
+        let texts: Vec<String> = q.iter(app.world()).map(|t| t.0.clone()).collect();
+        assert_eq!(texts.len(), 1);
+        assert_eq!(
+            texts[0], "1:05 win on 2026-05-08",
+            "detail must show formatted replay caption for the selected replay"
+        );
+    }
+
+    #[test]
+    fn selector_detail_appends_shareable_badge_when_url_present() {
+        // `replay_selector_detail` is pure — no app setup needed.
+        let replays = vec![make_test_replay(
+            90,
+            Some("https://example.com/r/abc".to_string()),
+        )];
+        let label = replay_selector_detail(&replays, 0);
+        assert!(
+            label.contains("Shareable"),
+            "detail must include 'Shareable' badge when share_url is set, got: {label:?}"
+        );
+    }
+
+    #[test]
+    fn selector_caption_shows_no_replays_when_history_is_empty() {
+        assert_eq!(replay_selector_caption(0, 0), "No replays");
+    }
+
+    #[test]
+    fn selector_caption_wraps_ordinal_correctly() {
+        // index 2 (0-based) in a 3-replay history → "Replay 3 / 3"
+        assert_eq!(replay_selector_caption(2, 3), "Replay 3 / 3");
+    }
+
+    /// Build a minimal [`Replay`] for use in stats-plugin unit tests.
+    ///
+    /// Uses a fixed seed, DrawOne mode, Classic game, 2026-05-08 date.
+    /// `time_seconds` and `share_url` are the only varying fields across tests.
+    fn make_test_replay(time_seconds: u64, share_url: Option<String>) -> solitaire_data::Replay {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 8).expect("valid date");
+        let mut r = solitaire_data::Replay::new(
+            1,
+            solitaire_core::game_state::DrawMode::DrawOne,
+            solitaire_core::game_state::GameMode::Classic,
+            time_seconds,
+            0,
+            date,
+            vec![],
+        );
+        r.share_url = share_url;
+        r
     }
 
     /// Integration: pre-set streak to 10, fire a win that bumps it to 11.
