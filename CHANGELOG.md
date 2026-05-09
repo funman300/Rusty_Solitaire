@@ -6,8 +6,120 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.5 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.6 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.6] — 2026-05-08
+
+Patch release for the post-v0.21.5 work. Through-line:
+**Move Log panel + scrub-UX polish**. v0.21.5 closed out the
+keyboard-accelerator surface (Space / Esc / ← / →) and the
+keybind footer; v0.21.6 builds on that with two parallel
+threads — accessibility + scrub-on-hold polish for the v0.21.5
+surfaces, plus a brand-new Move Log panel anchored to the
+viewport's bottom edge that gives players a 5-row recent-and-
+upcoming move history alongside the existing top-edge banner.
+
+The Move Log panel is the first replay-overlay surface that
+*isn't* attached to the banner — it lives at a separate screen
+anchor (bottom: 0) with its own spawn/despawn lifecycle.
+Establishes the pattern for "multi-anchor replay UI" that the
+remaining B-2 sub-piece (mini-tableau preview) will inherit.
+
+### Added
+
+- **HC-mode coverage for the scrub track + quarter-mark notch
+  ticks** (`d3cb1a5`). Adds parallel primitive
+  `HighContrastBackground` to `ui_theme` and a paint system
+  `update_high_contrast_backgrounds` in `settings_plugin` that
+  mirrors the existing border-marker pattern but targets
+  `BackgroundColor` instead of `BorderColor`. Tags the 1 px
+  scrub track Node and all five quarter-mark notch ticks so
+  they bump from `BORDER_SUBTLE` (`#505050`) →
+  `BORDER_SUBTLE_HC` (`#a0a0a0`) under HC mode. Scrub fill
+  (`ACCENT_PRIMARY`) and WIN MOVE marker (`STATE_SUCCESS`)
+  don't get the marker — accent and state colours are already
+  saturated and don't need an HC luminance variant.
+- **Continuous scrub on key-held arrow keys** (`2e25476`).
+  Holding ← or → triggers continuous step at 100 ms cadence
+  (10 steps/sec) — matches the mockup's `[← →] scrub`
+  terminology while keeping single-press = single-step
+  semantics. Per-key accumulators in a new
+  `ReplayScrubKeyHold` resource; `just_pressed` events bypass
+  the accumulator and fire immediately. Release resets to 0
+  so the next fresh press fires immediately rather than at
+  half-interval.
+- **Move Log panel** (`d6f32d3` + `140251b` + `e7345ae` +
+  `4437a1a`). New bottom-edge UI panel showing a 5-row window
+  onto recent + upcoming moves: 2 prev rows above the active
+  row + active row highlighted in `ACCENT_PRIMARY` + 2 next
+  rows below. Header reads `▌ MOVE LOG · N/M` (or
+  `▌ MOVE LOG · COMPLETE` when finished). Active row carries
+  a `▶` focus prefix and `TEXT_PRIMARY_HC` text colour for
+  legible contrast against the brick-red highlight. Prev /
+  next rows render in `TEXT_SECONDARY` so the active row
+  stays the focal point.
+  - Sibling-of-banner pattern (separate root entity anchored
+    at viewport bottom, not a banner child) — same
+    spawn/despawn lifecycle as `ReplayFloatingProgressChip`,
+    different screen anchor.
+  - Five pure helpers handle the formatting:
+    `format_pile`, `format_move_body`,
+    `format_move_log_header`, `format_kth_recent_row` (active
+    + prev), `format_kth_next_row` (next). 1-indexed display
+    numbers throughout (`Foundation(2)` reads as "foundation
+    3" rather than the enum's 0-index).
+  - Panel grows from 56 → 84 → 112 px across the four
+    move-log commits. `MOVE_LOG_PREV_ROWS` and
+    `MOVE_LOG_NEXT_ROWS` constants (both = 2) parameterise
+    the row count; `format_kth_recent_row` and
+    `format_kth_next_row` return empty for out-of-range k so
+    panels gracefully under-fill at the start (cursor=1) and
+    end (cursor=N-1) of a replay.
+  - HC marker on the panel's top border so the 1 px edge
+    bumps under HC mode (same pattern as the keybind footer).
+
+### Changed
+
+- **`react_to_state_change` despawns the Move Log panel** on
+  `Playing → Inactive` alongside the banner root and floating
+  progress chip. Third query in the same defer-and-despawn
+  cycle.
+- **Move Log panel height grew 56 → 84 → 112 px** across the
+  prev-rows and next-rows commits. The panel is sized to fit
+  the chosen row count + header + padding; tunable via the
+  `MOVE_LOG_PANEL_HEIGHT` const.
+- **`format_active_move_row` now prefixes the `▶` focus
+  marker** (`e7345ae`). Wraps `format_kth_recent_row(state, 1)`
+  and prepends the prefix when the body is non-empty. Empty
+  case still returns empty — cursor=0 doesn't paint a stray
+  `▶` on an otherwise-empty row.
+
+### Documentation
+
+- `SESSION_HANDOFF.md` refreshed twice this cycle — once
+  recording the HC paint + continuous-scrub polish, then
+  again as the Move Log arc shipped commit-by-commit. The
+  Resume menu's B option now traces the full arc:
+  notches → labels → footer → ESC → HC → arrow keys →
+  HC paint → continuous scrub → move log.
+
+### Stats
+
+- **1273 passing tests / 0 failing** across the workspace
+  (net +23 from v0.21.5's 1250 baseline):
+  - 2 from `d3cb1a5` (HC marker on track + notches).
+  - 2 from `2e25476` (continuous-scrub repeat-while-held +
+    release-resets-accumulator).
+  - 8 from `d6f32d3` (move-log panel init + 5 helpers + 3
+    spawn / lifecycle scenarios).
+  - 4 from `140251b` (prev rows: helper k coverage + spawn
+    cardinality + spawn texts + repaint on cursor advance).
+  - 3 from `e7345ae` (active row highlight: wrapper bg +
+    text colour + focus prefix + cursor=0 stays empty).
+  - 4 from `4437a1a` (next rows: helper k coverage + spawn
+    cardinality + spawn texts + under-fill at replay end).
+- Clippy clean across the workspace.
 
 ## [0.21.5] — 2026-05-08
 
