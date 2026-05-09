@@ -38,8 +38,8 @@ use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBackground, HighContrastBorder,
-    STATE_SUCCESS, TEXT_PRIMARY, TEXT_PRIMARY_HC, TEXT_SECONDARY, TYPE_BODY, TYPE_CAPTION,
-    TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
+    STATE_SUCCESS, STATE_SUCCESS_HC, TEXT_PRIMARY, TEXT_PRIMARY_HC, TEXT_SECONDARY, TYPE_BODY,
+    TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -779,6 +779,11 @@ fn spawn_overlay(
                                 ..default()
                             },
                             BackgroundColor(STATE_SUCCESS),
+                            // HC bump: lime → brighter lime so the win
+                            // marker reads clearly above the bumped
+                            // notch ticks (BORDER_SUBTLE_HC gray) under
+                            // high-contrast mode.
+                            HighContrastBackground::with_hc(STATE_SUCCESS, STATE_SUCCESS_HC),
                         ));
                     }
                     // Fixed quarter-mark notches: five 1px vertical
@@ -2346,6 +2351,44 @@ mod tests {
             win_marker_count(&mut app),
             0,
             "marker must despawn with the rest of the overlay tree"
+        );
+    }
+
+    /// The WIN MOVE marker carries `HighContrastBackground::with_hc(
+    /// STATE_SUCCESS, STATE_SUCCESS_HC)` so the lime bumps to brighter
+    /// lime under HC mode rather than to a neutral gray. Pin the
+    /// presence of the marker so a future refactor can't accidentally
+    /// drop it and silently regress HC legibility.
+    #[test]
+    fn win_move_marker_carries_hc_background_marker() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(8).with_win_move_index(Some(7)),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&HighContrastBackground, With<ReplayOverlayWinMoveMarker>>();
+        let marker = q
+            .iter(app.world())
+            .next()
+            .expect("WIN MOVE marker must carry HighContrastBackground");
+        assert_eq!(
+            marker.default_color,
+            STATE_SUCCESS,
+            "default colour must be STATE_SUCCESS"
+        );
+        assert_eq!(
+            marker.hc_color,
+            STATE_SUCCESS_HC,
+            "HC colour must be STATE_SUCCESS_HC (brighter lime, not gray)"
         );
     }
 

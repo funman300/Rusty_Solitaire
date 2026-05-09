@@ -701,7 +701,7 @@ pub(crate) fn update_high_contrast_backgrounds(
     let high_contrast = settings.0.high_contrast_mode;
     for (marker, mut bg) in backgrounds.iter_mut() {
         let target = if high_contrast {
-            BORDER_SUBTLE_HC
+            marker.hc_color
         } else {
             marker.default_color
         };

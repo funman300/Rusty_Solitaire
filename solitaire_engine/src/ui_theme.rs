@@ -93,6 +93,13 @@ pub const ACCENT_SECONDARY: Color = Color::srgb(0.882, 0.639, 0.933);
 /// from base16-eighties. `#acc267`.
 pub const STATE_SUCCESS: Color = Color::srgb(0.675, 0.761, 0.404);
 
+/// High-contrast variant of [`STATE_SUCCESS`] — `#c8e862`. Brighter
+/// lime that maintains the success hue while lifting luminance from
+/// ~0.51 → ~0.73 so the WIN MOVE scrub-bar marker stands out from
+/// the bumped notch ticks (`BORDER_SUBTLE_HC` `#a0a0a0`, L≈0.60) in
+/// high-contrast mode.
+pub const STATE_SUCCESS_HC: Color = Color::srgb(0.784, 0.910, 0.384);
+
 /// Warning — penalty signal, daily-seed expiry countdown, sync-pending
 /// status. Gold from base16-eighties. **Both** Undo and Recycle
 /// counters use this when non-zero. `#ddb26f`.
@@ -260,24 +267,45 @@ impl HighContrastBorder {
 /// often render as tiny full-bleed `Node`s, not as borders, so the
 /// border-marker pattern doesn't apply.
 ///
-/// `default_color` records the off-state colour the entity was
-/// spawned with so the system can revert when HC is toggled back
-/// off. The accompanying paint system is
-/// [`update_high_contrast_backgrounds`](crate::settings_plugin::update_high_contrast_backgrounds).
+/// `default_color` records the off-state colour; `hc_color` the on-
+/// state colour. [`with_default`] fills `hc_color` with
+/// [`BORDER_SUBTLE_HC`] so the 90 % of sites that just need the
+/// standard subtle-border bump can continue using a one-argument
+/// constructor. [`with_hc`] overrides the HC colour for the rare
+/// site (currently only the WIN MOVE scrub-bar marker) that needs a
+/// domain-specific HC variant (`STATE_SUCCESS_HC` instead of a gray).
 ///
+/// [`with_default`]: HighContrastBackground::with_default
+/// [`with_hc`]: HighContrastBackground::with_hc
 /// [`BackgroundColor`]: bevy::prelude::BackgroundColor
 #[derive(bevy::prelude::Component, Debug, Clone, Copy)]
 pub struct HighContrastBackground {
     /// Background colour to use when high-contrast mode is *off* —
     /// the site's normal idle / active-state colour.
     pub default_color: bevy::prelude::Color,
+    /// Background colour to use when high-contrast mode is *on*.
+    /// Defaults to [`BORDER_SUBTLE_HC`] via [`with_default`].
+    ///
+    /// [`with_default`]: HighContrastBackground::with_default
+    pub hc_color: bevy::prelude::Color,
 }
 
 impl HighContrastBackground {
-    /// Convenience constructor —
-    /// `HighContrastBackground::with_default(BORDER_SUBTLE)`.
+    /// Convenience constructor — HC colour defaults to
+    /// [`BORDER_SUBTLE_HC`].
     pub const fn with_default(default_color: bevy::prelude::Color) -> Self {
-        Self { default_color }
+        Self { default_color, hc_color: BORDER_SUBTLE_HC }
+    }
+
+    /// Constructor for sites whose HC colour differs from the standard
+    /// [`BORDER_SUBTLE_HC`]. Currently used by the WIN MOVE scrub-bar
+    /// marker which bumps `STATE_SUCCESS` → `STATE_SUCCESS_HC` rather
+    /// than to a neutral gray.
+    pub const fn with_hc(
+        default_color: bevy::prelude::Color,
+        hc_color: bevy::prelude::Color,
+    ) -> Self {
+        Self { default_color, hc_color }
     }
 }
 
