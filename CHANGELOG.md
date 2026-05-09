@@ -6,8 +6,156 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.4 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.5 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.5] — 2026-05-08
+
+Patch release for the post-v0.21.4 work. One through-line:
+**replay-overlay scrubbing affordances + accessibility**. v0.21.4
+shipped pause / resume / step + the WIN MOVE marker as the first
+*scrubbing-shaped* additions to the replay overlay; v0.21.5
+fills out the rest of the scrubbing UX so the player has both
+visual anchor points (notches + labels) and a complete keyboard
+control surface (Space / Esc / ← / →) for navigating a paused
+replay.
+
+Two of the six commits in this cycle are layout-changing — they
+grow the banner height from 60 px → 76 px → 92 px to make room
+for the notch labels and keybind footer. Banner geometry was
+fixed for every prior B-2 commit; this release establishes the
+"grow the container, add a flex-column child" pattern that the
+remaining B-2 sub-pieces (move-log scroller, mini-tableau
+preview) will inherit when they land.
+
+### Added
+
+- **Quarter-mark scrub-bar notches** (`fe68861`). Five 1 px
+  vertical ticks at 0 / 25 / 50 / 75 / 100 % give the player
+  visual anchor points without needing to mentally bisect the
+  bar. Pure helper `scrub_notch_positions()` returns the fixed
+  array; spawn loop sits next to the WIN MOVE marker spawn so
+  the lifecycles match. Notches paint in `BORDER_SUBTLE` (same
+  as the unfilled track) and rely on extending past the 1 px
+  track (5 px tall, anchored 2 px above the track top) for
+  visibility — same trick the WIN MOVE marker uses. Spawned
+  *after* the WIN MOVE marker so a notch and the marker
+  landing on the same percentage paint the marker on top.
+- **Percentage labels under each notch** (`d322abf`). Five
+  `0%` / `25%` / `50%` / `75%` / `100%` labels in a new 16 px
+  row beneath the 1 px scrub track give the player explicit
+  quarter-mark readouts. Banner grew from 60 → 76 px to
+  accommodate the row — first **layout-changing** commit in
+  the B-2 arc. Pure helper `scrub_notch_labels()` returns the
+  fixed array, paired index-for-index with
+  `scrub_notch_positions()`. Spawn loop applies an "endpoints
+  flush, middle three percent-anchored" positioning pattern:
+  leftmost label gets `left: 0`, rightmost gets `right: 0`,
+  middle three anchor at `left: Val::Percent(p)` since Bevy
+  0.18 UI lacks a clean CSS-style `translate-x: -50%`
+  centering primitive. Label colour is `TEXT_SECONDARY`
+  rather than the mockup's `BORDER_SUBTLE` (the latter would
+  match the notches but is too low-contrast against
+  `BG_ELEVATED_HI` to read at 12 px).
+- **Keybind-hint footer** (`1873b3f`). Vim-style mode line on
+  the left (`▌ NORMAL │ replay`) plus a keybind hint on the
+  right at the bottom edge of the banner. Banner grew from
+  76 → 92 px to fit the 16 px footer row. Surfaces every
+  wired keyboard accelerator visually so CLAUDE.md §3.3's
+  UI-first contract holds for keyboard accelerators too. The
+  footer lists *only* keybinds that are actually wired —
+  the only-wired-keybinds discipline means each release
+  cycle's hint string is a precise honest contract with the
+  player. Two pure helpers (`keybind_footer_mode_text`,
+  `keybind_footer_hint_text`) keep the static text testable.
+  1 px top border in `BORDER_SUBTLE` separates the footer
+  from the labels row.
+- **ESC keyboard accelerator for replay-stop** (`90e24d9`).
+  New `handle_stop_keyboard` system parallels
+  `handle_pause_keyboard` in shape — fires only when state
+  is `Playing`, calls `stop_replay_playback`. Cross-plugin
+  coordination via `pause_plugin::toggle_pause`: added a
+  fourth defer-if check
+  (`replay_state.is_some_and(|s| s.is_playing())`) right
+  after the existing `other_modal_scrims` check so ESC
+  during active replay belongs to the replay overlay, not
+  the pause modal.
+- **HC-mode coverage for the keybind-footer top border**
+  (`23902cd`).
+  `HighContrastBorder::with_default(BORDER_SUBTLE)` marker
+  on the footer's border-carrying Node so the existing
+  `apply_high_contrast_borders` system bumps the 1 px top
+  border from `#505050` → `#a0a0a0` when
+  `Settings::high_contrast_mode` is on. Without the marker
+  the footer reads as floating loose under HC because the
+  border that anchors it to the labels row is
+  near-invisible.
+- **← / → keyboard accelerators for paused stepping**
+  (`e5c4f51`). New `step_backwards_replay_playback` in
+  `replay_playback.rs` decrements the cursor and dispatches
+  `UndoRequestEvent`; the game's `handle_undo` reads it
+  next frame to reverse its most-recent move. Hooks the
+  existing undo system rather than replaying-forward-from-
+  zero — every replay-applied move pushes to the undo stack
+  the same way a player move would, so undo is the right
+  reversal primitive. Both arrow keys are paused-only via
+  the same destructure-gate pattern the forward step uses.
+  The mockup labels these `[← →] scrub`; single-move step
+  is the closest behaviour shippable today, so the footer
+  hint reads `[← →] step` — only-wired-keybinds discipline.
+
+### Changed
+
+- **Banner height grew 60 → 76 → 92 px** across two
+  layout-changing commits (`d322abf` then `1873b3f`). Top
+  row's `flex_grow: 1.0` still consumes 59 px so the
+  existing content (label / progress chip / buttons) has
+  the same vertical space; the new rows (16 px labels +
+  16 px footer) extend the banner downward into the
+  gameplay area. Banner geometry is now mutable — every
+  prior B-2 commit fit inside fixed 60 px space.
+- **Keybind-footer hint text grew alongside the wirings**:
+  `[SPACE] pause/resume` →
+  `[SPACE] pause/resume · [ESC] stop` →
+  `[SPACE] pause/resume · [ESC] stop · [← →] step`.
+- **`pause_plugin::toggle_pause` now defers when a replay
+  is active** (`90e24d9`). Adds a fourth defer-if check to
+  the existing modal-stack pattern.
+- **`ReplayOverlayPlugin` registers
+  `add_message::<UndoRequestEvent>()`** (`e5c4f51`).
+  Defensive registration so the plugin runs cleanly under
+  `MinimalPlugins` without `GamePlugin` attached.
+
+### Documentation
+
+- `SESSION_HANDOFF.md` refreshed five times this cycle.
+  The B option in the Resume menu now traces the full arc:
+  notches → labels → footer → ESC → HC → arrow keys.
+- The pre-existing `daily_challenge` warning test that
+  fails when wall-clock UTC is within 30 minutes of
+  midnight is documented in this cycle's handoff. Same
+  shape as the earlier `winnable_seed_search` flake —
+  time-dependent, deterministically passes outside the
+  trigger window.
+
+### Stats
+
+- **1250 total tests / 1249 passing / 1 pre-existing
+  time-dependent flake** across the workspace (net +22 from
+  v0.21.4's 1228 baseline):
+  - 4 from `fe68861` (scrub-notch coverage)
+  - 4 from `d322abf` (notch-label coverage)
+  - 4 from `1873b3f` (keybind-footer coverage)
+  - 3 from `90e24d9` (ESC-accelerator coverage)
+  - 1 from `23902cd` (HC-marker coverage)
+  - 6 from `e5c4f51` (arrow-keyboard coverage)
+- **Pre-existing flake**:
+  `daily_challenge_plugin::tests::check_system_fires_warning_event_only_once_per_day`
+  fails when wall-clock UTC is within 30 minutes of
+  midnight. Verified pre-existing by stash-and-retest
+  before each commit. Will pass deterministically outside
+  the trigger window. Not introduced by this release.
+- Clippy clean across the workspace.
 
 ## [0.21.4] — 2026-05-08
 
