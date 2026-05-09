@@ -105,6 +105,7 @@ impl Plugin for InputPlugin {
                     // Touch drag pipeline (parallel path through DragState).
                     touch_start_drag,
                     touch_follow_drag,
+                    handle_double_tap, // before touch_end_drag: reads drag state pre-clear
                     touch_end_drag.before(GameMutation),
                 )
                     .chain(),
@@ -1204,11 +1205,15 @@ fn pile_drop_rect(pile: &PileType, layout: &Layout, game: &GameState) -> (Vec2, 
 }
 
 // ---------------------------------------------------------------------------
-// Task #27 — Double-click to auto-move
+// Task #27 — Double-click / double-tap to auto-move
 // ---------------------------------------------------------------------------
 
 /// Maximum seconds between two clicks to count as a double-click.
 const DOUBLE_CLICK_WINDOW: f32 = 0.35;
+
+/// Maximum seconds between two taps to count as a double-tap.
+/// Slightly wider than the mouse window — touch screens have higher latency.
+const DOUBLE_TAP_WINDOW: f32 = 0.5;
 
 /// Find the best legal destination for `card` — Foundation first, then Tableau.
 ///
@@ -1360,6 +1365,124 @@ fn handle_double_click(
     } else {
         // Single click — record the time.
         last_click.insert(top_card_id, now);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task #27b — Double-tap to auto-move (touch equivalent of double-click)
+// ---------------------------------------------------------------------------
+
+/// System that detects double-taps on face-up cards and fires `MoveRequestEvent`
+/// to the best legal destination — the touch equivalent of [`handle_double_click`].
+///
+/// Must run **before** `touch_end_drag` in the system chain. At
+/// `TouchPhase::Ended` the drag state still holds `active_touch_id`,
+/// `cards`, and `origin_pile`; once `touch_end_drag` fires those fields
+/// are cleared and the tap/drag distinction is permanently lost.
+///
+/// A pure tap is identified by `drag.active_touch_id.is_some() &&
+/// !drag.committed`: the touch began (so `touch_start_drag` populated
+/// `drag`) but the drag threshold was never crossed.
+///
+/// Move priority matches [`handle_double_click`]:
+/// 1. Move the single top card to its best foundation (or tableau).
+/// 2. If no single-card move exists and the selection spans multiple
+///    face-up cards, move the whole stack to the best tableau column.
+/// 3. If both priorities fail, fire `MoveRejectedEvent` for audio + shake
+///    feedback.
+#[allow(clippy::too_many_arguments)]
+fn handle_double_tap(
+    mut touch_events: MessageReader<TouchInput>,
+    paused: Option<Res<PausedResource>>,
+    time: Res<Time>,
+    drag: Res<DragState>,
+    game: Res<GameStateResource>,
+    mut last_tap: Local<HashMap<u32, f32>>,
+    mut moves: MessageWriter<MoveRequestEvent>,
+    mut rejected: MessageWriter<MoveRejectedEvent>,
+) {
+    if paused.is_some_and(|p| p.0) {
+        return;
+    }
+
+    // Only active when a touch is tracked and hasn't crossed the drag threshold.
+    let Some(active_id) = drag.active_touch_id else { return };
+    if drag.committed {
+        return;
+    }
+
+    for event in touch_events.read() {
+        if event.id != active_id {
+            continue;
+        }
+        match event.phase {
+            TouchPhase::Canceled => {
+                // Cancelled touch — clear any pending tap state for these cards.
+                for &id in &drag.cards {
+                    last_tap.remove(&id);
+                }
+                return;
+            }
+            TouchPhase::Ended => {}
+            _ => continue,
+        }
+
+        // Uncommitted touch ended = pure tap.
+        let Some(&top_card_id) = drag.cards.last() else { return };
+        let Some(ref pile) = drag.origin_pile else { return };
+        let Some(pile_cards) = game.0.piles.get(pile) else { return };
+
+        let Some(top_card) = pile_cards.cards.iter().find(|c| c.id == top_card_id) else {
+            return;
+        };
+        if !top_card.face_up {
+            return;
+        }
+
+        let now = time.elapsed_secs();
+        let prev = last_tap.get(&top_card_id).copied().unwrap_or(f32::NEG_INFINITY);
+
+        if now - prev <= DOUBLE_TAP_WINDOW {
+            last_tap.remove(&top_card_id);
+
+            // Priority 1: move single top card.
+            if let Some(dest) = best_destination(top_card, &game.0) {
+                moves.write(MoveRequestEvent {
+                    from: pile.clone(),
+                    to: dest,
+                    count: 1,
+                });
+                return;
+            }
+
+            // Priority 2: move whole face-up stack to best tableau column.
+            if drag.cards.len() > 1 {
+                let stack_index = pile_cards.cards.len() - drag.cards.len();
+                if let Some(bottom_card) = pile_cards.cards.get(stack_index)
+                    && let Some((dest, count)) = best_tableau_destination_for_stack(
+                        bottom_card,
+                        pile,
+                        &game.0,
+                        drag.cards.len(),
+                    )
+                {
+                    moves.write(MoveRequestEvent {
+                        from: pile.clone(),
+                        to: dest,
+                        count,
+                    });
+                    return;
+                }
+            }
+
+            rejected.write(MoveRejectedEvent {
+                from: pile.clone(),
+                to: pile.clone(),
+                count: drag.cards.len(),
+            });
+        } else {
+            last_tap.insert(top_card_id, now);
+        }
     }
 }
 
@@ -2214,6 +2337,15 @@ mod tests {
                 .is_pending(),
             "pressing H must spawn an async hint task",
         );
+    }
+
+    // Task #27b — double-tap constants
+    #[test]
+    fn double_tap_window_is_wider_than_double_click_window() {
+        // Compile-time check: touch needs a wider window than mouse due to
+        // higher input latency. `const { assert! }` catches regressions at
+        // build time rather than waiting for a test run.
+        const { assert!(DOUBLE_TAP_WINDOW > DOUBLE_CLICK_WINDOW) }
     }
 }
 
