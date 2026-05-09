@@ -131,35 +131,29 @@ pub fn delete_tokens(username: &str) -> Result<(), TokenError> {
 }
 
 // -------------------------------------------------------------------
-// Android stub — same public API, always returns KeychainUnavailable.
-// Lets `sync_client::*` compile unchanged on Android; the runtime
-// effect is "session login required every launch", same as a Linux
-// box without Secret Service.
+// Android — delegate to the JNI Keystore bridge in android_keystore.
 // -------------------------------------------------------------------
 
 #[cfg(target_os = "android")]
-const ANDROID_STUB_MSG: &str = "android stub: keychain not yet wired (Phase-Android task)";
-
-#[cfg(target_os = "android")]
 pub fn store_tokens(
-    _username: &str,
-    _access_token: &str,
-    _refresh_token: &str,
+    username: &str,
+    access_token: &str,
+    refresh_token: &str,
 ) -> Result<(), TokenError> {
-    Err(TokenError::KeychainUnavailable(ANDROID_STUB_MSG.to_string()))
+    crate::android_keystore::store_tokens(username, access_token, refresh_token)
 }
 
 #[cfg(target_os = "android")]
-pub fn load_access_token(_username: &str) -> Result<String, TokenError> {
-    Err(TokenError::KeychainUnavailable(ANDROID_STUB_MSG.to_string()))
+pub fn load_access_token(username: &str) -> Result<String, TokenError> {
+    crate::android_keystore::load_access_token(username)
 }
 
 #[cfg(target_os = "android")]
-pub fn load_refresh_token(_username: &str) -> Result<String, TokenError> {
-    Err(TokenError::KeychainUnavailable(ANDROID_STUB_MSG.to_string()))
+pub fn load_refresh_token(username: &str) -> Result<String, TokenError> {
+    crate::android_keystore::load_refresh_token(username)
 }
 
 #[cfg(target_os = "android")]
-pub fn delete_tokens(_username: &str) -> Result<(), TokenError> {
-    Err(TokenError::KeychainUnavailable(ANDROID_STUB_MSG.to_string()))
+pub fn delete_tokens(username: &str) -> Result<(), TokenError> {
+    crate::android_keystore::delete_tokens(username)
 }

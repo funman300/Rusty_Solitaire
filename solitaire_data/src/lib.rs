@@ -138,6 +138,9 @@ pub use weekly::{
 pub mod challenge;
 pub use challenge::{challenge_count, challenge_seed_for, CHALLENGE_SEEDS};
 
+pub mod difficulty_seeds;
+pub use difficulty_seeds::{seeds_for, DifficultySeeds};
+
 pub mod settings;
 pub use settings::{
     load_settings_from, save_settings_to, settings_file_path, AnimSpeed, Settings, SyncBackend,
@@ -146,6 +149,9 @@ pub use settings::{
     TIME_BONUS_MULTIPLIER_MIN, TIME_BONUS_MULTIPLIER_STEP, TOOLTIP_DELAY_MAX_SECS,
     TOOLTIP_DELAY_MIN_SECS, TOOLTIP_DELAY_STEP_SECS,
 };
+
+#[cfg(target_os = "android")]
+mod android_keystore;
 
 pub mod auth_tokens;
 pub use auth_tokens::{

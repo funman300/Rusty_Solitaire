@@ -26,6 +26,9 @@ tokio          = { workspace = true }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 keyring-core   = { workspace = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni            = { workspace = true }
+
 [dev-dependencies]
 solitaire_server = { path = "../solitaire_server" }
 solitaire_sync   = { workspace = true }
