@@ -23,8 +23,8 @@ use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::daily_challenge_plugin::DailyChallengeResource;
 use crate::events::{
     InfoToastEvent, NewGameRequestEvent, StartChallengeRequestEvent,
-    StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent, StartZenRequestEvent,
-    ToggleProfileRequestEvent,
+    StartDailyChallengeRequestEvent, StartPlayBySeedRequestEvent, StartTimeAttackRequestEvent,
+    StartZenRequestEvent, ToggleProfileRequestEvent,
 };
 use crate::font_plugin::FontResource;
 use crate::progress_plugin::ProgressResource;
@@ -96,6 +96,7 @@ enum HomeMode {
     Zen,
     Challenge,
     TimeAttack,
+    PlayBySeed,
 }
 
 impl HomeMode {
@@ -107,6 +108,7 @@ impl HomeMode {
             HomeMode::Zen => "Zen Mode",
             HomeMode::Challenge => "Challenge",
             HomeMode::TimeAttack => "Time Attack",
+            HomeMode::PlayBySeed => "Play by Seed",
         }
     }
 
@@ -118,6 +120,7 @@ impl HomeMode {
             HomeMode::Zen => "No timer, no score. Just the cards.",
             HomeMode::Challenge => "Hand-picked hard deals. No undo. Win to advance.",
             HomeMode::TimeAttack => "How many can you finish in ten minutes?",
+            HomeMode::PlayBySeed => "Enter any number to play a specific deal.",
         }
     }
 
@@ -150,6 +153,9 @@ impl HomeMode {
             // ships ▲ (up triangle) but evidently not the sideways
             // siblings.
             HomeMode::TimeAttack => "\u{2192}",
+            // Number sign — ASCII, universally available. Reads as
+            // "a specific number / seed ID".
+            HomeMode::PlayBySeed => "#",
         }
     }
 
@@ -162,6 +168,7 @@ impl HomeMode {
             HomeMode::Zen => "Z",
             HomeMode::Challenge => "X",
             HomeMode::TimeAttack => "T",
+            HomeMode::PlayBySeed => "6",
         }
     }
 
@@ -238,6 +245,7 @@ impl Plugin for HomePlugin {
             .add_message::<StartChallengeRequestEvent>()
             .add_message::<StartTimeAttackRequestEvent>()
             .add_message::<StartDailyChallengeRequestEvent>()
+            .add_message::<StartPlayBySeedRequestEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ToggleProfileRequestEvent>()
             .add_message::<SettingsChangedEvent>()
@@ -423,6 +431,7 @@ fn handle_home_card_click(
     mut challenge: MessageWriter<StartChallengeRequestEvent>,
     mut time_attack: MessageWriter<StartTimeAttackRequestEvent>,
     mut daily: MessageWriter<StartDailyChallengeRequestEvent>,
+    mut play_by_seed: MessageWriter<StartPlayBySeedRequestEvent>,
     mut info_toast: MessageWriter<InfoToastEvent>,
 ) {
     let level = progress.as_ref().map_or(0, |p| p.0.level);
@@ -456,6 +465,9 @@ fn handle_home_card_click(
             }
             HomeMode::TimeAttack => {
                 time_attack.write(StartTimeAttackRequestEvent);
+            }
+            HomeMode::PlayBySeed => {
+                play_by_seed.write(StartPlayBySeedRequestEvent);
             }
         }
 
@@ -619,6 +631,7 @@ fn digit_to_home_mode(key: KeyCode) -> Option<HomeMode> {
         KeyCode::Digit3 => Some(HomeMode::Zen),
         KeyCode::Digit4 => Some(HomeMode::Challenge),
         KeyCode::Digit5 => Some(HomeMode::TimeAttack),
+        KeyCode::Digit6 => Some(HomeMode::PlayBySeed),
         _ => None,
     }
 }
@@ -646,6 +659,7 @@ fn handle_home_digit_keys(
     mut challenge: MessageWriter<StartChallengeRequestEvent>,
     mut time_attack: MessageWriter<StartTimeAttackRequestEvent>,
     mut daily: MessageWriter<StartDailyChallengeRequestEvent>,
+    mut play_by_seed: MessageWriter<StartPlayBySeedRequestEvent>,
 ) {
     // Modal-scoped: do nothing when the Mode Launcher isn't open.
     if screens.is_empty() {
@@ -658,6 +672,7 @@ fn handle_home_digit_keys(
         KeyCode::Digit3,
         KeyCode::Digit4,
         KeyCode::Digit5,
+        KeyCode::Digit6,
     ]
     .into_iter()
     .find(|k| keys.just_pressed(*k))
@@ -686,6 +701,9 @@ fn handle_home_digit_keys(
         }
         HomeMode::TimeAttack => {
             time_attack.write(StartTimeAttackRequestEvent);
+        }
+        HomeMode::PlayBySeed => {
+            play_by_seed.write(StartPlayBySeedRequestEvent);
         }
     }
 
@@ -784,6 +802,7 @@ fn spawn_home_screen(commands: &mut Commands, ctx: HomeContext<'_>) {
                     HomeMode::Zen,
                     HomeMode::Challenge,
                     HomeMode::TimeAttack,
+                    HomeMode::PlayBySeed,
                 ] {
                     spawn_mode_card(grid, mode, &ctx);
                 }
@@ -999,6 +1018,7 @@ fn home_mode_focus_order(mode: HomeMode) -> i32 {
         HomeMode::Zen => 2,
         HomeMode::Challenge => 3,
         HomeMode::TimeAttack => 4,
+        HomeMode::PlayBySeed => 5,
     }
 }
 
@@ -1402,13 +1422,14 @@ mod tests {
             HomeMode::Zen,
             HomeMode::Challenge,
             HomeMode::TimeAttack,
+            HomeMode::PlayBySeed,
         ] {
             assert!(
                 modes.contains(&expected),
                 "missing card for {expected:?}; found {modes:?}"
             );
         }
-        assert_eq!(modes.len(), 5, "exactly five cards expected");
+        assert_eq!(modes.len(), 6, "exactly six cards expected");
     }
 
     #[test]
@@ -1600,7 +1621,7 @@ mod tests {
             .map(|(c, f)| (c.0, *f))
             .collect();
 
-        assert_eq!(cards.len(), 5, "all five cards must carry a Focusable");
+        assert_eq!(cards.len(), 6, "all six cards must carry a Focusable");
         for (mode, focusable) in &cards {
             assert_eq!(
                 focusable.group,
@@ -1626,7 +1647,7 @@ mod tests {
 
         for (mode, disabled) in states {
             match mode {
-                HomeMode::Classic | HomeMode::Daily => assert!(
+                HomeMode::Classic | HomeMode::Daily | HomeMode::PlayBySeed => assert!(
                     !disabled,
                     "{mode:?} must not be Disabled at level 0 (it's never locked)"
                 ),

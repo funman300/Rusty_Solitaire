@@ -24,6 +24,7 @@ pub mod layout;
 pub mod onboarding_plugin;
 pub mod pause_plugin;
 pub mod pending_hint;
+pub mod play_by_seed_plugin;
 pub mod profile_plugin;
 pub mod radial_menu;
 pub mod replay_overlay;
@@ -92,11 +93,12 @@ pub use events::{
     ForfeitEvent, ForfeitRequestEvent, FoundationCompletedEvent, GameWonEvent, HelpRequestEvent,
     HintVisualEvent, InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
     NewGameRequestEvent, PauseRequestEvent, StartChallengeRequestEvent,
-    StartDailyChallengeRequestEvent, StartTimeAttackRequestEvent, StartZenRequestEvent,
-    StateChangedEvent, SyncCompleteEvent, ToggleAchievementsRequestEvent,
+    StartDailyChallengeRequestEvent, StartPlayBySeedRequestEvent, StartTimeAttackRequestEvent,
+    StartZenRequestEvent, StateChangedEvent, SyncCompleteEvent, ToggleAchievementsRequestEvent,
     ToggleLeaderboardRequestEvent, ToggleProfileRequestEvent, ToggleSettingsRequestEvent,
     ToggleStatsRequestEvent, UndoRequestEvent, WinStreakMilestoneEvent, XpAwardedEvent,
 };
+pub use play_by_seed_plugin::{PlayBySeedPlugin, PlayBySeedScreen};
 pub use game_plugin::{
     ConfirmNewGameScreen, GameMutation, GameOverScreen, GamePlugin, GameStatePath, RecordingReplay,
     ReplayPath,

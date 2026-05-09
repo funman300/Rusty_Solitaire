@@ -29,10 +29,11 @@ use solitaire_engine::{
     AudioPlugin, AutoCompletePlugin, CardAnimationPlugin, CardPlugin, ChallengePlugin,
     CursorPlugin, DailyChallengePlugin, DiagnosticsHudPlugin, FeedbackAnimPlugin, FontPlugin,
     GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
-    OnboardingPlugin, PausePlugin, ProfilePlugin, ProgressPlugin, RadialMenuPlugin,
-    ReplayOverlayPlugin, ReplayPlaybackPlugin, SelectionPlugin, SettingsPlugin, SplashPlugin,
-    StatsPlugin, SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin, TimeAttackPlugin,
-    UiFocusPlugin, UiModalPlugin, UiTooltipPlugin, WeeklyGoalsPlugin, WinSummaryPlugin,
+    OnboardingPlugin, PausePlugin, PlayBySeedPlugin, ProfilePlugin, ProgressPlugin,
+    RadialMenuPlugin, ReplayOverlayPlugin, ReplayPlaybackPlugin, SelectionPlugin, SettingsPlugin,
+    SplashPlugin, StatsPlugin, SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin,
+    TimeAttackPlugin, UiFocusPlugin, UiModalPlugin, UiTooltipPlugin, WeeklyGoalsPlugin,
+    WinSummaryPlugin,
 };
 
 /// App entry point — builds and runs the Bevy app.
@@ -145,6 +146,13 @@ pub fn run() {
         .add_plugins(GamePlugin)
         .add_plugins(TablePlugin)
         .add_plugins(CardPlugin)
+        // Cursor-icon feedback is desktop-only; Android has no pointer cursor.
+        // The drop-target highlight systems (update_drop_highlights,
+        // update_drop_target_overlays) live in CursorPlugin but ARE useful
+        // on Android — they've been left running because their Bevy system
+        // params compile and function on Android; only the CursorIcon insert
+        // is inert. Gate the whole plugin if the cursor APIs ever cause
+        // Android linker issues; for now it's harmless to leave it registered.
         .add_plugins(CursorPlugin)
         .add_plugins(InputPlugin)
         .add_plugins(RadialMenuPlugin)
@@ -161,6 +169,7 @@ pub fn run() {
         .add_plugins(DailyChallengePlugin)
         .add_plugins(WeeklyGoalsPlugin)
         .add_plugins(ChallengePlugin)
+        .add_plugins(PlayBySeedPlugin)
         .add_plugins(TimeAttackPlugin)
         .add_plugins(HudPlugin)
         .add_plugins(HelpPlugin)

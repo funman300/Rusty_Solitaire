@@ -172,6 +172,13 @@ pub struct StartTimeAttackRequestEvent;
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct StartDailyChallengeRequestEvent;
 
+/// Request to open the Play-by-Seed dialog. Fired by the Home overlay
+/// "Play by Seed" mode card. The handler in `play_by_seed_plugin` spawns
+/// a numeric-input modal where the player types a decimal seed and
+/// optionally sees a solver-verified verdict before dealing.
+#[derive(Message, Debug, Clone, Copy, Default)]
+pub struct StartPlayBySeedRequestEvent;
+
 /// Request to toggle the Stats overlay. Fired by the HUD Menu-popover
 /// "Stats" row alongside the existing `S` accelerator.
 #[derive(Message, Debug, Clone, Copy, Default)]
