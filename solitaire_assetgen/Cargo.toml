@@ -12,6 +12,8 @@ publish = false
 [dependencies]
 png     = "0.17"
 ab_glyph = "0.2"
+solitaire_core = { path = "../solitaire_core" }
+solitaire_data = { path = "../solitaire_data" }
 
 [[bin]]
 name = "gen_sfx"
@@ -20,3 +22,7 @@ path = "src/bin/gen_sfx.rs"
 [[bin]]
 name = "gen_art"
 path = "src/bin/gen_art.rs"
+
+[[bin]]
+name = "gen_seeds"
+path = "src/bin/gen_seeds.rs"

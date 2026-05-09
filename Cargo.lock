@@ -6967,6 +6967,8 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "png 0.17.16",
+ "solitaire_core",
+ "solitaire_data",
 ]
 
 [[package]]
