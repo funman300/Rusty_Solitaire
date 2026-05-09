@@ -87,6 +87,14 @@ const SCRUB_LABEL_ROW_HEIGHT: f32 = 16.0;
 /// (12 px) + 4 px breathing room.
 const KEYBIND_FOOTER_HEIGHT: f32 = 16.0;
 
+/// How long a held arrow key waits before firing the next repeat
+/// step. 100 ms = 10 steps/sec — fast enough to scrub through a
+/// hundred-move replay in ~10 seconds while held, slow enough that
+/// the player can release after a known number of steps. Initial
+/// `just_pressed` always fires immediately; this interval gates
+/// only the *repeat* fires while the key remains held.
+const SCRUB_REPEAT_INTERVAL_SECS: f32 = 0.1;
+
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
 /// felt show through enough to anchor the banner to the play surface.
@@ -228,6 +236,23 @@ pub struct ReplayOverlayScrubNotch;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayScrubNotchLabel;
 
+/// Per-arrow-key time-since-last-fire accumulators that drive the
+/// continuous-scrub repeat behaviour for held arrow keys. Each
+/// frame the key is held, the corresponding accumulator absorbs
+/// `time.delta_secs()`; when it exceeds
+/// [`SCRUB_REPEAT_INTERVAL_SECS`] the handler fires another step
+/// and resets the accumulator.
+///
+/// `just_pressed` events bypass the accumulator entirely and fire
+/// immediately — only *repeat* fires (while held) are gated by
+/// the interval. Releases reset the accumulator to 0 so the next
+/// fresh press fires immediately rather than at half-interval.
+#[derive(Resource, Default, Debug)]
+struct ReplayScrubKeyHold {
+    left_held_secs: f32,
+    right_held_secs: f32,
+}
+
 /// Marker on the keybind-hint footer row at the bottom edge of the
 /// banner. Carries two `Text` children: a vim-style mode indicator
 /// (`▌ NORMAL │ replay`) on the left and the keybind hint
@@ -274,7 +299,8 @@ impl Plugin for ReplayOverlayPlugin {
         // `MinimalPlugins` without the playback plugin attached;
         // `add_message` is idempotent so the duplicate registration
         // in production (alongside `replay_playback`) is harmless.
-        app.add_message::<MoveRequestEvent>()
+        app.init_resource::<ReplayScrubKeyHold>()
+            .add_message::<MoveRequestEvent>()
             .add_message::<DrawRequestEvent>()
             .add_message::<UndoRequestEvent>()
             .add_systems(
@@ -1110,34 +1136,65 @@ fn handle_pause_keyboard(
     toggle_pause_replay_playback(&mut state);
 }
 
-/// Watches the arrow keys for the paused single-step
+/// Watches the arrow keys for the paused step / scrub
 /// accelerators. UI-first contract from CLAUDE.md §3.3 is
 /// satisfied by the on-screen Step button (forward only); these
 /// are the optional accelerators that also surface a backwards
-/// step.
+/// step plus continuous scrub.
 ///
 /// Both keys are paused-only — the underlying step helpers
 /// hard-gate via destructure on `paused: true`. Pressing → during
 /// running playback or ← at cursor 0 are silent no-ops; the
 /// player learns "pause first, then arrow."
 ///
-/// The mockup labels these `[← →] scrub` (continuous fast scan).
-/// Single-move step is the closest behaviour shippable today; the
-/// footer hint reads `[← →] step` to match what's wired rather
-/// than the aspirational "scrub."
+/// **Single press fires once immediately**
+/// (`just_pressed`). **Holding** the key triggers continuous
+/// scrub at [`SCRUB_REPEAT_INTERVAL_SECS`] cadence (10 steps/sec
+/// at 100 ms): the per-key accumulator on
+/// [`ReplayScrubKeyHold`] absorbs `time.delta_secs()` each frame
+/// the key is held, fires + resets when the threshold is hit, and
+/// resets to 0 on key release so the next fresh press fires
+/// immediately. This matches the mockup's `[← →] scrub`
+/// terminology while keeping single-press = single-step semantics.
 fn handle_arrow_keyboard(
     keys: Option<Res<ButtonInput<KeyCode>>>,
+    time: Res<Time>,
+    mut hold: ResMut<ReplayScrubKeyHold>,
     mut state: ResMut<ReplayPlaybackState>,
     mut moves_writer: MessageWriter<MoveRequestEvent>,
     mut draws_writer: MessageWriter<DrawRequestEvent>,
     mut undo_writer: MessageWriter<UndoRequestEvent>,
 ) {
     let Some(keys) = keys else { return };
+    let dt = time.delta_secs();
+
+    // Right (forward step) — initial press fires immediately;
+    // held repeats fire when the accumulator crosses the interval.
     if keys.just_pressed(KeyCode::ArrowRight) {
         step_replay_playback(&mut state, &mut moves_writer, &mut draws_writer);
+        hold.right_held_secs = 0.0;
+    } else if keys.pressed(KeyCode::ArrowRight) {
+        hold.right_held_secs += dt;
+        if hold.right_held_secs >= SCRUB_REPEAT_INTERVAL_SECS {
+            step_replay_playback(&mut state, &mut moves_writer, &mut draws_writer);
+            hold.right_held_secs = 0.0;
+        }
+    } else {
+        hold.right_held_secs = 0.0;
     }
+
+    // Left (backwards step) — symmetric to the right path.
     if keys.just_pressed(KeyCode::ArrowLeft) {
         step_backwards_replay_playback(&mut state, &mut undo_writer);
+        hold.left_held_secs = 0.0;
+    } else if keys.pressed(KeyCode::ArrowLeft) {
+        hold.left_held_secs += dt;
+        if hold.left_held_secs >= SCRUB_REPEAT_INTERVAL_SECS {
+            step_backwards_replay_playback(&mut state, &mut undo_writer);
+            hold.left_held_secs = 0.0;
+        }
+    } else {
+        hold.left_held_secs = 0.0;
     }
 }
 
@@ -2550,6 +2607,99 @@ mod tests {
             }
             other => panic!("expected Playing, got {other:?}"),
         }
+    }
+
+    /// Holding → for one full repeat interval fires a second step
+    /// after the initial just_pressed. Drives `Time::delta_secs`
+    /// via `TimeUpdateStrategy::ManualDuration` so the test is
+    /// deterministic.
+    #[test]
+    fn arrow_right_keyboard_repeats_while_held() {
+        use bevy::time::TimeUpdateStrategy;
+        use std::time::Duration;
+
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        // Drive each frame as a SCRUB_REPEAT_INTERVAL_SECS step so
+        // every update past the just_pressed crosses the threshold.
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(SCRUB_REPEAT_INTERVAL_SECS),
+        ));
+        // Start paused at cursor 0 so there's room to step forward.
+        set_state(&mut app, pressed_paused_state(10, 0));
+        app.update();
+
+        // Press the key (just_pressed fires once → cursor 1).
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowRight);
+        app.update();
+        let cursor_after_press = match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, .. } => *cursor,
+            _ => panic!("expected Playing"),
+        };
+        assert_eq!(
+            cursor_after_press, 1,
+            "just_pressed must fire once on the press frame",
+        );
+
+        // Hold (no new just_pressed; held → accumulator crosses
+        // threshold next frame → second fire).
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(KeyCode::ArrowRight);
+        app.update();
+        let cursor_after_hold = match app.world().resource::<ReplayPlaybackState>() {
+            ReplayPlaybackState::Playing { cursor, .. } => *cursor,
+            _ => panic!("expected Playing"),
+        };
+        assert!(
+            cursor_after_hold >= 2,
+            "held key must fire at least one repeat after the threshold; got cursor={cursor_after_hold}",
+        );
+    }
+
+    /// Releasing the key resets the per-key accumulator so the
+    /// next fresh press fires immediately rather than at half-
+    /// interval. Validates the `else { reset to 0 }` branch.
+    #[test]
+    fn arrow_keyboard_release_resets_accumulator() {
+        use bevy::time::TimeUpdateStrategy;
+        use std::time::Duration;
+
+        let mut app = headless_app();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        // Drive sub-threshold ticks so the accumulator builds but
+        // never fires while held.
+        let half_interval = SCRUB_REPEAT_INTERVAL_SECS * 0.5;
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f32(half_interval),
+        ));
+        set_state(&mut app, pressed_paused_state(10, 5));
+        app.update();
+
+        // Hold for a sub-threshold tick (no fire expected: no
+        // just_pressed, accumulator at 0.05s < 0.1s threshold).
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::ArrowRight);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(KeyCode::ArrowRight);
+        app.update();
+
+        // Release (the else-branch should reset right_held_secs
+        // to 0). Then verify by holding for another sub-threshold
+        // tick — if the accumulator reset properly, no fire.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::ArrowRight);
+        app.update();
+        let hold = app.world().resource::<ReplayScrubKeyHold>();
+        assert_eq!(
+            hold.right_held_secs, 0.0,
+            "release must reset the per-key accumulator to 0",
+        );
     }
 
     /// Pressing ← while running is a no-op — same hard-gate
