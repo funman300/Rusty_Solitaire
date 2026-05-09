@@ -7,3 +7,6 @@
 *.tmp
 data/
 .claude/
+
+# IDE project files
+.idea/
