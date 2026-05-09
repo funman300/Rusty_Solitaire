@@ -6,7 +6,7 @@
 pub fn set_text(text: &str) -> Result<(), String> {
     use bevy::android::ANDROID_APP;
     use jni::{
-        objects::{JObject, JValue, JValueOwned},
+        objects::{JObject, JValueOwned},
         JavaVM,
     };
 
