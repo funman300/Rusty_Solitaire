@@ -365,7 +365,7 @@ fn handle_copy_share_link_button(
             Ok(()) => toast.write(InfoToastEvent(format!("Copied: {url}"))),
             Err(e) => {
                 warn!("android clipboard failed: {e}");
-                toast.write(InfoToastEvent(format!("Share link: {url}")));
+                toast.write(InfoToastEvent(format!("Share link: {url}")))
             }
         }
     }
