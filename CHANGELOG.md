@@ -6,8 +6,38 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.6 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.7 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.7] — 2026-05-08
+
+Patch release closing the last major B-2 sub-piece. Through-line:
+**mini-tableau preview dim layer**. The mockup's "Game Peek Band at
+50 % opacity" is now implemented as a full-screen UI scrim that darkens
+the card world during replay so the chrome (banner + move-log panel)
+reads clearly against the scene.
+
+### Added
+
+- **Full-screen tableau dim layer** (`da3e542`). Spawns a
+  `ReplayTableauDimLayer` UI node (100 % × 100 %, 50 % opacity
+  black) at `Z_REPLAY_DIM = Z_REPLAY_OVERLAY − 1 = 54` whenever
+  a replay starts; despawned alongside the banner and move-log
+  panel when the replay ends. Bevy's UI/world compositor means
+  no changes to `card_plugin` are needed — UI nodes always
+  render above world-space sprites regardless of `Transform.z`.
+  The dim layer carries no `Interaction` component (purely
+  visual; pointer events pass through). Adds `Z_REPLAY_DIM`
+  and `TABLEAU_DIM_ALPHA` constants plus two new tests:
+  lifecycle (spawn/despawn mirrors the floating-chip pattern)
+  and z-ordering invariant (`Z_REPLAY_DIM < Z_REPLAY_OVERLAY`
+  pinned). 1275 tests pass / 0 failing.
+
+### Stats
+
+- Tests: 1275 passing / 0 failing
+- Clippy: clean
+- Crates touched: `solitaire_engine` (replay_overlay.rs)
 
 ## [0.21.6] — 2026-05-08
 

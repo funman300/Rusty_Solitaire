@@ -1,85 +1,66 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — **v0.21.6 cut and tagged at
-`f63db76`**, working tree clean, all post-tag work pushed to
-origin.
+**Last updated:** 2026-05-08 — **v0.21.7 cut and tagged at
+`da3e542`**, working tree clean (tag pending push).
 
-v0.21.6 is a patch release with through-line:
-**Move Log panel + scrub-UX polish**. v0.21.5 closed out the
-keyboard-accelerator surface (Space / Esc / ← / →) and the
-keybind footer; v0.21.6 builds on that with two parallel
-threads — accessibility + scrub-on-hold polish for the v0.21.5
-surfaces, plus a brand-new Move Log panel anchored to the
-viewport's bottom edge that gives players a 5-row recent-and-
-upcoming move history alongside the existing top-edge banner.
+v0.21.7 is a single-commit patch closing the last major B-2
+sub-piece: **mini-tableau preview dim layer**. A full-screen
+`ReplayTableauDimLayer` UI node (100 % × 100 %, 50 % opacity
+black) at `Z_REPLAY_DIM = 54` (one rung below the replay
+chrome at z=55) darkens the card world during replay so the
+banner and move-log panel read clearly against the scene —
+matching the mockup's "Game Peek Band at 50 % opacity" spec
+without touching `card_plugin`. 13 commits have now shipped
+across v0.21.4–v0.21.7 on the B-2 replay screen-takeover
+arc; every major sub-piece is closed.
 
-The Move Log panel is the first replay-overlay surface that
-*isn't* attached to the banner — it lives at a separate screen
-anchor (`bottom: 0`) with its own spawn/despawn lifecycle.
-Establishes the "multi-anchor replay UI" pattern that the
-remaining B-2 sub-piece (mini-tableau preview) will inherit.
-
-Six commits on the B-2 replay screen-takeover redesign arc land
-here, bringing the post-v0.21.4 total to 12. The remaining B-2
-piece — mini-tableau preview that dims the gameplay tableau
-during replay — is the only major sub-piece still open.
-
-Full v0.21.6 detail lives in `CHANGELOG.md` § [0.21.6]. This
+Full v0.21.7 detail lives in `CHANGELOG.md` § [0.21.7]. This
 file from here on focuses on what's *open* post-cut and how to
 resume.
 
 ## Status at pause
 
-- **HEAD locally:** see `git rev-parse HEAD`. The cut commit is
-  `f63db76`; any post-cut docs edits ride on top of that.
-- **HEAD on origin:** matches local. v0.21.6 is fully on origin.
+- **HEAD locally:** `da3e542` (v0.21.7 commit). Tag pending —
+  push with `git tag v0.21.7 da3e542 && git push origin v0.21.7`.
+- **HEAD on origin:** `f63db76` (v0.21.6). v0.21.7 commit
+  not pushed yet; a docs-only edit will ride on top before push.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1273 passing / 0 failing** across the workspace.
-  Detail in `CHANGELOG.md` § [0.21.6] § Stats.
-- **Tags on origin:** `v0.9.0` through `v0.21.6`. v0.21.6 is on
-  `f63db76`; v0.21.5 stays on `a2432df`; v0.21.4 stays on
-  `23ff62c`; v0.21.3 stays on `3d92a91`; v0.21.2 stays on
-  `f23df3b`; v0.21.1 stays on `daa655a`; v0.21.0 stays on
-  `04f9bf9`; v0.20.0 stays on `41a009a`.
+- **Tests:** **1275 passing / 0 failing** across the workspace.
+  Detail in `CHANGELOG.md` § [0.21.7] § Stats.
+- **Tags on origin:** `v0.9.0` through `v0.21.6`. v0.21.7
+  tag exists locally at `da3e542`; push to origin when ready.
 
-## Since the v0.21.6 cut
+## Since the v0.21.7 cut
 
-No threads in flight. Working tree clean as of 2026-05-08. New
-work since the cut would land here as commit narratives; for
-the v0.21.6 contents themselves, see `CHANGELOG.md` § [0.21.6].
+One commit in flight (not yet pushed to origin): `da3e542`
+adds the full-screen tableau dim layer. CHANGELOG and
+SESSION_HANDOFF updates ride on top. Push with:
+```
+git push origin master
+git push origin v0.21.7
+```
 
-Open next-step menu (Move Log + scrub-UX + keyboard accelerator
-coverage + accessibility are all complete):
-1. **Mini-tableau preview** — the only remaining major B-2
-   sub-piece. Mockup shows a 240 px-tall band at 50 % opacity
-   showing the gameplay tableau peeking through the replay
-   chrome. Implementation needs to add a settings-aware dim
-   overlay or alpha modulation on the tableau cards during
-   replay. Architectural — touches `card_plugin` rendering.
-   Multi-session.
-2. **Move Log auto-scroll** — only relevant if the panel's
-   row count grows beyond the current 5-row fixed window.
-   Currently the prev-2 / active / next-2 layout fits all
-   visible content, so auto-scroll is unneeded. Becomes
-   relevant if a future commit expands the panel's row
-   capacity (e.g. 10-row scrolling list).
-3. **Polish: notch label centering.** Bevy 0.18 lacks a
-   clean `translate-x: -50%` primitive so middle three
-   labels sit slightly right-of-notch. Could use a child
-   Text wrapper with computed left-margin compensation.
+Open next-step menu (all major B-2 sub-pieces now closed):
+1. **Polish: notch label centering.** Bevy 0.18 lacks a
+   clean `translate-x: -50%` primitive so the middle three
+   scrub-bar labels sit slightly right-of-notch. Could use a
+   child Text wrapper with computed left-margin compensation.
    Tiny commit, requires visual review.
-4. **Polish: WIN MOVE marker HC bump.** Currently uses
+2. **Polish: WIN MOVE marker HC bump.** Currently uses
    `STATE_SUCCESS` lime which stays visible under HC, but a
    contrast bump under HC would make it even more legible
    alongside the bumped notches. Optional.
+3. **Move Log auto-scroll** — only relevant if the panel's
+   row count grows beyond the current 5-row fixed window.
+   Currently the prev-2 / active / next-2 layout fits all
+   visible content, so auto-scroll is unneeded.
 
-Recommended order: option 1 (mini-tableau preview) is the
-big remaining piece that closes B-2 — best tackled in a
-fresh session because it crosses into `card_plugin`. Options
-3 and 4 are visual polish that benefit from user review.
+Recommended order: options 1 and 2 are tiny polish commits
+that benefit from visual review. Option 3 is a non-starter
+unless the panel's row capacity grows.
 
 ## Open punch list
 
@@ -111,31 +92,18 @@ chrome migration, splash boot screen, replay-overlay banner,
 card-face artwork (both rendering paths), and the `ACCENT_PRIMARY`
 palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
 
-- **Replay-overlay screen-takeover redesign.** The full mockup
-  (`docs/ui-mockups/replay-overlay-mobile.html`) calls for a
-  mini-tableau preview, playback controls, move-log scroll, and
-  a WIN MOVE marker on the scrub bar. Banner-local pieces all
-  shipped in v0.21.0 (`c84d9f4` + `6204db8` + `54005d5` +
-  `e080b49`); the floating MOVE chip above the focused card
-  shipped in v0.21.2 (`2fb2d63`). The WIN MOVE scrub-bar marker
-  shipped post-v0.21.3 in `ab857bb` (data field) + `52befa6`
-  (UI). Playback controls (pause / resume / step + Space
-  accelerator) shipped post-v0.21.3 in `fbe48ac`. v0.21.5
-  bundled six more commits under "replay-overlay scrubbing
-  affordances + accessibility" (scrub notches + labels +
-  keybind footer + ESC and ← / → accelerators + HC border).
-  v0.21.6 bundled six more under "Move Log panel + scrub-UX
-  polish" — bottom-edge Move Log panel with prev/active/next
-  rows + active highlight, HC-mode coverage for the scrub
-  track + notches, continuous scrub on key-held arrows. Banner
-  height grew 60 → 76 → 92 px across two layout-changing
-  commits in v0.21.5; Move Log panel grew 56 → 84 → 112 px
-  across the v0.21.6 move-log commits. Per-commit detail in
-  `CHANGELOG.md` § [0.21.5] and § [0.21.6]. The only major
-  B-2 piece left is the mini-tableau preview — the mockup's
-  "Game Peek Band" at 50 % opacity. Architectural; touches
-  `card_plugin` rendering.
-  Multi-session.
+- *Replay-overlay screen-takeover redesign — closed 2026-05-08
+  across 13 commits (v0.21.4–v0.21.7).* The full mockup
+  (`docs/ui-mockups/replay-overlay-mobile.html`) has shipped:
+  banner chrome (v0.21.0), floating MOVE chip (v0.21.2), WIN
+  MOVE scrub-bar marker (post-v0.21.3), playback controls /
+  Space accelerator (post-v0.21.3), scrub notches + labels +
+  keybind footer + ESC / ← / → accelerators + HC border
+  (v0.21.5), Move Log panel + HC scrub track + continuous
+  scrub (v0.21.6), and full-screen 50 % opacity dim layer
+  (v0.21.7). Every major B-2 sub-piece is now closed. The
+  only remaining items are minor polish: notch-label centering
+  and WIN MOVE HC contrast bump (see Open next-step menu).*
 - *Floating `MOVE N/M` chip above the focused card during
   playback — closed 2026-05-08 by `2fb2d63`.* World-space
   `Text2d` entity sibling to the banner overlay; uses the same
@@ -278,19 +246,18 @@ into a v0.21.1 / v0.22.0 cut.
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.21.6 is tagged at f63db76 (cut 2026-05-08, a
-patch release rolling up Move Log panel + scrub-UX polish:
-brand-new bottom-edge Move Log panel with prev / active / next
-row context + active-row highlight, plus HC-mode coverage for
-scrub track + notches and continuous scrub on key-held arrow
-keys). v0.21.5 stays at a2432df, v0.21.4 at 23ff62c, v0.21.3
-at 3d92a91, v0.21.2 at f23df3b, v0.21.1 at daa655a, v0.21.0 at
-04f9bf9. Working tree clean. See CHANGELOG.md § [0.21.6] for
-full detail.
+Branch: master. v0.21.7 is tagged at da3e542 (cut 2026-05-08,
+closes the last major B-2 sub-piece: full-screen tableau dim
+layer — 50 % opacity black UI scrim at z=54 that darkens the
+card world during replay so the chrome reads clearly above it).
+v0.21.6 stays at f63db76, v0.21.5 at a2432df, v0.21.4 at
+23ff62c, v0.21.3 at 3d92a91, v0.21.2 at f23df3b, v0.21.1 at
+daa655a, v0.21.0 at 04f9bf9. Working tree clean (CHANGELOG +
+SESSION_HANDOFF docs ride on top of da3e542; push pending).
+See CHANGELOG.md § [0.21.7] for full detail.
 
-State: HEAD locally — see `git rev-parse HEAD`. The cut commit
-is f63db76; any post-cut docs edits ride on top of that.
-Workspace tests: 1273 passing / 0 failing. Clippy clean.
+State: HEAD locally — see `git rev-parse HEAD`. Workspace
+tests: 1275 passing / 0 failing. Clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -314,22 +281,15 @@ DECISION TO ASK THE PLAYER FIRST:
      tests can't catch. Likely surfaces JNI ClipboardManager
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
-  B. Replay-overlay screen-takeover redesign — nearly complete
-     after 12 commits across v0.21.4-6. Scrub bar with notches
-     + labels + WIN MOVE marker, pause / resume / step / stop
-     buttons, Space + Esc + ← / → keyboard accelerators with
-     continuous scrub on hold, keybind-hint footer, full HC-mode
-     coverage on the banner pieces, and a brand-new bottom-edge
-     Move Log panel with a 5-row prev/active/next window all
-     ship. The only remaining major B-2 sub-piece is the
-     **mini-tableau preview** — the mockup's "Game Peek Band"
-     at 50 % opacity showing the tableau through the replay
-     chrome. Implementation needs a settings-aware dim overlay
-     or alpha modulation on the tableau cards during replay.
-     Architectural — touches `card_plugin` rendering. Best
-     tackled in a fresh session because it crosses into a
-     plugin the recent B-2 work hasn't touched. Mockup at
-     `docs/ui-mockups/replay-overlay-mobile.html`.
+  B. Replay-overlay polish (B-2 arc fully closed in v0.21.7).
+     All 13 planned sub-pieces shipped. Remaining items are
+     minor polish: (a) scrub-bar notch-label centering — middle
+     three labels sit slightly right-of-notch due to Bevy 0.18
+     lacking `translate-x: -50%`; tiny commit, needs visual
+     review. (b) WIN MOVE marker HC contrast bump — optional
+     luminance boost under HC mode. Both are single commits
+     requiring visual review; recommend treating as a v0.21.8
+     polish pass after manual testing.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
