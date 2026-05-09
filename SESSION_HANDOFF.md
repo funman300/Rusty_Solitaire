@@ -1,7 +1,8 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — **v0.21.8 cut and tagged at
-`c50eaf8`**, working tree clean (tag + push pending).
+**Last updated:** 2026-05-08 — **v0.21.8 tagged at `c50eaf8`**;
+one post-cut commit `a449f60` (Stats Prev/Next selector spawn site)
+is on master, uncommitted docs ride on top, push pending.
 
 v0.21.8 closes the last optional polish items in the B-2
 replay screen-takeover arc: **notch-label centering** (middle
@@ -18,30 +19,31 @@ resume.
 
 ## Status at pause
 
-- **HEAD locally:** `c50eaf8` (v0.21.8 commit). Docs ride on
-  top; tag + push pending:
-  `git tag v0.21.8 c50eaf8 && git push origin master && git push origin v0.21.8`.
-- **HEAD on origin:** `52407e7` (v0.21.7 docs). v0.21.8 not
-  yet pushed.
-- **Working tree:** clean. No WIP outstanding.
+- **HEAD locally:** `a449f60` (Stats Prev/Next selector spawn).
+  Docs ride on top; push pending:
+  `git push origin master && git push origin v0.21.8`.
+- **HEAD on origin:** `52407e7` (v0.21.7 docs). v0.21.8 and
+  v0.21.9 not yet pushed.
+- **Working tree:** clean (docs uncommitted). No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1276 passing / 0 failing** across the workspace.
-  Detail in `CHANGELOG.md` § [0.21.8] § Stats.
-- **Tags on origin:** `v0.9.0` through `v0.21.7`. v0.21.8
-  tag exists locally at `c50eaf8`; push to origin.
+- **Tests:** **1282 passing / 0 failing** across the workspace.
+  Detail in `CHANGELOG.md` § [0.21.9] § Stats.
+- **Tags on origin:** `v0.9.0` through `v0.21.7`. v0.21.8 tag
+  exists locally at `c50eaf8`; push when pushing master.
 
 ## Since the v0.21.8 cut
 
-Two commits since the v0.21.7 tag (not yet pushed):
-- `b44d277` — notch-label centering fix
-- `c50eaf8` — WIN MOVE HC bump + HC system extension
+One commit since the v0.21.8 tag (not yet pushed):
+- `a449f60` — Stats Prev/Next selector spawn site (closes
+  punch-list item "Prev/Next selector chips spawn site" from
+  v0.19.0's `9b065e5`)
 
 CHANGELOG + SESSION_HANDOFF docs ride on top.
 
-Open next-step menu (B-2 arc fully closed, no replay polish
-items remain):
+Open next-step menu (B-2 arc fully closed, Prev/Next selector
+spawn site closed; no known open UI items):
 1. **APK launch verification on AVD / device** — see Phase
    Android punch list in this file.
 2. **Phase 8 (sync)** — the biggest open arc. Local storage
@@ -149,11 +151,13 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
 
 ### Other small candidates
 
-- **Prev/Next selector chips spawn site.** v0.19.0's `9b065e5`
-  noted Prev/Next markers exist in `stats_plugin` but no spawn
-  site renders them today — the Shareable badge therefore lands
-  on the single-replay caption. If/when Prev/Next is plumbed,
-  the badge will need to follow.
+- *Prev/Next selector chips spawn site — closed 2026-05-08 by
+  `a449f60`.* `ReplayPrevButton` / `ReplayNextButton` /
+  `ReplaySelectorCaption` / `ReplaySelectorDetail` now spawn in
+  `spawn_stats_screen` as a compact chip row above the Watch
+  Replay action. The Shareable badge is in the detail line.
+  The click handler and repaint systems were already live since
+  v0.19.0; this was purely the missing spawn site.
 - **Toast queue / immediate unification.** The two toast paths
   (`spawn_queued_toast` for `InfoToastEvent` queue; `spawn_toast`
   for fire-and-forget) now share visual treatment but remain
@@ -238,17 +242,17 @@ into a v0.21.1 / v0.22.0 cut.
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
 Branch: master. v0.21.8 is tagged at c50eaf8 (cut 2026-05-08,
-replay-overlay polish: scrub-bar notch-label centering + WIN
-MOVE HC legibility bump via extended HighContrastBackground::
-with_hc + new STATE_SUCCESS_HC constant). v0.21.7 stays at
-da3e542, v0.21.6 at f63db76, v0.21.5 at a2432df, v0.21.4 at
-23ff62c, v0.21.3 at 3d92a91, v0.21.2 at f23df3b, v0.21.1 at
-daa655a, v0.21.0 at 04f9bf9. Working tree clean (CHANGELOG +
-SESSION_HANDOFF docs ride on top; push pending).
-See CHANGELOG.md § [0.21.8] for full detail.
+replay-overlay polish). One post-cut commit a449f60 is on master:
+Stats Prev/Next replay selector spawn site (closes the v0.19.0
+punch-list item). v0.21.7 stays at da3e542, v0.21.6 at f63db76,
+v0.21.5 at a2432df, v0.21.4 at 23ff62c, v0.21.3 at 3d92a91,
+v0.21.2 at f23df3b, v0.21.1 at daa655a, v0.21.0 at 04f9bf9.
+Working tree: uncommitted CHANGELOG + SESSION_HANDOFF docs; push
+pending (master + v0.21.8 tag). See CHANGELOG.md § [0.21.9] for
+full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Workspace
-tests: 1276 passing / 0 failing. Clippy clean.
+tests: 1282 passing / 0 failing. Clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -273,10 +277,9 @@ DECISION TO ASK THE PLAYER FIRST:
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
   B. Replay-overlay arc — **fully closed** as of v0.21.8 (15
-     commits across v0.21.4–v0.21.8). Notch-label centering,
-     WIN MOVE HC legibility, and the HighContrastBackground
-     extension all shipped. No known replay-overlay items
-     remain open.
+     commits across v0.21.4–v0.21.8). Stats Prev/Next selector
+     spawn site closed by `a449f60` (post-v0.21.8). No known
+     UI punch-list items remain open.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls

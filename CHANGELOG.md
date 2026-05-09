@@ -6,8 +6,51 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.8 cut on 2026-05-08; CHANGELOG accumulates
-the next cycle here.
+**`a449f60`** — Stats overlay Prev/Next replay selector spawn site
+(2026-05-08). See [0.21.9] for the committed detail once cut.
+
+## [0.21.9] — pending cut
+
+Closes the "Prev/Next selector chips spawn site" punch-list item from
+v0.19.0.
+
+### Added
+
+- **Prev/Next replay selector in the Stats overlay** (`a449f60`).
+  `ReplayPrevButton`, `ReplayNextButton`, `ReplaySelectorCaption`, and
+  `ReplaySelectorDetail` nodes now spawn inside `spawn_stats_screen`
+  as a flex row of two bordered chips flanking a `"Replay N / M"`
+  caption, with a detail line below showing the selected replay's
+  duration + date and an optional `"· Shareable"` badge. Both chips
+  carry `ModalButton(Secondary)` so the existing `repaint_modal_buttons`
+  paint loop gives them hover/press feedback at zero extra cost.
+  `repaint_replay_selector_detail` is wired into the existing
+  `.chain()` alongside `handle_replay_selector_buttons` and
+  `repaint_replay_selector_caption`. The click handler and repaint
+  systems have been registered (and dormant) since v0.19.0; this
+  commit is purely the missing spawn site.
+- **6 new selector unit tests** (`a449f60`). Covers: spawn-site
+  presence (Prev, Next, Caption, Detail all spawn with the screen),
+  caption initial text ("Replay 1 / 1"), detail initial text
+  ("{dur} win on {date}"), Shareable badge when `share_url` is set,
+  empty-history "No replays" caption, and ordinal wrapping.
+  `make_test_replay(time_seconds, share_url)` helper encapsulates
+  `Replay::new(...)` + `chrono::NaiveDate`.
+
+### Fixed
+
+- **`const { assert!() }` for dim-layer z-order test** (`a449f60`).
+  Converted `assert!(Z_REPLAY_DIM < Z_REPLAY_OVERLAY, …)` in
+  `replay_overlay` tests to `const { assert!(…) }` to satisfy
+  `clippy::assertions_on_constants` (constant-fold at compile time
+  rather than a runtime no-op).
+
+### Stats
+
+- Tests: 1282 passing / 0 failing (was 1276; +6 selector tests)
+- Clippy: clean
+- Crates touched: `solitaire_engine` (stats_plugin.rs,
+  replay_overlay.rs)
 
 ## [0.21.8] — 2026-05-08
 
