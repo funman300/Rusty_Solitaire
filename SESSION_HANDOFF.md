@@ -83,9 +83,6 @@ Open next-step menu:
 - **Android Keystore for credentials.** `keyring` is target-gated
   to a stub returning `KeychainUnavailable`; replace with Android
   Keystore via JNI when sync auth ships on mobile.
-- **Google Play Games (gpgs) integration.** Listed as a
-  Phase-Android target since Phase 1; now unblocked by the build
-  target.
 - **Cosmetic `cargo apk build --lib` workaround.** Post-sign
   panic doesn't affect the APK on disk but produces noisy stderr.
   Either upstream a cargo-apk fix or document `--lib` as
@@ -290,12 +287,11 @@ READ FIRST (in order, before doing anything):
 
 DECISION TO ASK THE PLAYER FIRST:
   A. Android follow-ups — JNI ClipboardManager bridge (arboard
-     has no Android backend), Android Keystore (blocked on Phase 8),
-     GPGS integration. Launch verification + double-tap are closed.
+     has no Android backend), Android Keystore (blocked on Phase 8).
+     Launch verification + double-tap are closed.
   B. Phase 8 (sync) — local storage scaffolding, self-hosted
-     Axum server, `SolitaireServerClient` impl, GPGS stub
-     wired into Settings. The biggest open arc by scope; rolls
-     up several Phase Android dependencies (Keystore,
+     Axum server, `SolitaireServerClient` impl. The biggest open
+     arc by scope; rolls up Android dependencies (Keystore,
      ClipboardManager).
   C. Play-by-Seed polish — the dialog is functional but has no
      visual preview of the solver verdict in the UI yet; the
