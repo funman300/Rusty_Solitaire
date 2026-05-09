@@ -34,7 +34,8 @@ use crate::ui_modal::{
 };
 use crate::ui_tooltip::Tooltip;
 use crate::ui_theme::{
-    BG_BASE, BG_ELEVATED, BG_ELEVATED_HI, BORDER_SUBTLE, BORDER_SUBTLE_HC, HighContrastBorder,
+    BG_BASE, BG_ELEVATED, BG_ELEVATED_HI, BORDER_SUBTLE, BORDER_SUBTLE_HC, HighContrastBackground,
+    HighContrastBorder,
     RADIUS_SM, SPACE_2, STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_BODY_LG,
     TYPE_CAPTION, VAL_SPACE_2, VAL_SPACE_3, Z_MODAL_PANEL,
 };
@@ -365,6 +366,7 @@ impl Plugin for SettingsPlugin {
                     update_color_blind_text,
                     update_high_contrast_text,
                     update_high_contrast_borders,
+                    update_high_contrast_backgrounds,
                     update_reduce_motion_text,
                     update_tooltip_delay_text,
                     update_time_bonus_multiplier_text,
@@ -670,6 +672,41 @@ fn update_high_contrast_borders(
         // because every tagged site uses `BorderColor::all(...)`.
         if border.left != target {
             *border = BorderColor::all(target);
+        }
+    }
+}
+
+/// Repaints `BackgroundColor` on every entity tagged with
+/// [`HighContrastBackground`] based on `Settings::high_contrast_mode`.
+/// Off → the marker's `default_color`; on → `BORDER_SUBTLE_HC`
+/// (`#a0a0a0`). Compares against the current background and only
+/// mutates when different so Bevy's change-detection doesn't trigger
+/// repaints every frame.
+///
+/// Parallel to [`update_high_contrast_borders`]. Same on/off rule,
+/// same change-suppression idiom, different colour channel —
+/// `BackgroundColor` for tick marks, decorative strips, fine
+/// separators that paint their shape directly rather than via a
+/// `BorderColor` on a wider Node.
+///
+/// Tagged sites in v0.21.x: the replay overlay's 1 px scrub track
+/// + 5 quarter-mark notch ticks (`replay_overlay::spawn_overlay`).
+///
+/// More sites can be tagged in follow-ups by adding
+/// `HighContrastBackground::with_default(...)` to their spawn tuple.
+pub(crate) fn update_high_contrast_backgrounds(
+    settings: Res<SettingsResource>,
+    mut backgrounds: Query<(&HighContrastBackground, &mut BackgroundColor)>,
+) {
+    let high_contrast = settings.0.high_contrast_mode;
+    for (marker, mut bg) in backgrounds.iter_mut() {
+        let target = if high_contrast {
+            BORDER_SUBTLE_HC
+        } else {
+            marker.default_color
+        };
+        if bg.0 != target {
+            *bg = BackgroundColor(target);
         }
     }
 }

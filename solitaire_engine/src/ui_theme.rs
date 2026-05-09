@@ -252,6 +252,35 @@ impl HighContrastBorder {
     }
 }
 
+/// Marker for entities whose [`BackgroundColor`] should swap to
+/// [`BORDER_SUBTLE_HC`] when `Settings::high_contrast_mode` is on.
+/// Parallel to [`HighContrastBorder`] but for sites that paint their
+/// shape via `BackgroundColor` rather than `BorderColor` —
+/// `bevy::ui` 1 px decorative strips, tick marks, fine separators
+/// often render as tiny full-bleed `Node`s, not as borders, so the
+/// border-marker pattern doesn't apply.
+///
+/// `default_color` records the off-state colour the entity was
+/// spawned with so the system can revert when HC is toggled back
+/// off. The accompanying paint system is
+/// [`update_high_contrast_backgrounds`](crate::settings_plugin::update_high_contrast_backgrounds).
+///
+/// [`BackgroundColor`]: bevy::prelude::BackgroundColor
+#[derive(bevy::prelude::Component, Debug, Clone, Copy)]
+pub struct HighContrastBackground {
+    /// Background colour to use when high-contrast mode is *off* —
+    /// the site's normal idle / active-state colour.
+    pub default_color: bevy::prelude::Color,
+}
+
+impl HighContrastBackground {
+    /// Convenience constructor —
+    /// `HighContrastBackground::with_default(BORDER_SUBTLE)`.
+    pub const fn with_default(default_color: bevy::prelude::Color) -> Self {
+        Self { default_color }
+    }
+}
+
 /// Strong border — hover outline, focused button, active popover.
 /// `outline` from the design system. `#505050`.
 pub const BORDER_STRONG: Color = Color::srgba(0.314, 0.314, 0.314, 1.0);

@@ -36,9 +36,9 @@ use crate::replay_playback::{
 use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
-    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBorder, STATE_SUCCESS, TEXT_PRIMARY,
-    TEXT_SECONDARY, TYPE_BODY, TYPE_CAPTION, TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4,
-    Z_DROP_OVERLAY,
+    ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBackground, HighContrastBorder,
+    STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_CAPTION, TYPE_HEADLINE,
+    VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -537,6 +537,14 @@ fn spawn_overlay(
                         ..default()
                     },
                     BackgroundColor(BORDER_SUBTLE),
+                    // HC marker: bumps the 1 px track from #505050
+                    // → #a0a0a0 under high-contrast mode. The track
+                    // paints via BackgroundColor (it's a 1 px Node,
+                    // not a border on a wider container) so the
+                    // BorderColor-targeting HighContrastBorder marker
+                    // doesn't apply — HighContrastBackground is the
+                    // parallel primitive for this case.
+                    HighContrastBackground::with_default(BORDER_SUBTLE),
                 ))
                 .with_children(|track| {
                     track.spawn((
@@ -592,6 +600,12 @@ fn spawn_overlay(
                                 ..default()
                             },
                             BackgroundColor(BORDER_SUBTLE),
+                            // Same HC-paint reasoning as the track
+                            // above: 5 px tall × 1 px wide tick mark
+                            // paints via BackgroundColor, so
+                            // HighContrastBackground (not -Border) is
+                            // the right marker.
+                            HighContrastBackground::with_default(BORDER_SUBTLE),
                         ));
                     }
                 });
@@ -1806,6 +1820,74 @@ mod tests {
             scrub_notch_count(&mut app),
             scrub_notch_positions().len(),
             "exactly one notch entity per quarter-mark must spawn",
+        );
+    }
+
+    /// Each spawned notch carries `HighContrastBackground` so the
+    /// existing `update_high_contrast_backgrounds` system bumps
+    /// `BORDER_SUBTLE` → `BORDER_SUBTLE_HC` under HC mode.
+    /// Five-of-five — every notch tagged.
+    #[test]
+    fn scrub_notches_carry_high_contrast_background_marker() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        let count = app
+            .world_mut()
+            .query_filtered::<&HighContrastBackground, With<ReplayOverlayScrubNotch>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(
+            count,
+            scrub_notch_positions().len(),
+            "every notch must carry HighContrastBackground for HC repaint coverage",
+        );
+    }
+
+    /// The 1 px scrub track also carries `HighContrastBackground` so
+    /// the unfilled portion bumps under HC. The fill (ACCENT_PRIMARY,
+    /// brick-red) doesn't need a marker — accent colours are
+    /// already saturated and don't need an HC variant.
+    #[test]
+    fn scrub_track_carries_high_contrast_background_marker() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        // Track is the parent Node of the scrub-fill. Find it by
+        // walking up from `ReplayOverlayScrubFill` to its parent.
+        let world = app.world_mut();
+        let mut fill_q = world.query_filtered::<Entity, With<ReplayOverlayScrubFill>>();
+        let fill = fill_q
+            .iter(world)
+            .next()
+            .expect("scrub fill must exist while overlay is spawned");
+        let mut parent_q = world.query::<&ChildOf>();
+        let parent = parent_q
+            .get(world, fill)
+            .map(|p| p.parent())
+            .expect("scrub fill must have a parent (the track)");
+        let mut hc_q = world.query::<&HighContrastBackground>();
+        assert!(
+            hc_q.get(world, parent).is_ok(),
+            "scrub track Node (parent of scrub fill) must carry HighContrastBackground",
         );
     }
 
