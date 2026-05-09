@@ -38,8 +38,8 @@ use solitaire_data::ReplayMove;
 use crate::ui_modal::{spawn_modal_button, ButtonVariant};
 use crate::ui_theme::{
     ACCENT_PRIMARY, BG_ELEVATED_HI, BORDER_SUBTLE, HighContrastBackground, HighContrastBorder,
-    STATE_SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, TYPE_BODY, TYPE_CAPTION, TYPE_HEADLINE,
-    VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
+    STATE_SUCCESS, TEXT_PRIMARY, TEXT_PRIMARY_HC, TEXT_SECONDARY, TYPE_BODY, TYPE_CAPTION,
+    TYPE_HEADLINE, VAL_SPACE_1, VAL_SPACE_2, VAL_SPACE_4, Z_DROP_OVERLAY,
 };
 
 // ---------------------------------------------------------------------------
@@ -941,21 +941,37 @@ fn spawn_overlay(
                     TextColor(TEXT_SECONDARY),
                 ));
             }
-            // Active move row. Empty at spawn time when cursor=0;
+            // Active move row. Wrapped in a Node with an
+            // ACCENT_PRIMARY background so the row reads as
+            // "current focus" — the player can scan vertically
+            // and the highlighted row is the move that just
+            // applied. Empty text at spawn time when cursor=0;
             // the per-frame update system populates it as the
-            // cursor advances. TEXT_PRIMARY (vs prev rows'
-            // TEXT_SECONDARY) gives the active row more visual
-            // weight — it's the load-bearing information.
-            panel.spawn((
-                ReplayOverlayMoveLogActiveRow,
-                Text::new(format_active_move_row(state)),
-                TextFont {
-                    font: font_handle_for_move_log,
-                    font_size: TYPE_BODY,
-                    ..default()
-                },
-                TextColor(TEXT_PRIMARY),
-            ));
+            // cursor advances. Text colour is TEXT_PRIMARY_HC
+            // (near-white) for contrast against the brick-red
+            // background — same trick as the modal-button
+            // primary-variant paint.
+            panel
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),
+                        ..default()
+                    },
+                    BackgroundColor(ACCENT_PRIMARY),
+                ))
+                .with_children(|active| {
+                    active.spawn((
+                        ReplayOverlayMoveLogActiveRow,
+                        Text::new(format_active_move_row(state)),
+                        TextFont {
+                            font: font_handle_for_move_log,
+                            font_size: TYPE_BODY,
+                            ..default()
+                        },
+                        TextColor(TEXT_PRIMARY_HC),
+                    ));
+                });
         });
 }
 
@@ -1339,11 +1355,18 @@ fn format_kth_recent_row(state: &ReplayPlaybackState, k: usize) -> String {
 }
 
 /// Pure helper — formats the active-row text for the move-log
-/// panel. Thin wrapper around [`format_kth_recent_row`] with `k=1`.
-/// The active row IS the kth-most-recent for k=1, so this exists
-/// to keep call sites readable.
+/// panel. Wraps [`format_kth_recent_row`] with `k=1` and prepends
+/// a `▶` focus marker so the active row reads visually distinct
+/// from prev rows even before the highlight background lands.
+/// Returns empty when there's no row to render (cursor=0 or
+/// non-`Playing` state) — never `"▶ "` alone, which would paint
+/// a stray prefix.
 fn format_active_move_row(state: &ReplayPlaybackState) -> String {
-    format_kth_recent_row(state, 1)
+    let body = format_kth_recent_row(state, 1);
+    if body.is_empty() {
+        return String::new();
+    }
+    format!("\u{25B6} {body}") // ▶
 }
 
 // ---------------------------------------------------------------------------
@@ -2697,10 +2720,12 @@ mod tests {
         // synthetic_replay produces all StockClicks, so the body
         // is "stock cycle". The displayed index is 3 (cursor),
         // matching the most-recently-applied move at moves[2].
+        // Active row carries the `▶` focus prefix; prev rows
+        // (kth-recent for k>1) don't.
         assert_eq!(
             format_active_move_row(&cursor_three),
-            "3 \u{2502} stock cycle",
-            "row body must read `cursor │ {{move body}}` with the 1-based displayed index",
+            "\u{25B6} 3 \u{2502} stock cycle",
+            "active row must read `▶ cursor │ {{move body}}` with the 1-based displayed index",
         );
     }
 
@@ -2788,8 +2813,8 @@ mod tests {
         app.update();
         assert_eq!(
             move_log_active_row_text(&mut app),
-            "2 \u{2502} stock cycle",
-            "active row must repaint to the cursor's position when state changes",
+            "\u{25B6} 2 \u{2502} stock cycle",
+            "active row must repaint to the cursor's position when state changes (with ▶ prefix)",
         );
     }
 
@@ -2945,6 +2970,110 @@ mod tests {
         assert_eq!(
             move_log_prev_row_text_at_offset(&mut app, 2),
             "3 \u{2502} stock cycle",
+        );
+    }
+
+    /// Active row sits inside a wrapper Node with
+    /// `BackgroundColor(ACCENT_PRIMARY)` so it reads as "current
+    /// focus" against the panel background. Validates the wrapper
+    /// is present and carries the expected colour.
+    #[test]
+    fn active_row_wrapper_carries_accent_primary_background() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 3,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        // Find the active-row Text entity, then walk to its
+        // parent — that's the wrapper Node which should carry
+        // the highlight BackgroundColor.
+        let world = app.world_mut();
+        let mut row_q = world.query_filtered::<Entity, With<ReplayOverlayMoveLogActiveRow>>();
+        let row = row_q
+            .iter(world)
+            .next()
+            .expect("active row Text entity must exist while overlay is spawned");
+        let mut parent_q = world.query::<&ChildOf>();
+        let parent = parent_q
+            .get(world, row)
+            .map(|p| p.parent())
+            .expect("active row must have a parent (the highlight wrapper)");
+        let mut bg_q = world.query::<&BackgroundColor>();
+        let bg = bg_q
+            .get(world, parent)
+            .expect("active row's parent must carry BackgroundColor (highlight)");
+        assert_eq!(
+            bg.0, ACCENT_PRIMARY,
+            "active-row wrapper background must be ACCENT_PRIMARY for the focus highlight",
+        );
+    }
+
+    /// Active-row Text uses TEXT_PRIMARY_HC for legible contrast
+    /// against the brick-red ACCENT_PRIMARY background. Without
+    /// this the default TEXT_PRIMARY (#d0d0d0) on red would have
+    /// borderline contrast; the HC variant (#f5f5f5) keeps the
+    /// row readable.
+    #[test]
+    fn active_row_text_uses_high_contrast_color_for_highlight() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 3,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        let world = app.world_mut();
+        let mut q = world
+            .query_filtered::<&TextColor, With<ReplayOverlayMoveLogActiveRow>>();
+        let color = q
+            .iter(world)
+            .next()
+            .expect("active row TextColor must exist");
+        assert_eq!(
+            color.0, TEXT_PRIMARY_HC,
+            "active row text colour must be TEXT_PRIMARY_HC for contrast against the highlight",
+        );
+    }
+
+    /// Active-row text starts with the `▶` focus marker prefix.
+    /// Pure-helper guard — pins the prefix so a future refactor
+    /// dropping it has to also update this test.
+    #[test]
+    fn active_row_format_includes_focus_prefix() {
+        let state = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 5,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        let row = format_active_move_row(&state);
+        assert!(
+            row.starts_with('\u{25B6}'),
+            "active-row format must start with ▶ focus marker; got {row:?}",
+        );
+        // Cursor=0 still returns empty, never just the prefix.
+        let cursor_zero = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 0,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        assert_eq!(
+            format_active_move_row(&cursor_zero),
+            "",
+            "cursor=0 must return empty (no stray prefix on empty row)",
         );
     }
 
