@@ -60,6 +60,23 @@ use crate::ui_theme::{
 /// we materialise a separate constant rather than reuse the `f32` value.
 pub const Z_REPLAY_OVERLAY: i32 = Z_DROP_OVERLAY as i32 + 5;
 
+/// `bevy::ui` `ZIndex` for the full-screen tableau dim layer.
+///
+/// One rung below [`Z_REPLAY_OVERLAY`] (= 54) so the replay chrome
+/// (banner + move-log panel) renders clearly on top while the dim scrim
+/// darkens the card world beneath it. World-space sprites (cards,
+/// badges, drop-target overlays) are always below any UI node regardless
+/// of their Transform.z — the dim layer doesn't need to know their z
+/// values.
+const Z_REPLAY_DIM: i32 = Z_REPLAY_OVERLAY - 1;
+
+/// Alpha for the tableau dim layer — 50 % opacity black. Dark enough
+/// to visually separate the gameplay scene from the replay chrome
+/// above it; light enough that card positions remain legible through
+/// the scrim. Matches the mockup's "Game Peek Band at 50 % opacity"
+/// spec in `docs/ui-mockups/replay-overlay-mobile.html`.
+const TABLEAU_DIM_ALPHA: f32 = 0.5;
+
 /// Total height of the banner in pixels. Thin enough to leave the
 /// gameplay surface visible underneath, tall enough to comfortably fit
 /// the headline-sized "▌ replay" label stacked above the
@@ -188,6 +205,18 @@ pub struct ReplayPauseButton;
 /// stable layout to scan.
 #[derive(Component, Debug)]
 pub struct ReplayStepButton;
+
+/// Marker on the full-screen tableau dim layer spawned at the start of
+/// every replay. The dim layer is a 100 % × 100 % `Node` at
+/// [`Z_REPLAY_DIM`] (= `Z_REPLAY_OVERLAY - 1`) with a semi-transparent
+/// black `BackgroundColor`. It darkens the card world so the replay
+/// chrome reads clearly against it without obscuring card positions.
+///
+/// Carries no [`Interaction`] component — purely visual; pointer events
+/// pass through to the underlying UI and world-space systems.
+/// Despawned by `react_to_state_change` when the replay ends.
+#[derive(Component, Debug)]
+pub struct ReplayTableauDimLayer;
 
 /// Marker on the small caption sitting below the "▌ replay"
 /// headline. Carries `GAME #YYYY-DDD` (year + chrono ordinal) while a
@@ -435,6 +464,7 @@ fn react_to_state_change(
     existing: Query<Entity, With<ReplayOverlayRoot>>,
     floating_chips: Query<Entity, With<ReplayFloatingProgressChip>>,
     move_log_panels: Query<Entity, With<ReplayOverlayMoveLogPanel>>,
+    dim_layers: Query<Entity, With<ReplayTableauDimLayer>>,
     font_res: Option<Res<FontResource>>,
 ) {
     if !state.is_changed() {
@@ -461,6 +491,11 @@ fn react_to_state_change(
         // of the banner anchored to the viewport's bottom edge),
         // so the banner-root despawn doesn't reach it either.
         for entity in &move_log_panels {
+            commands.entity(entity).despawn();
+        }
+        // Tableau dim layer is also a separate root entity — same
+        // pattern as the move-log panel.
+        for entity in &dim_layers {
             commands.entity(entity).despawn();
         }
     }
@@ -503,6 +538,27 @@ fn spawn_overlay(
         "\u{258C} replay" // ▌
     };
     let progress_label = format_progress(state);
+
+    // Tableau dim layer — full-screen scrim at z = Z_REPLAY_DIM (= 54).
+    // Spawned first so it sits behind the banner (z=55) and move-log (z=55)
+    // in the UI stacking context. World-space sprites (cards, badges) are
+    // always below any UI node, so the dim layer darkens the entire
+    // gameplay scene without needing to touch card_plugin. No Interaction
+    // component — purely visual.
+    commands.spawn((
+        ReplayTableauDimLayer,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, TABLEAU_DIM_ALPHA)),
+        ZIndex(Z_REPLAY_DIM),
+        GlobalZIndex(Z_REPLAY_DIM),
+    ));
 
     let banner_bg = Color::srgba(
         BG_ELEVATED_HI.to_srgba().red,
@@ -3797,5 +3853,66 @@ mod tests {
             }
             other => panic!("expected Playing, got {other:?}"),
         }
+    }
+
+    /// The tableau dim layer spawns alongside the banner when playback
+    /// starts and despawns when the replay ends. Mirrors
+    /// `floating_chip_spawns_and_despawns_with_overlay` for the dim layer.
+    #[test]
+    fn dim_layer_spawns_and_despawns_with_overlay() {
+        let mut app = headless_app();
+
+        // Inactive → no dim layer yet.
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ReplayTableauDimLayer>()
+                .iter(app.world())
+                .count(),
+            0,
+            "no dim layer while playback is Inactive",
+        );
+
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(5),
+                cursor: 0,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ReplayTableauDimLayer>()
+                .iter(app.world())
+                .count(),
+            1,
+            "dim layer must spawn when playback starts",
+        );
+
+        set_state(&mut app, ReplayPlaybackState::Inactive);
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ReplayTableauDimLayer>()
+                .iter(app.world())
+                .count(),
+            0,
+            "dim layer must despawn when playback ends",
+        );
+    }
+
+    /// The dim layer is a full-screen node (100 % × 100 %) at a lower
+    /// z-index than the replay chrome (z = Z_REPLAY_DIM < Z_REPLAY_OVERLAY).
+    /// Lock the z-ordering so a future refactor of the z constants can't
+    /// silently flip the intended stacking.
+    #[test]
+    fn dim_layer_z_is_below_replay_chrome() {
+        assert!(
+            Z_REPLAY_DIM < Z_REPLAY_OVERLAY,
+            "dim layer (z={Z_REPLAY_DIM}) must be below replay chrome (z={Z_REPLAY_OVERLAY})",
+        );
     }
 }
