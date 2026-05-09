@@ -96,11 +96,23 @@ const KEYBIND_FOOTER_HEIGHT: f32 = 16.0;
 /// only the *repeat* fires while the key remains held.
 const SCRUB_REPEAT_INTERVAL_SECS: f32 = 0.1;
 
-/// Total height of the bottom-edge Move Log panel in pixels. Two
-/// vertical content rows (header + active-row) at `TYPE_CAPTION`
-/// and `TYPE_BODY` plus standard vertical padding lands at
-/// 11 + 8 + 14 + 12 ≈ 45; round to 56 for headroom.
-const MOVE_LOG_PANEL_HEIGHT: f32 = 56.0;
+/// Total height of the bottom-edge Move Log panel in pixels.
+/// Sized for: header (`TYPE_CAPTION` 11) + 2 prev rows + active
+/// row (`TYPE_BODY` 14 each = 42) + row gaps (~6) + vertical
+/// padding (~16) ≈ 75; round to 84 for headroom.
+///
+/// Growth history:
+/// - 56 in the move-log-panel-init commit (header + active row).
+/// - 56 → 84 in the move-log-prev-rows commit to make room for
+///   2 prev rows above the active row.
+const MOVE_LOG_PANEL_HEIGHT: f32 = 84.0;
+
+/// Number of "previous move" rows rendered above the active row
+/// in the move-log panel. Tuned to fit the panel height comfortably
+/// alongside the header + active row at `TYPE_BODY`. The active
+/// row plus this many prev rows gives the player a 3-row window
+/// onto recent move history.
+const MOVE_LOG_PREV_ROWS: usize = 2;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
@@ -308,6 +320,22 @@ pub struct ReplayOverlayMoveLogHeader;
 #[derive(Component, Debug)]
 pub struct ReplayOverlayMoveLogActiveRow;
 
+/// Marker on a "previous move" row above the active row.
+/// `offset` is the 1-based distance backwards from the active
+/// row: `offset = 1` is the move applied just before the active
+/// one (e.g. cursor=47 → row reads "46 │ ..."), `offset = 2` is
+/// the one before that, and so on. Up to [`MOVE_LOG_PREV_ROWS`]
+/// rows render above the active row.
+///
+/// Empty text when there isn't enough history (`offset >= cursor`,
+/// e.g. cursor=1 has no prev rows; cursor=2 has only the
+/// `offset = 1` row populated).
+#[derive(Component, Debug)]
+pub struct ReplayOverlayMoveLogPrevRow {
+    /// Distance backwards from the active row (1-based).
+    pub offset: u8,
+}
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -353,6 +381,7 @@ impl Plugin for ReplayOverlayPlugin {
                     update_scrub_fill,
                     update_move_log_header,
                     update_move_log_active_row,
+                    update_move_log_prev_rows,
                     update_pause_button_label,
                     handle_pause_button,
                     handle_step_button,
@@ -887,11 +916,36 @@ fn spawn_overlay(
                 },
                 TextColor(ACCENT_PRIMARY),
             ));
+            // Prev rows — render above the active row in display
+            // order (oldest first), so the active row sits at the
+            // bottom of the visible window. Spawn from
+            // MOVE_LOG_PREV_ROWS down to 1 (offset 2, then 1) so
+            // the highest-offset (oldest) row is topmost in the
+            // panel's flex column. Each carries
+            // ReplayOverlayMoveLogPrevRow { offset } — the
+            // per-frame system reads `offset` and recomputes the
+            // text on cursor advance. Painted in TEXT_SECONDARY
+            // so the active row stands out from context rows.
+            for offset in (1..=MOVE_LOG_PREV_ROWS as u8).rev() {
+                panel.spawn((
+                    ReplayOverlayMoveLogPrevRow { offset },
+                    Text::new(format_kth_recent_row(
+                        state,
+                        offset as usize + 1,
+                    )),
+                    TextFont {
+                        font: font_handle_for_move_log.clone(),
+                        font_size: TYPE_BODY,
+                        ..default()
+                    },
+                    TextColor(TEXT_SECONDARY),
+                ));
+            }
             // Active move row. Empty at spawn time when cursor=0;
             // the per-frame update system populates it as the
-            // cursor advances. TYPE_BODY gives the row a bit more
-            // weight than the header — it's the load-bearing
-            // information.
+            // cursor advances. TEXT_PRIMARY (vs prev rows'
+            // TEXT_SECONDARY) gives the active row more visual
+            // weight — it's the load-bearing information.
             panel.spawn((
                 ReplayOverlayMoveLogActiveRow,
                 Text::new(format_active_move_row(state)),
@@ -1136,6 +1190,26 @@ fn update_move_log_active_row(
     }
 }
 
+/// Repaints every "previous move" row text whenever
+/// [`ReplayPlaybackState`] changes. Each row's `offset` is read
+/// from the marker; `k = offset + 1` feeds [`format_kth_recent_row`]
+/// (active is k=1, prev offset 1 is k=2, prev offset 2 is k=3).
+/// Rows with `offset >= cursor` paint as empty — the panel
+/// gracefully under-fills early in a replay without spurious
+/// "out-of-range" text.
+fn update_move_log_prev_rows(
+    state: Res<ReplayPlaybackState>,
+    mut q: Query<(&ReplayOverlayMoveLogPrevRow, &mut Text)>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    for (row, mut text) in &mut q {
+        let label = format_kth_recent_row(&state, row.offset as usize + 1);
+        **text = label;
+    }
+}
+
 /// Repaints the bottom-edge accent scrub fill to mirror cursor progress.
 /// Same change-detection guard as the text updaters — the overlay
 /// already early-exits when nothing moved, so an idle replay leaves the
@@ -1237,24 +1311,39 @@ fn format_move_log_header(state: &ReplayPlaybackState) -> String {
     }
 }
 
-/// Pure helper — formats the active-row text for the move-log
-/// panel. Returns `"{idx} │ {body}"` for the most-recently-applied
-/// move (`replay.moves[cursor - 1]`), where `idx` is 1-indexed for
-/// player display. Returns the empty string for `cursor == 0`
-/// (no move applied yet — panel renders the header alone) and for
-/// non-`Playing` states.
-fn format_active_move_row(state: &ReplayPlaybackState) -> String {
+/// Pure helper — formats the kth-most-recently-applied move's row
+/// text. `k = 1` is the active row (`replay.moves[cursor - 1]`,
+/// displayed as `"{cursor} │ {body}"`). `k = 2` is the row above
+/// that (`moves[cursor - 2]` displayed as `"{cursor - 1} │ {body}"`),
+/// and so on.
+///
+/// Returns the empty string in any of these cases:
+/// - State isn't `Playing` (no replay attached).
+/// - `k == 0` (no kth-most-recent for k=0; the active is k=1).
+/// - `k > cursor` (not enough history — e.g. cursor=2 has rows
+///   for k=1 and k=2 only, k=3 returns empty).
+/// - The move list is shorter than expected (defensive guard).
+fn format_kth_recent_row(state: &ReplayPlaybackState, k: usize) -> String {
     let ReplayPlaybackState::Playing { replay, cursor, .. } = state else {
         return String::new();
     };
-    if *cursor == 0 {
+    if k == 0 || k > *cursor {
         return String::new();
     }
-    let applied_idx = *cursor - 1;
-    let Some(m) = replay.moves.get(applied_idx) else {
+    let zero_idx = *cursor - k;
+    let Some(m) = replay.moves.get(zero_idx) else {
         return String::new();
     };
-    format!("{} \u{2502} {}", *cursor, format_move_body(m))
+    let display_idx = *cursor - k + 1;
+    format!("{} \u{2502} {}", display_idx, format_move_body(m))
+}
+
+/// Pure helper — formats the active-row text for the move-log
+/// panel. Thin wrapper around [`format_kth_recent_row`] with `k=1`.
+/// The active row IS the kth-most-recent for k=1, so this exists
+/// to keep call sites readable.
+fn format_active_move_row(state: &ReplayPlaybackState) -> String {
+    format_kth_recent_row(state, 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -2701,6 +2790,161 @@ mod tests {
             move_log_active_row_text(&mut app),
             "2 \u{2502} stock cycle",
             "active row must repaint to the cursor's position when state changes",
+        );
+    }
+
+    /// `format_kth_recent_row` covers the active-row helper for
+    /// `k=1` and the prev-row helpers for `k>1`. Pins the "k larger
+    /// than cursor returns empty" branch so under-filled panels
+    /// early in a replay don't paint stale text.
+    #[test]
+    fn format_kth_recent_row_handles_in_range_and_out_of_range() {
+        let state_at_three = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 3,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        // k=1 → active (most recent applied). cursor=3 → display=3.
+        assert_eq!(
+            format_kth_recent_row(&state_at_three, 1),
+            "3 \u{2502} stock cycle",
+        );
+        // k=2 → row above active. display=2.
+        assert_eq!(
+            format_kth_recent_row(&state_at_three, 2),
+            "2 \u{2502} stock cycle",
+        );
+        // k=3 → second-prev row. display=1.
+        assert_eq!(
+            format_kth_recent_row(&state_at_three, 3),
+            "1 \u{2502} stock cycle",
+        );
+        // k=4 — exceeds cursor, no history that far back.
+        assert_eq!(
+            format_kth_recent_row(&state_at_three, 4),
+            "",
+            "k > cursor must return empty (panel under-fills gracefully)",
+        );
+        // k=0 — degenerate, no kth-most-recent for k=0.
+        assert_eq!(format_kth_recent_row(&state_at_three, 0), "");
+    }
+
+    fn move_log_prev_row_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayMoveLogPrevRow>()
+            .iter(app.world())
+            .count()
+    }
+
+    fn move_log_prev_row_text_at_offset(app: &mut App, offset: u8) -> String {
+        let world = app.world_mut();
+        let mut q = world.query::<(&ReplayOverlayMoveLogPrevRow, &Text)>();
+        for (row, text) in q.iter(world) {
+            if row.offset == offset {
+                return text.0.clone();
+            }
+        }
+        String::new()
+    }
+
+    /// `MOVE_LOG_PREV_ROWS` prev rows spawn with the panel — one
+    /// per offset 1..=N. Cardinality matches the constant.
+    #[test]
+    fn move_log_prev_rows_spawn_with_panel() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 3,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_prev_row_count(&mut app),
+            MOVE_LOG_PREV_ROWS,
+            "exactly MOVE_LOG_PREV_ROWS prev rows must spawn with the panel",
+        );
+    }
+
+    /// Each prev row's text at spawn time matches the helper
+    /// output for its offset. Pins the spawn path against drift
+    /// between marker offset and rendered text.
+    #[test]
+    fn move_log_prev_rows_paint_helper_strings_at_spawn() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 5,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        // offset 1 → k=2 → display=4
+        assert_eq!(
+            move_log_prev_row_text_at_offset(&mut app, 1),
+            "4 \u{2502} stock cycle",
+        );
+        // offset 2 → k=3 → display=3
+        assert_eq!(
+            move_log_prev_row_text_at_offset(&mut app, 2),
+            "3 \u{2502} stock cycle",
+        );
+    }
+
+    /// Prev rows repaint as the cursor advances. Drives the
+    /// resource through cursor=2 → cursor=5 and asserts the texts
+    /// follow.
+    #[test]
+    fn move_log_prev_rows_repaint_on_cursor_advance() {
+        let mut app = headless_app();
+        // Start at cursor=2: offset 1 → k=2 → display=1, offset 2 → k=3 → empty (k > cursor).
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 2,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_prev_row_text_at_offset(&mut app, 1),
+            "1 \u{2502} stock cycle",
+        );
+        assert_eq!(
+            move_log_prev_row_text_at_offset(&mut app, 2),
+            "",
+            "offset 2 (k=3) must be empty when cursor=2 (no history that far back)",
+        );
+
+        // Advance to cursor=5 — both offsets now have history.
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 5,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_prev_row_text_at_offset(&mut app, 1),
+            "4 \u{2502} stock cycle",
+            "offset 1 must repaint to k=2 of new cursor (display=4)",
+        );
+        assert_eq!(
+            move_log_prev_row_text_at_offset(&mut app, 2),
+            "3 \u{2502} stock cycle",
         );
     }
 
