@@ -69,7 +69,7 @@ jobs:
           path: solitaire-quest-linux-x86_64.tar.gz
 
 # ---------------------------------------------------------------------------
-# Job 2: Android APK (multi-arch) — debug-built then release-signed
+# Job 2: Android APK (multi-arch) — release-built and signed via cargo-apk
 # ---------------------------------------------------------------------------
   build-android:
     name: Build · Android APK
@@ -105,27 +105,39 @@ jobs:
         # cargo install is a no-op when the cached binary is already current.
         run: cargo install --locked cargo-apk
 
-      - name: Build APK (release profile)
+      - name: Inject release signing config
+        # cargo-apk --release requires [package.metadata.android.signing.release]
+        # in solitaire_app/Cargo.toml. We append it at CI time so secrets never
+        # live in the repo. Python avoids sed escaping issues with special chars.
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+          python3 - << 'PYEOF'
+          import os
+          workspace = os.environ['GITHUB_WORKSPACE']
+          ks_path = f"{workspace}/release.keystore"
+          section = f"""
+[package.metadata.android.signing.release]
+path = "{ks_path}"
+keystore_password = "{os.environ['ANDROID_KEYSTORE_PASSWORD']}"
+key_alias = "{os.environ['ANDROID_KEY_ALIAS']}"
+key_password = "{os.environ['ANDROID_KEY_PASSWORD']}"
+"""
+          with open('solitaire_app/Cargo.toml', 'a') as f:
+              f.write(section)
+          PYEOF
+
+      - name: Build and sign APK (release profile)
         run: cargo apk build -p solitaire_app --release
 
-      - name: Sign APK with release keystore
+      - name: Stage APK for upload
         run: |
-          # Restore the keystore from the base64-encoded secret.
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
-
-          # Locate apksigner from whichever build-tools version the runner provides.
-          BUILD_TOOLS=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
-          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner"
-
-          "$APKSIGNER" sign \
-            --ks release.keystore \
-            --ks-key-alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
-            --ks-pass "pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-            --key-pass "pass:${{ secrets.ANDROID_KEY_PASSWORD }}" \
-            --out "solitaire-quest-${{ github.ref_name }}.apk" \
-            target/release/apk/solitaire-quest.apk
-
-          # Remove keystore immediately — never leave it as a build artifact.
+          cp target/release/apk/solitaire-quest.apk \
+             "solitaire-quest-${{ github.ref_name }}.apk"
           rm release.keystore
 
       - uses: actions/upload-artifact@v4
