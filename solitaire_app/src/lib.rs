@@ -77,6 +77,7 @@ pub fn run() {
     // primary monitor) — `apply_smart_default_window_size` will resize
     // up to a monitor-relative target on the first frame so HiDPI / 4K
     // sessions don't end up with a comparatively tiny window.
+    #[cfg(not(target_os = "android"))]
     let had_saved_geometry = settings.window_geometry.is_some();
     let (window_resolution, window_position) = match settings.window_geometry {
         Some(geom) => (
@@ -230,6 +231,7 @@ pub fn run() {
 /// a dedicated resource. The Update tick is necessary because Bevy
 /// populates the `Monitor` entities asynchronously after winit's
 /// Resumed event fires; they may not exist on the first Startup pass.
+#[cfg(not(target_os = "android"))]
 fn apply_smart_default_window_size(
     mut applied: Local<bool>,
     monitors: Query<&Monitor, With<PrimaryMonitor>>,
