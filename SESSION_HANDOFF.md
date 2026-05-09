@@ -1,8 +1,8 @@
 # Solitaire Quest — Session Handoff
 
 **Last updated:** 2026-05-08 — **v0.21.8 tagged at `c50eaf8`**;
-one post-cut commit `a449f60` (Stats Prev/Next selector spawn site)
-is on master, uncommitted docs ride on top, push pending.
+three post-cut commits on master (`a449f60` Stats selector,
+`202a64d` Android launch fixes, `16242e6` .gitignore). Pushed.
 
 v0.21.8 closes the last optional polish items in the B-2
 replay screen-takeover arc: **notch-label centering** (middle
@@ -19,51 +19,52 @@ resume.
 
 ## Status at pause
 
-- **HEAD locally:** `a449f60` (Stats Prev/Next selector spawn).
-  Docs ride on top; push pending:
-  `git push origin master && git push origin v0.21.8`.
-- **HEAD on origin:** `52407e7` (v0.21.7 docs). v0.21.8 and
-  v0.21.9 not yet pushed.
+- **HEAD locally:** `16242e6` (.gitignore fix). Docs ride on top;
+  push pending.
+- **HEAD on origin:** `c0415eb` (handoff docs from prior session).
+  `202a64d` and `16242e6` not yet pushed.
 - **Working tree:** clean (docs uncommitted). No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
 - **Tests:** **1282 passing / 0 failing** across the workspace.
-  Detail in `CHANGELOG.md` § [0.21.9] § Stats.
-- **Tags on origin:** `v0.9.0` through `v0.21.7`. v0.21.8 tag
-  exists locally at `c50eaf8`; push when pushing master.
+- **Tags on origin:** `v0.9.0` through `v0.21.8`.
+- **Android:** APK verified booting on Pixel_7 AVD (Android 14,
+  x86_64). Three launch fixes committed. See Phase Android punch
+  list for remaining work.
 
 ## Since the v0.21.8 cut
 
-One commit since the v0.21.8 tag (not yet pushed):
-- `a449f60` — Stats Prev/Next selector spawn site (closes
-  punch-list item "Prev/Next selector chips spawn site" from
-  v0.19.0's `9b065e5`)
+Three commits since the v0.21.8 tag:
+- `a449f60` — Stats Prev/Next selector spawn site
+- `202a64d` — Android launch fixes (android_main, resize_constraints,
+  apply_smart_default_window_size) — **closes APK launch verification**
+- `16242e6` — Ignore .idea/ IDE files
 
-CHANGELOG + SESSION_HANDOFF docs ride on top.
+CHANGELOG + SESSION_HANDOFF docs ride on top; push pending.
 
-Open next-step menu (B-2 arc fully closed, Prev/Next selector
-spawn site closed; no known open UI items):
-1. **APK launch verification on AVD / device** — see Phase
-   Android punch list in this file.
-2. **Phase 8 (sync)** — the biggest open arc. Local storage
+Open next-step menu:
+1. **Phase 8 (sync)** — the biggest open arc. Local storage
    scaffolding, self-hosted Axum server, GPGS stub.
+2. **Android follow-ups** — JNI ClipboardManager, Android Keystore,
+   GPGS, double-tap auto-move. Launch verification closed; these
+   are the remaining Phase Android items.
 3. **Move Log auto-scroll** — only relevant if the panel
-   row count grows beyond the current 5-row fixed window;
-   non-starter until then.
-
-Recommended order: resume with A or C from the DECISION menu
-in the resume prompt below.
+   row count grows beyond the current 5-row fixed window.
 
 ## Open punch list
 
 ### Phase Android (build + persistence shipped; runtime gaps remain)
 
-- **APK launch verification on AVD / device.** `adb install` then
-  `adb logcat` against the `bevy_test` AVD or an x86_64 device.
-  The build works and persistence is wired, but no end-to-end
-  device run has been logged. Shakes out runtime bugs the build +
-  unit tests can't catch.
+- *APK launch verification — closed 2026-05-08 by `202a64d`.*
+  Three fixes shipped: `android_main` export (missing NativeActivity
+  entry point), `resize_constraints` gated to non-Android (max=0
+  panic), `apply_smart_default_window_size` gated to non-Android
+  (clamp panic on zero-dimension window event). Verified booting on
+  Pixel_7 AVD (Android 14, x86_64, SwiftShader Vulkan), 2+ min
+  runtime without crash. B0004 ECS hierarchy warnings remain
+  (non-fatal; entity parent/child component mismatch); investigate
+  if they surface gameplay bugs.
 - **JNI ClipboardManager bridge.** Replaces the Android stub for
   the Stats "Copy share link" toast. `arboard` doesn't ship an
   Android backend; small custom JNI call.

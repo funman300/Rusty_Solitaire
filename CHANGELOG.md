@@ -6,8 +6,9 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-**`a449f60`** — Stats overlay Prev/Next replay selector spawn site
-(2026-05-08). See [0.21.9] for the committed detail once cut.
+**`202a64d`** — Android APK launch fixes (2026-05-08).
+**`16242e6`** — Ignore .idea/ IDE files (2026-05-08).
+See [0.21.9] for the committed detail once cut.
 
 ## [0.21.9] — pending cut
 
@@ -45,12 +46,41 @@ v0.19.0.
   `clippy::assertions_on_constants` (constant-fold at compile time
   rather than a runtime no-op).
 
+### Fixed (post-cut, same pending release)
+
+- **Android APK launch: export `android_main`** (`202a64d`).
+  `NativeActivity` dlopen-s `libsolitaire_app.so` and calls
+  `android_main` as its entry point. Without the symbol the app
+  crashed immediately with `UnsatisfiedLinkError`. The new function
+  sets `bevy::android::ANDROID_APP` (required by `WinitPlugin`) then
+  delegates to `run()` — equivalent to what `#[bevy_main]` would
+  generate, but usable on an arbitrary entry point name.
+- **Android APK launch: gate `resize_constraints` to non-Android**
+  (`202a64d`). On Android `max_width/max_height` default to `0.0`;
+  Bevy's clamp panicked with `min=800 > max=0`.
+- **Android APK launch: gate `apply_smart_default_window_size` to
+  non-Android** (`202a64d`). The system calls `.clamp(800.0,
+  logical_w)` which panics when the emulator reports zero window
+  dimensions during early Android lifecycle events. The OS controls
+  window size on Android; the system is irrelevant there.
+- **Ignore `.idea/` IDE project files** (`16242e6`). Android Studio
+  created `.idea/` when the project was opened during APK
+  verification; added to `.gitignore` and removed the accidentally-
+  committed files.
+
+### Android verification result
+
+APK boots on `x86_64-linux-android` in a Pixel_7 AVD (Android 14 /
+API 34, SwiftShader Vulkan). App runs for 2+ minutes without crashing.
+Bevy renderer initialises, splash screen loads. This is the first
+confirmed end-to-end device run.
+
 ### Stats
 
-- Tests: 1282 passing / 0 failing (was 1276; +6 selector tests)
+- Tests: 1282 passing / 0 failing (unchanged)
 - Clippy: clean
 - Crates touched: `solitaire_engine` (stats_plugin.rs,
-  replay_overlay.rs)
+  replay_overlay.rs), `solitaire_app` (lib.rs, .gitignore)
 
 ## [0.21.8] — 2026-05-08
 
