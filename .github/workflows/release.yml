@@ -107,8 +107,9 @@ jobs:
 
       - name: Inject release signing config
         # cargo-apk --release requires [package.metadata.android.signing.release]
-        # in solitaire_app/Cargo.toml. We append it at CI time so secrets never
-        # live in the repo. Python avoids sed escaping issues with special chars.
+        # in solitaire_app/Cargo.toml. Appended at CI time so secrets never
+        # live in the repo. printf keeps every line inside the YAML run block,
+        # avoiding the YAML parse error a heredoc with column-0 content causes.
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -116,20 +117,13 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
-          python3 - << 'PYEOF'
-          import os
-          workspace = os.environ['GITHUB_WORKSPACE']
-          ks_path = f"{workspace}/release.keystore"
-          section = f"""
-[package.metadata.android.signing.release]
-path = "{ks_path}"
-keystore_password = "{os.environ['ANDROID_KEYSTORE_PASSWORD']}"
-key_alias = "{os.environ['ANDROID_KEY_ALIAS']}"
-key_password = "{os.environ['ANDROID_KEY_PASSWORD']}"
-"""
-          with open('solitaire_app/Cargo.toml', 'a') as f:
-              f.write(section)
-          PYEOF
+          {
+            printf '\n[package.metadata.android.signing.release]\n'
+            printf 'path = "%s"\n'             "${GITHUB_WORKSPACE}/release.keystore"
+            printf 'keystore_password = "%s"\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'key_alias = "%s"\n'        "$ANDROID_KEY_ALIAS"
+            printf 'key_password = "%s"\n'     "$ANDROID_KEY_PASSWORD"
+          } >> solitaire_app/Cargo.toml
 
       - name: Build and sign APK (release profile)
         run: cargo apk build -p solitaire_app --release
