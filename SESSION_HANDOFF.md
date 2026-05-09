@@ -1,8 +1,7 @@
 # Solitaire Quest — Session Handoff
 
 **Last updated:** 2026-05-08 — **v0.21.8 tagged at `c50eaf8`**;
-three post-cut commits on master (`a449f60` Stats selector,
-`202a64d` Android launch fixes, `16242e6` .gitignore). Pushed.
+seven post-cut commits on master. Push pending.
 
 v0.21.8 closes the last optional polish items in the B-2
 replay screen-takeover arc: **notch-label centering** (middle
@@ -19,27 +18,30 @@ resume.
 
 ## Status at pause
 
-- **HEAD locally:** `16242e6` (.gitignore fix). Docs ride on top;
-  push pending.
-- **HEAD on origin:** `c0415eb` (handoff docs from prior session).
-  `202a64d` and `16242e6` not yet pushed.
+- **HEAD locally:** `45436d0` (handle_fullscreen Android gate).
+  Docs ride on top; push pending.
+- **HEAD on origin:** `395a322` (double-tap commit — last pushed).
 - **Working tree:** clean (docs uncommitted). No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1282 passing / 0 failing** across the workspace.
+- **Tests:** **1292 passing / 0 failing** across the workspace.
 - **Tags on origin:** `v0.9.0` through `v0.21.8`.
 - **Android:** APK verified booting on Pixel_7 AVD (Android 14,
-  x86_64). Three launch fixes committed. See Phase Android punch
-  list for remaining work.
+  x86_64). All desktop-only systems (handle_fullscreen) now gated.
+  See Phase Android punch list for remaining work.
 
 ## Since the v0.21.8 cut
 
-Three commits since the v0.21.8 tag:
+Seven commits since the v0.21.8 tag:
 - `a449f60` — Stats Prev/Next selector spawn site
 - `202a64d` — Android launch fixes (android_main, resize_constraints,
   apply_smart_default_window_size) — **closes APK launch verification**
 - `16242e6` — Ignore .idea/ IDE files
+- `395a322` — double-tap auto-move for touch input
+- `0cb1587` — Play-by-Seed dialog + HomeMode card
+- `2062bd0` — 75 new challenge seeds + gen_seeds binary
+- `45436d0` — gate handle_fullscreen to non-Android
 
 CHANGELOG + SESSION_HANDOFF docs ride on top; push pending.
 
@@ -47,7 +49,7 @@ Open next-step menu:
 1. **Phase 8 (sync)** — the biggest open arc. Local storage
    scaffolding, self-hosted Axum server, GPGS stub.
 2. **Android follow-ups** — JNI ClipboardManager, Android Keystore,
-   GPGS, double-tap auto-move. Launch verification closed; these
+   GPGS. Launch verification and double-tap both closed; these
    are the remaining Phase Android items.
 3. **Move Log auto-scroll** — only relevant if the panel
    row count grows beyond the current 5-row fixed window.
@@ -65,6 +67,16 @@ Open next-step menu:
   runtime without crash. B0004 ECS hierarchy warnings remain
   (non-fatal; entity parent/child component mismatch); investigate
   if they surface gameplay bugs.
+- *Double-tap auto-move — closed 2026-05-08 by `395a322`.*
+  `handle_double_tap` fires `MoveRequestEvent` on two rapid
+  `TouchPhase::Ended` events within 0.5 s. Prefers foundation;
+  falls back to tableau stack move. Fires `MoveRejectedEvent` when
+  no legal destination exists. System runs before `touch_end_drag`
+  in the chain so drag state is readable.
+- *F11 fullscreen gate — closed 2026-05-08 by `45436d0`.*
+  `handle_fullscreen` and its `MonitorSelection`/`WindowMode`
+  imports are `#[cfg(not(target_os = "android"))]`-gated. The
+  `add_systems` call is a separate statement (not mid-chain).
 - **JNI ClipboardManager bridge.** Replaces the Android stub for
   the Stats "Copy share link" toast. `arboard` doesn't ship an
   Android backend; small custom JNI call.
@@ -152,6 +164,12 @@ palette refresh all shipped in v0.20.0 + v0.21.0. What stays open:
 
 ### Other small candidates
 
+- *Play-by-Seed dialog — closed 2026-05-08 by `0cb1587`.*
+  `PlayBySeedPlugin` adds a numeric-input modal with async solver
+  preview (debounced 500 ms). `HomeMode::PlayBySeed` card fires
+  `StartPlayBySeedRequestEvent`. 5 unit tests. 75 new verified-win
+  seeds (`2062bd0`) expand `CHALLENGE_SEEDS` via the new
+  `solitaire_assetgen::gen_seeds` binary.
 - *Prev/Next selector chips spawn site — closed 2026-05-08 by
   `a449f60`.* `ReplayPrevButton` / `ReplayNextButton` /
   `ReplaySelectorCaption` / `ReplaySelectorDetail` now spawn in
@@ -243,21 +261,20 @@ into a v0.21.1 / v0.22.0 cut.
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
 Branch: master. v0.21.8 is tagged at c50eaf8 (cut 2026-05-08,
-replay-overlay polish). One post-cut commit a449f60 is on master:
-Stats Prev/Next replay selector spawn site (closes the v0.19.0
-punch-list item). v0.21.7 stays at da3e542, v0.21.6 at f63db76,
-v0.21.5 at a2432df, v0.21.4 at 23ff62c, v0.21.3 at 3d92a91,
-v0.21.2 at f23df3b, v0.21.1 at daa655a, v0.21.0 at 04f9bf9.
+replay-overlay polish). Seven post-cut commits are on master (see
+"Since the v0.21.8 cut" above); push of the last four pending.
+v0.21.7 stays at da3e542, v0.21.6 at f63db76, v0.21.5 at a2432df,
+v0.21.4 at 23ff62c, v0.21.3 at 3d92a91, v0.21.2 at f23df3b,
+v0.21.1 at daa655a, v0.21.0 at 04f9bf9.
 Working tree: uncommitted CHANGELOG + SESSION_HANDOFF docs; push
-pending (master + v0.21.8 tag). See CHANGELOG.md § [0.21.9] for
-full detail.
+pending. See CHANGELOG.md § [0.21.9] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Workspace
-tests: 1282 passing / 0 failing. Clippy clean.
+tests: 1292 passing / 0 failing. Clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
-  2. CHANGELOG.md        — [0.21.6] section is the most recent cut
+  2. CHANGELOG.md        — [0.21.9] section has the pending-cut items
   3. CLAUDE.md           — unified-3.0 rule set
   4. CLAUDE_SPEC.md      — formal architecture spec
   5. ARCHITECTURE.md     — crate responsibilities + data flow
@@ -272,20 +289,18 @@ READ FIRST (in order, before doing anything):
                            fresh machine)
 
 DECISION TO ASK THE PLAYER FIRST:
-  A. APK launch verification on AVD / device — `adb install` +
-     `adb logcat` to shake out runtime bugs the build / unit
-     tests can't catch. Likely surfaces JNI ClipboardManager
-     and Android Keystore stubs that need real bridges. Larger
-     scope; needs an Android device or emulator running.
-  B. Replay-overlay arc — **fully closed** as of v0.21.8 (15
-     commits across v0.21.4–v0.21.8). Stats Prev/Next selector
-     spawn site closed by `a449f60` (post-v0.21.8). No known
-     UI punch-list items remain open.
-  C. Phase 8 (sync) — local storage scaffolding, self-hosted
+  A. Android follow-ups — JNI ClipboardManager bridge (arboard
+     has no Android backend), Android Keystore (blocked on Phase 8),
+     GPGS integration. Launch verification + double-tap are closed.
+  B. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls
      up several Phase Android dependencies (Keystore,
      ClipboardManager).
+  C. Play-by-Seed polish — the dialog is functional but has no
+     visual preview of the solver verdict in the UI yet; the
+     HomeMode card is wired but the dialog spawn site and verdict
+     display could use a second pass.
 
 WORKFLOW NOTES:
   - Use the system git config (already correct).
@@ -311,7 +326,7 @@ WORKFLOW NOTES:
 
 OPEN AT THE START: ask which of A–C. Don't pick unilaterally.
 Note: every remaining option is multi-session by nature (A is
-gated on Android tooling, B and C are explicitly multi-session
+gated on Android tooling; B and C are explicitly multi-session
 arcs). A fresh session is a better fit for any of them than the
 tail of a long working stretch.
 ```

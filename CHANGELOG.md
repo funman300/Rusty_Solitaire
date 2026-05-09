@@ -6,8 +6,10 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-**`202a64d`** — Android APK launch fixes (2026-05-08).
-**`16242e6`** — Ignore .idea/ IDE files (2026-05-08).
+**`395a322`** — double-tap auto-move (2026-05-08).
+**`0cb1587`** — Play-by-Seed dialog (2026-05-08).
+**`2062bd0`** — 75 new challenge seeds + gen_seeds binary (2026-05-08).
+**`45436d0`** — gate handle_fullscreen to non-Android (2026-05-08).
 See [0.21.9] for the committed detail once cut.
 
 ## [0.21.9] — pending cut
@@ -46,8 +48,43 @@ v0.19.0.
   `clippy::assertions_on_constants` (constant-fold at compile time
   rather than a runtime no-op).
 
+### Added (post-cut, same pending release)
+
+- **Double-tap auto-move on touch screens** (`395a322`).
+  `handle_double_tap` fires `MoveRequestEvent` (single card to
+  foundation/tableau, or a whole face-up stack via
+  `best_tableau_destination_for_stack`) when two `TouchPhase::Ended`
+  events on the same card arrive within `DOUBLE_TAP_WINDOW` (0.5 s,
+  slightly wider than the mouse `DOUBLE_CLICK_WINDOW` to account for
+  touch latency). If no legal destination exists, fires
+  `MoveRejectedEvent` (audio + visual rejection feedback).  The system
+  is inserted into the touch drag chain immediately before
+  `touch_end_drag` so `DragState.active_touch_id` and `committed` are
+  still readable; the tap timestamp is tracked in a `Local<HashMap<u32,
+  f32>>` keyed by card ID.
+- **Play-by-Seed dialog** (`0cb1587`).
+  `PlayBySeedPlugin` adds a numeric-input modal that accepts a decimal
+  seed, runs a solver preview in the background (debounced 500 ms via
+  `AsyncComputeTaskPool`), and shows a win/no-win verdict before
+  dealing.  A new `HomeMode::PlayBySeed` card in the home overlay fires
+  `StartPlayBySeedRequestEvent`; the handler in `PlayBySeedPlugin`
+  spawns the dialog.  Digit, Backspace, Enter (confirm), and Escape
+  (cancel) are handled via `ButtonInput<KeyCode>`.  Five unit tests
+  cover spawn, digit append, buffer read, confirm, and cancel paths.
+- **75 new challenge seeds** (`2062bd0`).
+  New `gen_seeds` binary in `solitaire_assetgen` brute-searches seeds
+  in the `0xCAFEBABE…` namespace and filters for hands solvable in
+  ≤250 moves via the core solver.  The 75 confirmed-win seeds are
+  appended to `CHALLENGE_SEEDS` in `solitaire_data::challenge`.
+
 ### Fixed (post-cut, same pending release)
 
+- **Gate `handle_fullscreen` to non-Android** (`45436d0`).
+  F11 fullscreen toggle makes no sense on Android (the OS owns window
+  sizing); the fn and its `MonitorSelection`/`WindowMode` imports are
+  now `#[cfg(not(target_os = "android"))]`-gated.  The `add_systems`
+  call is extracted as a separate statement so `#[cfg]` can annotate it
+  (attributes cannot appear mid-chain in Rust).
 - **Android APK launch: export `android_main`** (`202a64d`).
   `NativeActivity` dlopen-s `libsolitaire_app.so` and calls
   `android_main` as its entry point. Without the symbol the app
@@ -77,10 +114,11 @@ confirmed end-to-end device run.
 
 ### Stats
 
-- Tests: 1282 passing / 0 failing (unchanged)
+- Tests: **1292 passing** / 0 failing (+10 from double-tap + Play-by-Seed tests)
 - Clippy: clean
-- Crates touched: `solitaire_engine` (stats_plugin.rs,
-  replay_overlay.rs), `solitaire_app` (lib.rs, .gitignore)
+- Crates touched: `solitaire_engine` (input_plugin, events, home_plugin,
+  play_by_seed_plugin, lib), `solitaire_app` (lib.rs), `solitaire_data`
+  (challenge.rs), `solitaire_assetgen` (gen_seeds binary, Cargo.toml)
 
 ## [0.21.8] — 2026-05-08
 
