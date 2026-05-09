@@ -16,15 +16,15 @@
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
-use solitaire_core::game_state::DrawMode;
+use solitaire_core::game_state::{DifficultyLevel, DrawMode};
 use solitaire_data::save_settings_to;
 
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::daily_challenge_plugin::DailyChallengeResource;
 use crate::events::{
     InfoToastEvent, NewGameRequestEvent, StartChallengeRequestEvent,
-    StartDailyChallengeRequestEvent, StartPlayBySeedRequestEvent, StartTimeAttackRequestEvent,
-    StartZenRequestEvent, ToggleProfileRequestEvent,
+    StartDailyChallengeRequestEvent, StartDifficultyRequestEvent, StartPlayBySeedRequestEvent,
+    StartTimeAttackRequestEvent, StartZenRequestEvent, ToggleProfileRequestEvent,
 };
 use crate::font_plugin::FontResource;
 use crate::progress_plugin::ProgressResource;
@@ -80,6 +80,27 @@ struct HomeDrawThreeButton;
 /// the screen on 800x600 hardware. Mirrors `SettingsPanelScrollable`.
 #[derive(Component, Debug)]
 struct HomeScrollable;
+
+/// Marker on the "▶ Difficulty" / "▼ Difficulty" toggle button that
+/// expands / collapses the difficulty tier chip row.
+#[derive(Component, Debug)]
+struct HomeDifficultyToggle;
+
+/// Marker on each difficulty tier chip inside the expanded difficulty
+/// section. The wrapped `DifficultyLevel` identifies which tier was
+/// clicked so the handler can fire `StartDifficultyRequestEvent`.
+#[derive(Component, Debug)]
+struct HomeDifficultyChip(DifficultyLevel);
+
+/// Whether the difficulty section is currently expanded. Toggled by
+/// `handle_home_difficulty_toggle` and checked by `spawn_home_screen`
+/// to determine initial render state.
+///
+/// Initialised at plugin startup; `spawn_home_on_launch` upgrades it
+/// to `true` when `settings.last_difficulty` is already set so
+/// returning players see their tier pre-expanded.
+#[derive(Resource, Default, Debug)]
+pub struct DifficultyExpanded(pub bool);
 
 // ---------------------------------------------------------------------------
 // Private mode-card data shape
@@ -240,12 +261,14 @@ impl Plugin for HomePlugin {
         // Pre-mark the auto-show as already done in headless mode so the
         // gating system is a permanent no-op for tests.
         app.insert_resource(LaunchHomeShown(!self.auto_show_on_launch))
+            .init_resource::<DifficultyExpanded>()
             .add_message::<NewGameRequestEvent>()
             .add_message::<StartZenRequestEvent>()
             .add_message::<StartChallengeRequestEvent>()
             .add_message::<StartTimeAttackRequestEvent>()
             .add_message::<StartDailyChallengeRequestEvent>()
             .add_message::<StartPlayBySeedRequestEvent>()
+            .add_message::<StartDifficultyRequestEvent>()
             .add_message::<InfoToastEvent>()
             .add_message::<ToggleProfileRequestEvent>()
             .add_message::<SettingsChangedEvent>()
@@ -253,13 +276,10 @@ impl Plugin for HomePlugin {
             // runs cleanly under MinimalPlugins headless tests too.
             .add_message::<MouseWheel>()
             // `.chain()` because several systems (M-toggle, card click,
-            // cancel button, digit-key shortcut) all read the
-            // `HomeScreen` entity and may queue a despawn on it in the
-            // same tick. Bevy's parallel scheduler would otherwise let
-            // two of them run simultaneously and double-despawn the
-            // entity, panicking when the second command buffer is
-            // applied. Chaining serialises these systems and keeps the
-            // despawn deterministic.
+            // cancel button, digit-key shortcut, difficulty handlers)
+            // all read the `HomeScreen` entity and may queue a despawn
+            // on it in the same tick. Chaining serialises these systems
+            // and keeps the despawn deterministic.
             .add_systems(
                 Update,
                 (
@@ -270,6 +290,8 @@ impl Plugin for HomePlugin {
                     handle_home_cancel_button,
                     handle_home_profile_chip,
                     handle_home_draw_mode_buttons,
+                    handle_home_difficulty_toggle,
+                    handle_home_difficulty_chip_click,
                     handle_home_digit_keys,
                 )
                     .chain(),
@@ -314,6 +336,7 @@ fn spawn_home_on_launch(
     settings: Option<Res<SettingsResource>>,
     daily: Option<Res<DailyChallengeResource>>,
     font_res: Option<Res<FontResource>>,
+    mut diff_expanded: ResMut<DifficultyExpanded>,
 ) {
     if shown.0
         || !splash.is_empty()
@@ -324,6 +347,11 @@ fn spawn_home_on_launch(
         return;
     }
 
+    // Pre-expand the difficulty section when the player has a saved preference.
+    if settings.as_ref().is_some_and(|s| s.0.last_difficulty.is_some()) {
+        diff_expanded.0 = true;
+    }
+
     spawn_home_screen(
         &mut commands,
         build_home_context(
@@ -332,6 +360,7 @@ fn spawn_home_on_launch(
             settings.as_deref(),
             daily.as_deref(),
             font_res.as_deref(),
+            diff_expanded.0,
         ),
     );
     shown.0 = true;
@@ -351,6 +380,7 @@ fn toggle_home_screen(
     daily: Option<Res<DailyChallengeResource>>,
     font_res: Option<Res<FontResource>>,
     screens: Query<Entity, With<HomeScreen>>,
+    diff_expanded: Res<DifficultyExpanded>,
 ) {
     if !keys.just_pressed(KeyCode::KeyM) {
         return;
@@ -366,6 +396,7 @@ fn toggle_home_screen(
                 settings.as_deref(),
                 daily.as_deref(),
                 font_res.as_deref(),
+                diff_expanded.0,
             ),
         );
     }
@@ -381,6 +412,7 @@ fn build_home_context<'a>(
     settings: Option<&SettingsResource>,
     daily: Option<&DailyChallengeResource>,
     font_res: Option<&'a FontResource>,
+    difficulty_expanded: bool,
 ) -> HomeContext<'a> {
     let daily_today = daily.map(|d| {
         let completed_today = progress
@@ -406,6 +438,8 @@ fn build_home_context<'a>(
             .map(|s| s.0.draw_mode.clone())
             .unwrap_or(DrawMode::DrawOne),
         font_res,
+        difficulty_expanded,
+        last_difficulty: settings.and_then(|s| s.0.last_difficulty),
     }
 }
 
@@ -569,6 +603,7 @@ fn handle_home_draw_mode_buttons(
     stats: Option<Res<StatsResource>>,
     daily: Option<Res<DailyChallengeResource>>,
     font_res: Option<Res<FontResource>>,
+    diff_expanded: Res<DifficultyExpanded>,
 ) {
     if screens.is_empty() {
         return;
@@ -612,8 +647,90 @@ fn handle_home_draw_mode_buttons(
             Some(settings),
             daily.as_deref(),
             font_res.as_deref(),
+            diff_expanded.0,
         ),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Difficulty section handlers
+// ---------------------------------------------------------------------------
+
+/// Click on the "▶/▼ Difficulty" header — toggle `DifficultyExpanded` and
+/// repaint the Home modal so the chevron and chip row update. Mirrors
+/// `handle_home_draw_mode_buttons`: despawn + respawn keeps all styling in
+/// `spawn_difficulty_section` rather than scattered across mutation helpers.
+#[allow(clippy::too_many_arguments)]
+fn handle_home_difficulty_toggle(
+    mut commands: Commands,
+    toggles: Query<&Interaction, (With<HomeDifficultyToggle>, Changed<Interaction>)>,
+    screens: Query<Entity, With<HomeScreen>>,
+    mut diff_expanded: ResMut<DifficultyExpanded>,
+    progress: Option<Res<ProgressResource>>,
+    stats: Option<Res<StatsResource>>,
+    settings: Option<Res<SettingsResource>>,
+    daily: Option<Res<DailyChallengeResource>>,
+    font_res: Option<Res<FontResource>>,
+) {
+    if screens.is_empty() {
+        return;
+    }
+    if !toggles.iter().any(|i| *i == Interaction::Pressed) {
+        return;
+    }
+    diff_expanded.0 = !diff_expanded.0;
+    for entity in &screens {
+        commands.entity(entity).despawn();
+    }
+    spawn_home_screen(
+        &mut commands,
+        build_home_context(
+            progress.as_deref(),
+            stats.as_deref(),
+            settings.as_deref(),
+            daily.as_deref(),
+            font_res.as_deref(),
+            diff_expanded.0,
+        ),
+    );
+}
+
+/// Click on a difficulty tier chip — persist `last_difficulty`, fire
+/// `StartDifficultyRequestEvent`, and close the Home modal.
+#[allow(clippy::too_many_arguments)]
+fn handle_home_difficulty_chip_click(
+    mut commands: Commands,
+    chips: Query<(&Interaction, &HomeDifficultyChip), Changed<Interaction>>,
+    screens: Query<Entity, With<HomeScreen>>,
+    mut difficulty_ev: MessageWriter<StartDifficultyRequestEvent>,
+    mut settings: Option<ResMut<SettingsResource>>,
+    storage_path: Option<Res<SettingsStoragePath>>,
+    mut changed: MessageWriter<SettingsChangedEvent>,
+) {
+    if screens.is_empty() {
+        return;
+    }
+    let Some((_, chip)) = chips.iter().find(|(i, _)| **i == Interaction::Pressed) else {
+        return;
+    };
+    let level = chip.0;
+
+    if let Some(s) = settings.as_mut() {
+        s.0.last_difficulty = Some(level);
+        if let Some(p) = storage_path
+            && let Some(path) = p.0.as_deref()
+            && let Err(e) = save_settings_to(path, &s.0)
+        {
+            warn!("home: failed to persist last_difficulty: {e}");
+        }
+        changed.write(SettingsChangedEvent(s.0.clone()));
+    }
+
+    difficulty_ev.write(StartDifficultyRequestEvent { level });
+
+    for entity in &screens {
+        commands.entity(entity).despawn();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -735,6 +852,11 @@ struct HomeContext<'a> {
     daily_today: Option<DailyToday>,
     draw_mode: DrawMode,
     font_res: Option<&'a FontResource>,
+    /// Whether the difficulty section header is currently expanded.
+    difficulty_expanded: bool,
+    /// The last difficulty tier the player selected (persisted in Settings).
+    /// When `Some`, that tier's chip is highlighted.
+    last_difficulty: Option<DifficultyLevel>,
 }
 
 /// Today's daily-challenge metadata as the Home picker needs it. Only
@@ -807,6 +929,8 @@ fn spawn_home_screen(commands: &mut Commands, ctx: HomeContext<'_>) {
                     spawn_mode_card(grid, mode, &ctx);
                 }
             });
+
+            spawn_difficulty_section(body, &ctx);
         });
 
         spawn_modal_actions(card, |actions| {
@@ -968,6 +1092,101 @@ fn spawn_draw_mode_chip<M: Component>(
         .with_children(|c| {
             c.spawn((Text::new(label.to_string()), font.clone(), TextColor(fg)));
         });
+}
+
+/// Collapsible difficulty-tier section injected below the mode tile grid.
+///
+/// Structure:
+/// ```text
+/// ▶ Difficulty        ← HomeDifficultyToggle (Button, row)
+/// [Easy] [Medium] [Hard] [Expert] [GM] [Random]   ← visible only when expanded
+/// ```
+///
+/// The toggle header despawns + respawns the home screen (same pattern as
+/// the draw-mode toggle) so the chevron direction and chip row visibility
+/// update without Visibility component surgery.
+fn spawn_difficulty_section(parent: &mut ChildSpawnerCommands, ctx: &HomeContext<'_>) {
+    let font_handle = ctx.font_res.map(|f| f.0.clone()).unwrap_or_default();
+    let font_label = TextFont { font: font_handle.clone(), font_size: TYPE_BODY, ..default() };
+    let font_chip = TextFont { font: font_handle, font_size: TYPE_CAPTION, ..default() };
+
+    let chevron = if ctx.difficulty_expanded { "▼" } else { "▶" };
+
+    // Header row — click to toggle expand/collapse.
+    parent
+        .spawn((
+            HomeDifficultyToggle,
+            Button,
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: VAL_SPACE_2,
+                padding: UiRect::axes(Val::Px(0.0), VAL_SPACE_1),
+                ..default()
+            },
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Text::new(chevron),
+                font_label.clone(),
+                TextColor(TEXT_SECONDARY),
+            ));
+            row.spawn((
+                Text::new("Difficulty"),
+                font_label.clone(),
+                TextColor(TEXT_SECONDARY),
+            ));
+        });
+
+    // Tier chips — only rendered when expanded.
+    if ctx.difficulty_expanded {
+        parent
+            .spawn(Node {
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                row_gap: VAL_SPACE_2,
+                column_gap: VAL_SPACE_2,
+                width: Val::Percent(100.0),
+                ..default()
+            })
+            .with_children(|row| {
+                for level in [
+                    DifficultyLevel::Easy,
+                    DifficultyLevel::Medium,
+                    DifficultyLevel::Hard,
+                    DifficultyLevel::Expert,
+                    DifficultyLevel::Grandmaster,
+                    DifficultyLevel::Random,
+                ] {
+                    let active = ctx.last_difficulty == Some(level);
+                    let (bg, fg) = if active {
+                        (ACCENT_PRIMARY, BG_ELEVATED)
+                    } else {
+                        (BG_ELEVATED_HI, TEXT_PRIMARY)
+                    };
+                    row.spawn((
+                        HomeDifficultyChip(level),
+                        Button,
+                        Node {
+                            padding: UiRect::axes(VAL_SPACE_3, VAL_SPACE_1),
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),
+                            ..default()
+                        },
+                        BackgroundColor(bg),
+                        BorderColor::all(BORDER_SUBTLE),
+                        HighContrastBorder::with_default(BORDER_SUBTLE),
+                    ))
+                    .with_children(|c| {
+                        c.spawn((
+                            Text::new(level.label()),
+                            font_chip.clone(),
+                            TextColor(fg),
+                        ));
+                    });
+                }
+            });
+    }
 }
 
 /// Compact decimal formatter: `1234567` → `"1.2M"`, `12345` → `"12.3K"`,

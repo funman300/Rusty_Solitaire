@@ -27,8 +27,8 @@ use solitaire_data::{load_settings_from, provider_for_backend, settings_file_pat
 use solitaire_engine::{
     register_theme_asset_sources, AchievementPlugin, AnimationPlugin, AssetSourcesPlugin,
     AudioPlugin, AutoCompletePlugin, CardAnimationPlugin, CardPlugin, ChallengePlugin,
-    CursorPlugin, DailyChallengePlugin, DiagnosticsHudPlugin, FeedbackAnimPlugin, FontPlugin,
-    GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
+    CursorPlugin, DailyChallengePlugin, DiagnosticsHudPlugin, DifficultyPlugin, FeedbackAnimPlugin,
+    FontPlugin, GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
     OnboardingPlugin, PausePlugin, PlayBySeedPlugin, ProfilePlugin, ProgressPlugin,
     RadialMenuPlugin, ReplayOverlayPlugin, ReplayPlaybackPlugin, SelectionPlugin, SettingsPlugin,
     SplashPlugin, StatsPlugin, SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin,
@@ -170,6 +170,7 @@ pub fn run() {
         .add_plugins(WeeklyGoalsPlugin)
         .add_plugins(ChallengePlugin)
         .add_plugins(PlayBySeedPlugin)
+        .add_plugins(DifficultyPlugin)
         .add_plugins(TimeAttackPlugin)
         .add_plugins(HudPlugin)
         .add_plugins(HelpPlugin)

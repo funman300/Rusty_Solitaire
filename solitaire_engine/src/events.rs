@@ -179,6 +179,16 @@ pub struct StartDailyChallengeRequestEvent;
 #[derive(Message, Debug, Clone, Copy, Default)]
 pub struct StartPlayBySeedRequestEvent;
 
+/// Request to start a game at a specific difficulty tier. Fired by the
+/// difficulty section in the home overlay. The handler in `difficulty_plugin`
+/// picks a seed from the corresponding pre-verified catalog (or generates a
+/// random system-time seed for `DifficultyLevel::Random`) and writes a
+/// `NewGameRequestEvent`.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct StartDifficultyRequestEvent {
+    pub level: solitaire_core::game_state::DifficultyLevel,
+}
+
 /// Request to toggle the Stats overlay. Fired by the HUD Menu-popover
 /// "Stats" row alongside the existing `S` accelerator.
 #[derive(Message, Debug, Clone, Copy, Default)]

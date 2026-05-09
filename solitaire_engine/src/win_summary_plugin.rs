@@ -352,7 +352,7 @@ impl ScoreBreakdown {
         let no_undo_bonus = if undo_count == 0 { SCORE_NO_UNDO_BONUS } else { 0 };
         let multiplier = match mode {
             GameMode::Zen => 0.0,
-            GameMode::Classic | GameMode::Challenge | GameMode::TimeAttack => 1.0,
+            GameMode::Classic | GameMode::Challenge | GameMode::TimeAttack | GameMode::Difficulty(_) => 1.0,
         };
         Self {
             base,
@@ -423,6 +423,7 @@ fn mode_display_name(mode: GameMode) -> &'static str {
         GameMode::Zen => "Zen",
         GameMode::Challenge => "Challenge",
         GameMode::TimeAttack => "Time Attack",
+        GameMode::Difficulty(level) => level.label(),
     }
 }
 

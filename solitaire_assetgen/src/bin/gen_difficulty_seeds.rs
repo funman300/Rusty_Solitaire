@@ -1,0 +1,195 @@
+//! Generate difficulty-stratified seed catalogs for `EASY_SEEDS`, `MEDIUM_SEEDS`,
+//! `HARD_SEEDS`, `EXPERT_SEEDS`, and `GRANDMASTER_SEEDS` in
+//! `solitaire_data/src/difficulty_seeds.rs`.
+//!
+//! A seed's tier is determined by the **smallest** `SolverConfig` budget that
+//! returns `SolverResult::Winnable`. Seeds that are `Unwinnable` at any budget
+//! are discarded; `Inconclusive` at all budgets are also discarded (we only emit
+//! provably-winnable seeds).
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run -p solitaire_assetgen --bin gen_difficulty_seeds --release -- \
+//!     --start 0xD1FF0000_00000000 --per-tier 40
+//! ```
+//!
+//! Flags:
+//!   --start     Starting seed (decimal or 0x-prefixed hex, default 0xD1FF000000000000)
+//!   --per-tier  Seeds to emit per tier (default 40)
+//!   --help      Print this message
+
+use solitaire_core::game_state::DrawMode;
+use solitaire_core::solver::{try_solve, SolverConfig, SolverResult};
+
+// Budget boundaries defining each tier. A seed belongs to the lowest tier
+// whose budget proves it Winnable.
+const BUDGETS: &[(&str, u64, usize)] = &[
+    ("Easy",        1_000,   1_000),
+    ("Medium",      5_000,   5_000),
+    ("Hard",       25_000,  25_000),
+    ("Expert",    100_000, 100_000),
+    ("Grandmaster", 200_000, 200_000),
+];
+
+fn main() {
+    let mut args = std::env::args().skip(1).peekable();
+    let mut start: u64 = 0xD1FF_0000_0000_0000;
+    let mut per_tier: usize = 40;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--start" => {
+                let val = args.next().unwrap_or_else(|| {
+                    eprintln!("error: --start requires a value");
+                    std::process::exit(1);
+                });
+                start = parse_u64(&val);
+            }
+            "--per-tier" => {
+                let val = args.next().unwrap_or_else(|| {
+                    eprintln!("error: --per-tier requires a value");
+                    std::process::exit(1);
+                });
+                per_tier = val.parse().unwrap_or_else(|_| {
+                    eprintln!("error: --per-tier must be a positive integer");
+                    std::process::exit(1);
+                });
+            }
+            "--help" | "-h" => {
+                eprintln!("gen_difficulty_seeds: generate tiered seed catalogs");
+                eprintln!("  --start <seed>     starting seed (hex or decimal)");
+                eprintln!("  --per-tier <n>     seeds per tier (default 40)");
+                return;
+            }
+            other => {
+                eprintln!("error: unknown argument: {other}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if per_tier == 0 {
+        eprintln!("error: --per-tier must be > 0");
+        std::process::exit(1);
+    }
+
+    let draw_mode = DrawMode::DrawOne;
+    let num_tiers = BUDGETS.len();
+    let mut buckets: Vec<Vec<u64>> = vec![Vec::with_capacity(per_tier); num_tiers];
+    let mut tried: u64 = 0;
+    let mut seed = start;
+
+    eprintln!(
+        "gen_difficulty_seeds: finding {} seeds per tier from 0x{start:016X} (DrawOne) …",
+        per_tier
+    );
+    eprintln!(
+        "  Tiers: {}",
+        BUDGETS.iter().map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ")
+    );
+
+    while buckets.iter().any(|b| b.len() < per_tier) {
+        tried += 1;
+        'tier: for (i, &(name, move_budget, state_budget)) in BUDGETS.iter().enumerate() {
+            if buckets[i].len() >= per_tier {
+                continue;
+            }
+            let cfg = SolverConfig { move_budget, state_budget };
+            match try_solve(seed, draw_mode.clone(), &cfg) {
+                SolverResult::Winnable => {
+                    buckets[i].push(seed);
+                    eprintln!(
+                        "  [{name}  {:>3}/{}]  0x{seed:016X}  (tried {tried})",
+                        buckets[i].len(),
+                        per_tier
+                    );
+                    break 'tier; // assign to the cheapest tier that proves it winnable
+                }
+                SolverResult::Unwinnable => {
+                    // Definitely unsolvable — skip all remaining tiers.
+                    break 'tier;
+                }
+                SolverResult::Inconclusive => {
+                    // Budget exhausted without proof — try the next larger tier.
+                    // If this is the last tier, the seed is discarded (Inconclusive
+                    // at max budget means "probably but not provably winnable").
+                    if i == num_tiers - 1 {
+                        break 'tier;
+                    }
+                }
+            }
+        }
+        seed = seed.wrapping_add(1);
+    }
+
+    eprintln!("\nDone ({tried} seeds examined). Paste the blocks below into difficulty_seeds.rs:\n");
+
+    let date = current_date();
+    for (i, (tier_name, _, _)) in BUDGETS.iter().enumerate() {
+        println!(
+            "    // Generated by solitaire_assetgen::gen_difficulty_seeds \
+             (tier={tier_name}, date={date})"
+        );
+        for chunk in buckets[i].chunks(5) {
+            for s in chunk {
+                println!(
+                    "    0x{:04X}_{:04X}_{:04X}_{:04X},",
+                    (s >> 48) & 0xFFFF,
+                    (s >> 32) & 0xFFFF,
+                    (s >> 16) & 0xFFFF,
+                    s & 0xFFFF,
+                );
+            }
+        }
+        println!();
+    }
+}
+
+fn parse_u64(s: &str) -> u64 {
+    let cleaned = s.replace('_', "");
+    if let Some(hex) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).unwrap_or_else(|_| {
+            eprintln!("error: could not parse '{s}' as a hex u64");
+            std::process::exit(1);
+        })
+    } else {
+        cleaned.parse().unwrap_or_else(|_| {
+            eprintln!("error: could not parse '{s}' as a decimal u64");
+            std::process::exit(1);
+        })
+    }
+}
+
+fn current_date() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = secs / 86400;
+    let mut y = 1970u64;
+    let mut d = days;
+    loop {
+        let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
+        let days_in_year = if leap { 366 } else { 365 };
+        if d < days_in_year {
+            break;
+        }
+        d -= days_in_year;
+        y += 1;
+    }
+    let leap = (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400);
+    let month_days: [u64; 12] = [
+        31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+    let mut m = 0usize;
+    for &md in &month_days {
+        if d < md {
+            break;
+        }
+        d -= md;
+        m += 1;
+    }
+    format!("{y}-{:02}-{:02}", m + 1, d + 1)
+}

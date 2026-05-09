@@ -50,6 +50,35 @@ pub enum DrawMode {
     DrawThree,
 }
 
+/// Difficulty tier for `GameMode::Difficulty`. Controls which pre-verified seed
+/// catalog is drawn from. `Random` skips verification entirely and uses a
+/// system-time seed — deals may or may not be winnable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum DifficultyLevel {
+    #[default]
+    Easy,
+    Medium,
+    Hard,
+    Expert,
+    Grandmaster,
+    /// Unverified system-time seed — may or may not be winnable.
+    Random,
+}
+
+impl DifficultyLevel {
+    /// Short human-readable label shown in the HUD and win summary.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Easy => "Easy",
+            Self::Medium => "Medium",
+            Self::Hard => "Hard",
+            Self::Expert => "Expert",
+            Self::Grandmaster => "Grandmaster",
+            Self::Random => "Random",
+        }
+    }
+}
+
 /// Top-level game mode. Affects scoring, undo, and (eventually) timer behaviour.
 ///
 /// - `Classic`: standard Klondike scoring, undo allowed.
@@ -59,6 +88,8 @@ pub enum DrawMode {
 /// - `TimeAttack`: standard scoring + undo; the engine wraps a 10-minute
 ///   countdown around the session and auto-deals a fresh game on every win
 ///   (see `solitaire_engine::TimeAttackPlugin`).
+/// - `Difficulty(DifficultyLevel)`: seed drawn from a pre-verified per-tier catalog
+///   (or system-time for `Random`). Rules identical to Classic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameMode {
     #[default]
@@ -70,6 +101,8 @@ pub enum GameMode {
     Challenge,
     /// Play as many games as possible within 10 minutes.
     TimeAttack,
+    /// Seed drawn from a difficulty-tiered catalog; rules identical to Classic.
+    Difficulty(DifficultyLevel),
 }
 
 /// Snapshot of game state used for undo.

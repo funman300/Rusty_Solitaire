@@ -26,3 +26,7 @@ path = "src/bin/gen_art.rs"
 [[bin]]
 name = "gen_seeds"
 path = "src/bin/gen_seeds.rs"
+
+[[bin]]
+name = "gen_difficulty_seeds"
+path = "src/bin/gen_difficulty_seeds.rs"

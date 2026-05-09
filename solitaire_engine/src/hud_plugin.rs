@@ -1741,6 +1741,7 @@ fn update_hud(
                 GameMode::Zen => "ZEN".to_string(),
                 GameMode::Challenge => "CHALLENGE".to_string(),
                 GameMode::TimeAttack => "TIME ATTACK".to_string(),
+                GameMode::Difficulty(level) => level.label().to_uppercase(),
             };
         }
 

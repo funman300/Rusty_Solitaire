@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use solitaire_core::game_state::DrawMode;
+use solitaire_core::game_state::{DifficultyLevel, DrawMode};
 
 const APP_DIR_NAME: &str = "solitaire_quest";
 const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -224,6 +224,13 @@ pub struct Settings {
     /// `#[serde(default = "default_replay_move_interval_secs")]`.
     #[serde(default = "default_replay_move_interval_secs")]
     pub replay_move_interval_secs: f32,
+    /// Last difficulty tier the player selected. `None` means the player has
+    /// never used the difficulty picker. When `Some`, the difficulty section in
+    /// the home overlay opens pre-expanded and highlights this tier. Older
+    /// `settings.json` files written before this field existed deserialize
+    /// cleanly to `None` via `#[serde(default)]`.
+    #[serde(default)]
+    pub last_difficulty: Option<DifficultyLevel>,
 }
 
 fn default_draw_mode() -> DrawMode {
@@ -342,6 +349,7 @@ impl Default for Settings {
             winnable_deals_only: false,
             disable_smart_default_size: false,
             replay_move_interval_secs: default_replay_move_interval_secs(),
+            last_difficulty: None,
         }
     }
 }

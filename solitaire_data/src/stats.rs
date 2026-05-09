@@ -104,6 +104,13 @@ impl StatsExt for StatsSnapshot {
             // Time Attack uses its own session-level scoring; a per-game best
             // wouldn't compose with the other modes' single-game numbers.
             GameMode::TimeAttack => {}
+            // Difficulty games pool into the Classic best-score/time buckets per
+            // the user's stats preference.
+            GameMode::Difficulty(_) => {
+                self.classic_best_score = self.classic_best_score.max(score_u32);
+                self.classic_fastest_win_seconds =
+                    min_ignore_zero(self.classic_fastest_win_seconds, time_seconds);
+            }
         }
         self.last_modified = Utc::now();
     }
