@@ -1,66 +1,57 @@
 # Solitaire Quest — Session Handoff
 
-**Last updated:** 2026-05-08 — **v0.21.7 cut and tagged at
-`da3e542`**, working tree clean (tag pending push).
+**Last updated:** 2026-05-08 — **v0.21.8 cut and tagged at
+`c50eaf8`**, working tree clean (tag + push pending).
 
-v0.21.7 is a single-commit patch closing the last major B-2
-sub-piece: **mini-tableau preview dim layer**. A full-screen
-`ReplayTableauDimLayer` UI node (100 % × 100 %, 50 % opacity
-black) at `Z_REPLAY_DIM = 54` (one rung below the replay
-chrome at z=55) darkens the card world during replay so the
-banner and move-log panel read clearly against the scene —
-matching the mockup's "Game Peek Band at 50 % opacity" spec
-without touching `card_plugin`. 13 commits have now shipped
-across v0.21.4–v0.21.7 on the B-2 replay screen-takeover
-arc; every major sub-piece is closed.
+v0.21.8 closes the last optional polish items in the B-2
+replay screen-takeover arc: **notch-label centering** (middle
+three scrub-bar labels now centred on their notch ticks via the
+CSS `translateX(-50%)` pattern for Bevy 0.18 UI) and **WIN
+MOVE HC legibility** (lime stays lime under HC mode via the
+extended `HighContrastBackground::with_hc` constructor and a
+new `STATE_SUCCESS_HC` brighter-lime constant). The replay
+overlay arc is now fully closed with no known open items.
 
-Full v0.21.7 detail lives in `CHANGELOG.md` § [0.21.7]. This
+Full v0.21.8 detail lives in `CHANGELOG.md` § [0.21.8]. This
 file from here on focuses on what's *open* post-cut and how to
 resume.
 
 ## Status at pause
 
-- **HEAD locally:** `da3e542` (v0.21.7 commit). Tag pending —
-  push with `git tag v0.21.7 da3e542 && git push origin v0.21.7`.
-- **HEAD on origin:** `f63db76` (v0.21.6). v0.21.7 commit
-  not pushed yet; a docs-only edit will ride on top before push.
+- **HEAD locally:** `c50eaf8` (v0.21.8 commit). Docs ride on
+  top; tag + push pending:
+  `git tag v0.21.8 c50eaf8 && git push origin master && git push origin v0.21.8`.
+- **HEAD on origin:** `52407e7` (v0.21.7 docs). v0.21.8 not
+  yet pushed.
 - **Working tree:** clean. No WIP outstanding.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1275 passing / 0 failing** across the workspace.
-  Detail in `CHANGELOG.md` § [0.21.7] § Stats.
-- **Tags on origin:** `v0.9.0` through `v0.21.6`. v0.21.7
-  tag exists locally at `da3e542`; push to origin when ready.
+- **Tests:** **1276 passing / 0 failing** across the workspace.
+  Detail in `CHANGELOG.md` § [0.21.8] § Stats.
+- **Tags on origin:** `v0.9.0` through `v0.21.7`. v0.21.8
+  tag exists locally at `c50eaf8`; push to origin.
 
-## Since the v0.21.7 cut
+## Since the v0.21.8 cut
 
-One commit in flight (not yet pushed to origin): `da3e542`
-adds the full-screen tableau dim layer. CHANGELOG and
-SESSION_HANDOFF updates ride on top. Push with:
-```
-git push origin master
-git push origin v0.21.7
-```
+Two commits since the v0.21.7 tag (not yet pushed):
+- `b44d277` — notch-label centering fix
+- `c50eaf8` — WIN MOVE HC bump + HC system extension
 
-Open next-step menu (all major B-2 sub-pieces now closed):
-1. **Polish: notch label centering.** Bevy 0.18 lacks a
-   clean `translate-x: -50%` primitive so the middle three
-   scrub-bar labels sit slightly right-of-notch. Could use a
-   child Text wrapper with computed left-margin compensation.
-   Tiny commit, requires visual review.
-2. **Polish: WIN MOVE marker HC bump.** Currently uses
-   `STATE_SUCCESS` lime which stays visible under HC, but a
-   contrast bump under HC would make it even more legible
-   alongside the bumped notches. Optional.
-3. **Move Log auto-scroll** — only relevant if the panel's
-   row count grows beyond the current 5-row fixed window.
-   Currently the prev-2 / active / next-2 layout fits all
-   visible content, so auto-scroll is unneeded.
+CHANGELOG + SESSION_HANDOFF docs ride on top.
 
-Recommended order: options 1 and 2 are tiny polish commits
-that benefit from visual review. Option 3 is a non-starter
-unless the panel's row capacity grows.
+Open next-step menu (B-2 arc fully closed, no replay polish
+items remain):
+1. **APK launch verification on AVD / device** — see Phase
+   Android punch list in this file.
+2. **Phase 8 (sync)** — the biggest open arc. Local storage
+   scaffolding, self-hosted Axum server, GPGS stub.
+3. **Move Log auto-scroll** — only relevant if the panel
+   row count grows beyond the current 5-row fixed window;
+   non-starter until then.
+
+Recommended order: resume with A or C from the DECISION menu
+in the resume prompt below.
 
 ## Open punch list
 
@@ -246,18 +237,18 @@ into a v0.21.1 / v0.22.0 cut.
 ```
 You are a senior Rust + Bevy developer working on Solitaire Quest.
 Working directory: <Rusty_Solitaire clone path on this machine>.
-Branch: master. v0.21.7 is tagged at da3e542 (cut 2026-05-08,
-closes the last major B-2 sub-piece: full-screen tableau dim
-layer — 50 % opacity black UI scrim at z=54 that darkens the
-card world during replay so the chrome reads clearly above it).
-v0.21.6 stays at f63db76, v0.21.5 at a2432df, v0.21.4 at
+Branch: master. v0.21.8 is tagged at c50eaf8 (cut 2026-05-08,
+replay-overlay polish: scrub-bar notch-label centering + WIN
+MOVE HC legibility bump via extended HighContrastBackground::
+with_hc + new STATE_SUCCESS_HC constant). v0.21.7 stays at
+da3e542, v0.21.6 at f63db76, v0.21.5 at a2432df, v0.21.4 at
 23ff62c, v0.21.3 at 3d92a91, v0.21.2 at f23df3b, v0.21.1 at
 daa655a, v0.21.0 at 04f9bf9. Working tree clean (CHANGELOG +
-SESSION_HANDOFF docs ride on top of da3e542; push pending).
-See CHANGELOG.md § [0.21.7] for full detail.
+SESSION_HANDOFF docs ride on top; push pending).
+See CHANGELOG.md § [0.21.8] for full detail.
 
 State: HEAD locally — see `git rev-parse HEAD`. Workspace
-tests: 1275 passing / 0 failing. Clippy clean.
+tests: 1276 passing / 0 failing. Clippy clean.
 
 READ FIRST (in order, before doing anything):
   1. SESSION_HANDOFF.md  — this file
@@ -281,15 +272,11 @@ DECISION TO ASK THE PLAYER FIRST:
      tests can't catch. Likely surfaces JNI ClipboardManager
      and Android Keystore stubs that need real bridges. Larger
      scope; needs an Android device or emulator running.
-  B. Replay-overlay polish (B-2 arc fully closed in v0.21.7).
-     All 13 planned sub-pieces shipped. Remaining items are
-     minor polish: (a) scrub-bar notch-label centering — middle
-     three labels sit slightly right-of-notch due to Bevy 0.18
-     lacking `translate-x: -50%`; tiny commit, needs visual
-     review. (b) WIN MOVE marker HC contrast bump — optional
-     luminance boost under HC mode. Both are single commits
-     requiring visual review; recommend treating as a v0.21.8
-     polish pass after manual testing.
+  B. Replay-overlay arc — **fully closed** as of v0.21.8 (15
+     commits across v0.21.4–v0.21.8). Notch-label centering,
+     WIN MOVE HC legibility, and the HighContrastBackground
+     extension all shipped. No known replay-overlay items
+     remain open.
   C. Phase 8 (sync) — local storage scaffolding, self-hosted
      Axum server, `SolitaireServerClient` impl, GPGS stub
      wired into Settings. The biggest open arc by scope; rolls

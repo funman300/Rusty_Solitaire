@@ -6,8 +6,56 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-No threads in flight. v0.21.7 cut on 2026-05-08; CHANGELOG accumulates
+No threads in flight. v0.21.8 cut on 2026-05-08; CHANGELOG accumulates
 the next cycle here.
+
+## [0.21.8] — 2026-05-08
+
+Patch release for replay-overlay polish. Through-line:
+**notch-label centering + WIN MOVE HC legibility + HC system extension**.
+All three items were "optional polish" flagged in the v0.21.7 handoff;
+all three ship in two commits.
+
+### Added
+
+- **`STATE_SUCCESS_HC` constant** (`c50eaf8`). Brighter lime
+  (`#c8e862`, L≈0.73) in `ui_theme` for use wherever the
+  standard `STATE_SUCCESS` (`#acc267`, L≈0.51) needs extra
+  luminance under HC mode. Sits above the bumped notch ticks
+  (`BORDER_SUBTLE_HC` gray, L≈0.60) so a WIN MOVE marker at
+  this colour is unambiguous.
+- **`HighContrastBackground::with_hc(default, hc)` constructor**
+  (`c50eaf8`). Extends `HighContrastBackground` with an
+  `hc_color: Color` field (default = `BORDER_SUBTLE_HC` via
+  `with_default()`). `update_high_contrast_backgrounds` now
+  reads `marker.hc_color` instead of the hardcoded constant —
+  backwards-compatible; all existing `with_default()` usages
+  continue to bump to gray.
+- **WIN MOVE scrub-bar marker HC bump** (`c50eaf8`). Marker
+  now carries `HighContrastBackground::with_hc(STATE_SUCCESS,
+  STATE_SUCCESS_HC)` so the lime stays lime under HC (brighter
+  lime rather than gray). Pin test locks both the default and
+  HC colour fields on the spawned entity.
+
+### Fixed
+
+- **Scrub-bar notch-label centering** (`b44d277`). Middle
+  three labels ("25%", "50%", "75%") previously had their
+  left edge at the notch; now their text centre coincides
+  with the notch tick. Implemented using the CSS
+  `translateX(-50%)` pattern for Bevy 0.18 UI: a fixed
+  `SCRUB_LABEL_CENTER_WIDTH = 36 px` container with
+  `margin.left = -18 px` is placed at `left: Percent(pct)`,
+  and `Justify::Center` centres the text within it. Endpoint
+  labels ("0%", "100%") keep their flush-left / flush-right
+  anchoring. `with_default()` remains one-argument.
+
+### Stats
+
+- Tests: 1276 passing / 0 failing (engine: 831)
+- Clippy: clean
+- Crates touched: `solitaire_engine` (replay_overlay.rs,
+  ui_theme.rs, settings_plugin.rs)
 
 ## [0.21.7] — 2026-05-08
 
