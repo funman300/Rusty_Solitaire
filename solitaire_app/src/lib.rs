@@ -116,6 +116,9 @@ pub fn run() {
                         // small enough that a few stray dropped frames from
                         // disabling vsync are imperceptible.
                         present_mode: PresentMode::AutoNoVsync,
+                        // Android windows always fill the screen; max_width/max_height
+                        // default to 0.0, which panics Bevy's clamp when min > max.
+                        #[cfg(not(target_os = "android"))]
                         resize_constraints: bevy::window::WindowResizeConstraints {
                             min_width: 800.0,
                             min_height: 600.0,
@@ -195,6 +198,8 @@ pub fn run() {
     // every fresh launch can flip `disable_smart_default_size` in
     // Settings to opt out. The flag is checked once at startup; a
     // mid-session change applies on the next launch.
+    // Android windows are always full-screen; the OS controls sizing.
+    #[cfg(not(target_os = "android"))]
     if !had_saved_geometry && !settings.disable_smart_default_size {
         app.add_systems(Update, apply_smart_default_window_size);
     }
@@ -333,6 +338,20 @@ fn set_window_icon(
     };
     window_wrapper.set_window_icon(Some(icon));
     *applied = true;
+}
+
+/// Android entry point called by NativeActivity after dlopen-ing the `.so`.
+/// Sets the `AndroidApp` handle that Bevy's winit backend reads before
+/// constructing the event loop, then delegates to [`run`].
+///
+/// The `#[bevy_main]` proc-macro would generate the same code but only
+/// works on a function named `main`; our shared entry point is `run`, so
+/// we emit the equivalent expansion manually.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+fn android_main(android_app: bevy::android::android_activity::AndroidApp) {
+    let _ = bevy::android::ANDROID_APP.set(android_app);
+    run();
 }
 
 /// Wraps the default panic hook with one that also appends a crash log
