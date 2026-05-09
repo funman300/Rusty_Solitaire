@@ -105,6 +105,21 @@ const SCRUB_LABEL_ROW_HEIGHT: f32 = 16.0;
 /// (12 px) + 4 px breathing room.
 const KEYBIND_FOOTER_HEIGHT: f32 = 16.0;
 
+/// Fixed pixel width of the centred scrub-bar notch-label container.
+/// Wide enough to hold the widest label ("100%" at 4 chars) while
+/// narrower than the 25 % gap between adjacent notches (≈ banner_w
+/// × 0.25; on a 320 px banner that's 80 px). A 36 px container
+/// leaves ≥ 44 px of clearance on each side at the narrowest common
+/// screen width.
+///
+/// Container width drives the `margin.left = -width / 2` centering
+/// trick: the container's left edge is placed at `left: Percent(pct)`
+/// and then shifted left by half its own width, so the container's
+/// centre coincides with the notch line. `Justify::Center` then
+/// renders the text centred within the container. This is the
+/// CSS `translateX(-50%)` pattern adapted for Bevy 0.18 UI.
+const SCRUB_LABEL_CENTER_WIDTH: f32 = 36.0;
+
 /// How long a held arrow key waits before firing the next repeat
 /// step. 100 ms = 10 steps/sec — fast enough to scrub through a
 /// hundred-move replay in ~10 seconds while held, slow enough that
@@ -822,45 +837,63 @@ fn spawn_overlay(
                         labels.iter().zip(positions.iter()).enumerate()
                     {
                         // Endpoints flush to the row's edges; middle
-                        // three labels anchor at their percentage.
-                        // `i == 0` → flush left (`left: 0`), so the
-                        // "0%" caption doesn't get clipped at the
-                        // left edge. `i == last` → flush right
-                        // (`right: 0`) so "100%" doesn't overflow
-                        // the banner. Bevy 0.18 UI has no clean
-                        // CSS-style `translate-x: -50%` centering,
-                        // so the middle three labels sit slightly
-                        // right-of-notch — visually subtle at this
-                        // font size; explicit polish target if
-                        // anyone notices.
-                        let mut node = Node {
-                            position_type: PositionType::Absolute,
-                            top: Val::Px(2.0),
-                            ..default()
-                        };
-                        if i == 0 {
-                            node.left = Val::Px(0.0);
+                        // three labels use the `translateX(-50%)`
+                        // pattern for Bevy 0.18 UI: a fixed-width
+                        // container is placed at `left: Percent(pct)`
+                        // then shifted left by half its own width via
+                        // `margin.left: Px(-SCRUB_LABEL_CENTER_WIDTH/2)`.
+                        // `Justify::Center` renders the text centred
+                        // within the container so the text's visual
+                        // centre coincides with the notch line.
+                        let (node, justify) = if i == 0 {
+                            (
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(2.0),
+                                    left: Val::Px(0.0),
+                                    ..default()
+                                },
+                                Justify::Left,
+                            )
                         } else if i == labels.len() - 1 {
-                            node.right = Val::Px(0.0);
+                            (
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(2.0),
+                                    right: Val::Px(0.0),
+                                    ..default()
+                                },
+                                Justify::Right,
+                            )
                         } else {
-                            node.left = Val::Percent(*pct);
-                        }
+                            (
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(2.0),
+                                    left: Val::Percent(*pct),
+                                    width: Val::Px(SCRUB_LABEL_CENTER_WIDTH),
+                                    margin: UiRect {
+                                        left: Val::Px(-SCRUB_LABEL_CENTER_WIDTH / 2.0),
+                                        ..default()
+                                    },
+                                    ..default()
+                                },
+                                Justify::Center,
+                            )
+                        };
                         row.spawn((
                             ReplayOverlayScrubNotchLabel,
                             node,
                             Text::new(*label),
+                            TextLayout::new_with_justify(justify),
                             TextFont {
                                 font: font_handle_for_labels.clone(),
                                 font_size: TYPE_CAPTION,
                                 ..default()
                             },
-                            // The mockup's `text-outline` (BORDER_SUBTLE)
-                            // would match the notches but reads as too
-                            // low-contrast against `BG_ELEVATED_HI` for
-                            // the labels to actually be legible at 12 px.
                             // TEXT_SECONDARY keeps the subdued visual
                             // hierarchy (caption, not headline) while
-                            // staying readable.
+                            // staying readable against BG_ELEVATED_HI.
                             TextColor(TEXT_SECONDARY),
                         ));
                     }
