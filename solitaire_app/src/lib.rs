@@ -18,9 +18,9 @@ use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
-use bevy::window::{
-    Monitor, MonitorSelection, PresentMode, PrimaryMonitor, PrimaryWindow, WindowPosition,
-};
+use bevy::window::{MonitorSelection, PresentMode, WindowPosition};
+#[cfg(not(target_os = "android"))]
+use bevy::window::{Monitor, PrimaryMonitor, PrimaryWindow};
 #[cfg(not(target_os = "android"))]
 use bevy::winit::WinitWindows;
 use solitaire_data::{load_settings_from, provider_for_backend, settings_file_path, Settings};
