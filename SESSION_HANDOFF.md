@@ -1,7 +1,7 @@
 # Solitaire Quest — Session Handoff
 
 **Last updated:** 2026-05-08 — **v0.21.8 tagged at `c50eaf8`**;
-seven post-cut commits on master. Push pending.
+nine post-cut commits on master. Push pending.
 
 v0.21.8 closes the last optional polish items in the B-2
 replay screen-takeover arc: **notch-label centering** (middle
@@ -18,7 +18,7 @@ resume.
 
 ## Status at pause
 
-- **HEAD locally:** `45436d0` (handle_fullscreen Android gate).
+- **HEAD locally:** `f281425` (Android Keystore JNI).
   Docs ride on top; push pending.
 - **HEAD on origin:** `395a322` (double-tap commit — last pushed).
 - **Working tree:** clean (docs uncommitted). No WIP outstanding.
@@ -42,6 +42,8 @@ Seven commits since the v0.21.8 tag:
 - `0cb1587` — Play-by-Seed dialog + HomeMode card
 - `2062bd0` — 75 new challenge seeds + gen_seeds binary
 - `45436d0` — gate handle_fullscreen to non-Android
+- `2c822ba` — JNI clipboard bridge for Android Stats share-link
+- `f281425` — Android Keystore AES-GCM token storage via JNI
 
 CHANGELOG + SESSION_HANDOFF docs ride on top; push pending.
 
@@ -77,12 +79,20 @@ Open next-step menu:
   `handle_fullscreen` and its `MonitorSelection`/`WindowMode`
   imports are `#[cfg(not(target_os = "android"))]`-gated. The
   `add_systems` call is a separate statement (not mid-chain).
-- **JNI ClipboardManager bridge.** Replaces the Android stub for
-  the Stats "Copy share link" toast. `arboard` doesn't ship an
-  Android backend; small custom JNI call.
-- **Android Keystore for credentials.** `keyring` is target-gated
-  to a stub returning `KeychainUnavailable`; replace with Android
-  Keystore via JNI when sync auth ships on mobile.
+- *JNI ClipboardManager bridge — closed 2026-05-08 by `2c822ba`.*
+  `android_clipboard::set_text(url)` calls `ClipboardManager` via
+  JNI. Stats share-link button now writes to the clipboard with a
+  "Copied: {url}" toast; falls back to "Share link: {url}" on JNI
+  error. Requires AVD functional test (see verification steps in
+  the approved plan).
+- *Android Keystore for credentials — closed 2026-05-08 by `f281425`.*
+  `android_keystore` module: AES-256/GCM/NoPadding device-bound key,
+  tokens serialised to JSON and stored atomically at
+  `{data_dir}/auth_tokens.bin` as `[12-byte IV][ciphertext+tag]`.
+  `auth_tokens.rs` Android stubs now delegate to it. Key
+  invalidation (biometric reset) → `TokenError::KeychainUnavailable`.
+  Requires AVD functional test before Phase 8 sync goes live on
+  Android.
 - **Cosmetic `cargo apk build --lib` workaround.** Post-sign
   panic doesn't affect the APK on disk but produces noisy stderr.
   Either upstream a cargo-apk fix or document `--lib` as

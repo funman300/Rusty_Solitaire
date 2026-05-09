@@ -10,6 +10,8 @@ project follows [Semantic Versioning](https://semver.org/).
 **`0cb1587`** — Play-by-Seed dialog (2026-05-08).
 **`2062bd0`** — 75 new challenge seeds + gen_seeds binary (2026-05-08).
 **`45436d0`** — gate handle_fullscreen to non-Android (2026-05-08).
+**`2c822ba`** — JNI clipboard bridge for Android Stats share-link (2026-05-08).
+**`f281425`** — Android Keystore AES-GCM token storage via JNI (2026-05-08).
 See [0.21.9] for the committed detail once cut.
 
 ## [0.21.9] — pending cut
