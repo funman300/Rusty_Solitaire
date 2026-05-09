@@ -35,14 +35,14 @@ resume.
 - **`artwork/` directory:** still untracked. Intentional.
 - **Build:** `cargo clippy --workspace --all-targets -- -D warnings`
   clean.
-- **Tests:** **1250 total / 1249 passing / 1 pre-existing
-  time-dependent flake** across the workspace. The flake is
-  `daily_challenge_plugin::tests::check_system_fires_warning_event_only_once_per_day`
-  — fails when wall-clock UTC is within 30 minutes of midnight
-  (the daily-expiry warning window the test asserts against).
-  Verified pre-existing by stash-and-retest before each commit
-  this cycle. Will pass deterministically outside the trigger
-  window. Detail in `CHANGELOG.md` § [0.21.5] § Stats.
+- **Tests:** **1254 passing / 0 failing** across the workspace
+  (1250 in v0.21.5 + 2 from `d3cb1a5`'s HC-marker tests + 2
+  from `2e25476`'s continuous-scrub tests). The
+  time-dependent `daily_challenge` flake noted in v0.21.5's
+  CHANGELOG passes again (UTC clock has moved past the
+  trigger window). Detail in `CHANGELOG.md` § [0.21.5] § Stats
+  for the v0.21.5 baseline; post-cut delta tracked in this
+  file's Since-cut log.
 - **Tags on origin:** `v0.9.0` through `v0.21.5`. v0.21.5 is on
   `a2432df`; v0.21.4 stays on `23ff62c`; v0.21.3 stays on
   `3d92a91`; v0.21.2 stays on `f23df3b`; v0.21.1 stays on
@@ -51,29 +51,51 @@ resume.
 
 ## Since the v0.21.5 cut
 
-No threads in flight. Working tree clean as of 2026-05-08. New
-work since the cut would land here as commit narratives; for
-the v0.21.5 contents themselves, see `CHANGELOG.md` § [0.21.5].
+- **`d3cb1a5` — `feat(replay): HC-mode coverage for scrub
+  track + notches`.** Adds a parallel primitive to ui_theme
+  (`HighContrastBackground` marker carrying `default_color`)
+  and a paint system in settings_plugin
+  (`update_high_contrast_backgrounds`) that mirrors the
+  existing border-marker pattern but targets `BackgroundColor`
+  instead of `BorderColor`. Tags the 1 px scrub track Node and
+  all five quarter-mark notch ticks with the new marker so
+  they bump from `BORDER_SUBTLE` (#505050) → `BORDER_SUBTLE_HC`
+  (#a0a0a0) under HC mode. Scrub fill (ACCENT_PRIMARY) and
+  WIN MOVE marker (STATE_SUCCESS) don't get the marker —
+  accent and state colours are already saturated. 2 new tests;
+  1250 → 1252.
+- **`2e25476` — `feat(replay): continuous scrub on key-held
+  arrow keys`.** Holding ← or → now triggers continuous step
+  at 100 ms cadence (10 steps/sec) — matches the mockup's
+  `[← →] scrub` terminology while keeping single-press =
+  single-step semantics. Per-key accumulators in a new
+  `ReplayScrubKeyHold` resource; `just_pressed` events bypass
+  the accumulator and fire immediately. Release resets to 0
+  so the next fresh press fires immediately rather than at
+  half-interval. Footer text unchanged (`[← →] step`) —
+  held-key scrub is a discoverable enhancement to the same
+  keybind, not a new keybind. 2 new tests using
+  `TimeUpdateStrategy::ManualDuration`; 1252 → 1254.
 
-Open next-step menu (B-2 keyboard accelerator coverage is now
-complete; banner geometry is mutable):
-1. **HC-mode coverage for the scrub-track / notch ticks /
-   WIN MOVE marker.** These render via `BackgroundColor` (not
-   `BorderColor`) so `HighContrastBorder` doesn't apply.
-   Pattern would mirror `radial_menu::radial_rim_outline` —
-   per-frame paint reading `Settings::high_contrast_mode`.
-   Smallest next commit.
-2. **Continuous scrub on key-held ← / →** instead of
-   single-move step. Needs a key-held event source (or
-   accumulator timer in the keyboard handler). Medium scope;
-   matches the mockup's `[← →] scrub` terminology.
-3. **Move-log scroller / mini-tableau preview** — both need a
-   much larger banner-height grow (effectively the takeover
+Open next-step menu (B-2 keyboard accelerator coverage +
+accessibility + scrub UX are all complete):
+1. **Move-log scroller / mini-tableau preview** — both need
+   a much larger banner-height grow (effectively the takeover
    container itself). Multi-session arcs that close B-2.
+   Mockup at `docs/ui-mockups/replay-overlay-mobile.html`.
+2. **Polish: notch label centering.** Bevy 0.18 lacks a clean
+   `translate-x: -50%` primitive so middle three labels sit
+   slightly right-of-notch. Could use a child Text wrapper
+   with computed left-margin compensation. Tiny commit.
+3. **Polish: WIN MOVE marker HC bump.** Currently the marker
+   uses `STATE_SUCCESS` lime which stays visible under HC,
+   but a slight saturation / contrast bump under HC would
+   make the marker even more legible alongside the bumped
+   notches. Optional.
 
-Recommended order: option 1 (HC paint for decorative pieces)
-keeps the cadence small after a release cut. Option 3 is the
-arc that closes B-2 once enough cycle has passed since v0.21.5.
+Recommended order: option 2 (notch label centering) is the
+smallest concrete next-step. Option 1 is the multi-session
+arc that closes B-2 — natural place to start a fresh session.
 
 ## Open punch list
 
