@@ -28,6 +28,10 @@ keyring-core   = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni            = { workspace = true }
+# android_keystore.rs uses bevy::android::ANDROID_APP to obtain the
+# process-wide JavaVM handle for JNI. Must be listed here so the
+# symbol resolves when cross-compiling for Android targets.
+bevy           = { workspace = true }
 
 [dev-dependencies]
 solitaire_server = { path = "../solitaire_server" }
