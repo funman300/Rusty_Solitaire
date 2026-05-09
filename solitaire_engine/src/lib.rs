@@ -1,5 +1,7 @@
 //! Bevy integration layer for Solitaire Quest.
 
+#[cfg(target_os = "android")]
+pub mod android_clipboard;
 pub mod assets;
 pub mod card_animation;
 pub mod achievement_plugin;
@@ -12,6 +14,7 @@ pub mod feedback_anim_plugin;
 pub mod challenge_plugin;
 pub mod cursor_plugin;
 pub mod daily_challenge_plugin;
+pub mod difficulty_plugin;
 pub mod diagnostics_hud;
 pub mod events;
 pub mod game_plugin;
@@ -93,11 +96,13 @@ pub use events::{
     ForfeitEvent, ForfeitRequestEvent, FoundationCompletedEvent, GameWonEvent, HelpRequestEvent,
     HintVisualEvent, InfoToastEvent, ManualSyncRequestEvent, MoveRejectedEvent, MoveRequestEvent,
     NewGameRequestEvent, PauseRequestEvent, StartChallengeRequestEvent,
-    StartDailyChallengeRequestEvent, StartPlayBySeedRequestEvent, StartTimeAttackRequestEvent,
-    StartZenRequestEvent, StateChangedEvent, SyncCompleteEvent, ToggleAchievementsRequestEvent,
-    ToggleLeaderboardRequestEvent, ToggleProfileRequestEvent, ToggleSettingsRequestEvent,
-    ToggleStatsRequestEvent, UndoRequestEvent, WinStreakMilestoneEvent, XpAwardedEvent,
+    StartDailyChallengeRequestEvent, StartDifficultyRequestEvent, StartPlayBySeedRequestEvent,
+    StartTimeAttackRequestEvent, StartZenRequestEvent, StateChangedEvent, SyncCompleteEvent,
+    ToggleAchievementsRequestEvent, ToggleLeaderboardRequestEvent, ToggleProfileRequestEvent,
+    ToggleSettingsRequestEvent, ToggleStatsRequestEvent, UndoRequestEvent,
+    WinStreakMilestoneEvent, XpAwardedEvent,
 };
+pub use difficulty_plugin::{DifficultyIndexResource, DifficultyPlugin};
 pub use play_by_seed_plugin::{PlayBySeedPlugin, PlayBySeedScreen};
 pub use game_plugin::{
     ConfirmNewGameScreen, GameMutation, GameOverScreen, GamePlugin, GameStatePath, RecordingReplay,

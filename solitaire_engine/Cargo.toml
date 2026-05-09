@@ -32,6 +32,9 @@ zip            = { workspace = true }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard        = { workspace = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni            = { workspace = true }
+
 [dev-dependencies]
 async-trait = { workspace = true }
 tempfile    = { workspace = true }

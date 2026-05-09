@@ -361,9 +361,13 @@ fn handle_copy_share_link_button(
     }
     #[cfg(target_os = "android")]
     {
-        toast.write(InfoToastEvent(format!(
-            "Share link: {url}"
-        )));
+        match crate::android_clipboard::set_text(&url) {
+            Ok(()) => toast.write(InfoToastEvent(format!("Copied: {url}"))),
+            Err(e) => {
+                warn!("android clipboard failed: {e}");
+                toast.write(InfoToastEvent(format!("Share link: {url}")));
+            }
+        }
     }
 }
 
