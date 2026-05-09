@@ -98,14 +98,14 @@ const SCRUB_REPEAT_INTERVAL_SECS: f32 = 0.1;
 
 /// Total height of the bottom-edge Move Log panel in pixels.
 /// Sized for: header (`TYPE_CAPTION` 11) + 2 prev rows + active
-/// row (`TYPE_BODY` 14 each = 42) + row gaps (~6) + vertical
-/// padding (~16) ≈ 75; round to 84 for headroom.
+/// row + 2 next rows (`TYPE_BODY` 14 each = 70) + row gaps (~10)
+/// + vertical padding (~16) ≈ 107; round to 112.
 ///
 /// Growth history:
 /// - 56 in the move-log-panel-init commit (header + active row).
-/// - 56 → 84 in the move-log-prev-rows commit to make room for
-///   2 prev rows above the active row.
-const MOVE_LOG_PANEL_HEIGHT: f32 = 84.0;
+/// - 56 → 84 in the move-log-prev-rows commit (+ 2 prev rows).
+/// - 84 → 112 in the move-log-next-rows commit (+ 2 next rows).
+const MOVE_LOG_PANEL_HEIGHT: f32 = 112.0;
 
 /// Number of "previous move" rows rendered above the active row
 /// in the move-log panel. Tuned to fit the panel height comfortably
@@ -113,6 +113,14 @@ const MOVE_LOG_PANEL_HEIGHT: f32 = 84.0;
 /// row plus this many prev rows gives the player a 3-row window
 /// onto recent move history.
 const MOVE_LOG_PREV_ROWS: usize = 2;
+
+/// Number of "next move" rows rendered below the active row.
+/// Same logic as [`MOVE_LOG_PREV_ROWS`] — symmetric window
+/// around the active row showing about-to-apply moves. For a
+/// post-game replay these aren't spoilers (the game is already
+/// won); for a future "live preview during play" use case the
+/// preview-shape might need rethinking.
+const MOVE_LOG_NEXT_ROWS: usize = 2;
 
 /// Background colour alpha for the banner. `BG_ELEVATED_HI` at this alpha
 /// reads as a clear "this is a UI strip" callout while still letting the
@@ -336,6 +344,22 @@ pub struct ReplayOverlayMoveLogPrevRow {
     pub offset: u8,
 }
 
+/// Marker on a "next move" row below the active row. `offset`
+/// is the 1-based distance forward from the active row:
+/// `offset = 1` is the move that will apply next
+/// (`replay.moves[cursor]`, displayed as `cursor + 1`),
+/// `offset = 2` is the one after that, and so on. Up to
+/// [`MOVE_LOG_NEXT_ROWS`] rows render below the active row.
+///
+/// Empty text when there isn't enough remaining replay
+/// (`cursor + offset - 1 >= moves.len()`, e.g. cursor=99 of
+/// a 100-move replay shows offset 1 but offset 2 stays empty).
+#[derive(Component, Debug)]
+pub struct ReplayOverlayMoveLogNextRow {
+    /// Distance forward from the active row (1-based).
+    pub offset: u8,
+}
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -382,6 +406,7 @@ impl Plugin for ReplayOverlayPlugin {
                     update_move_log_header,
                     update_move_log_active_row,
                     update_move_log_prev_rows,
+                    update_move_log_next_rows,
                     update_pause_button_label,
                     handle_pause_button,
                     handle_step_button,
@@ -965,13 +990,31 @@ fn spawn_overlay(
                         ReplayOverlayMoveLogActiveRow,
                         Text::new(format_active_move_row(state)),
                         TextFont {
-                            font: font_handle_for_move_log,
+                            font: font_handle_for_move_log.clone(),
                             font_size: TYPE_BODY,
                             ..default()
                         },
                         TextColor(TEXT_PRIMARY_HC),
                     ));
                 });
+            // Next rows — render below the active row in display
+            // order (offset 1 directly below active, then offset
+            // 2). Same TEXT_SECONDARY de-emphasis as prev rows so
+            // the active row stays the focal point. Empty text
+            // late in the replay (when cursor + offset exceeds
+            // moves.len()) — the panel under-fills gracefully.
+            for offset in 1..=MOVE_LOG_NEXT_ROWS as u8 {
+                panel.spawn((
+                    ReplayOverlayMoveLogNextRow { offset },
+                    Text::new(format_kth_next_row(state, offset as usize)),
+                    TextFont {
+                        font: font_handle_for_move_log.clone(),
+                        font_size: TYPE_BODY,
+                        ..default()
+                    },
+                    TextColor(TEXT_SECONDARY),
+                ));
+            }
         });
 }
 
@@ -1226,6 +1269,25 @@ fn update_move_log_prev_rows(
     }
 }
 
+/// Repaints every "next move" row text whenever
+/// [`ReplayPlaybackState`] changes. Symmetric to the prev-row
+/// updater but feeds [`format_kth_next_row`]. Rows where
+/// `cursor + offset > moves.len()` paint as empty — the panel
+/// gracefully under-fills late in a replay (e.g. final moves)
+/// without spurious out-of-range text.
+fn update_move_log_next_rows(
+    state: Res<ReplayPlaybackState>,
+    mut q: Query<(&ReplayOverlayMoveLogNextRow, &mut Text)>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    for (row, mut text) in &mut q {
+        let label = format_kth_next_row(&state, row.offset as usize);
+        **text = label;
+    }
+}
+
 /// Repaints the bottom-edge accent scrub fill to mirror cursor progress.
 /// Same change-detection guard as the text updaters — the overlay
 /// already early-exits when nothing moved, so an idle replay leaves the
@@ -1351,6 +1413,33 @@ fn format_kth_recent_row(state: &ReplayPlaybackState, k: usize) -> String {
         return String::new();
     };
     let display_idx = *cursor - k + 1;
+    format!("{} \u{2502} {}", display_idx, format_move_body(m))
+}
+
+/// Pure helper — formats the kth-NEXT move's row text. `k = 1`
+/// is the move that will apply next (`replay.moves[cursor]`,
+/// displayed as `cursor + 1`); `k = 2` is the move after that,
+/// and so on.
+///
+/// Returns the empty string in any of these cases:
+/// - State isn't `Playing` (no replay attached).
+/// - `k == 0` (degenerate; the active is k=1 of *recent*, not
+///   *next*).
+/// - `cursor + k - 1 >= moves.len()` (not enough remaining
+///   replay — late in the move list, the trailing next rows
+///   stay empty).
+fn format_kth_next_row(state: &ReplayPlaybackState, k: usize) -> String {
+    let ReplayPlaybackState::Playing { replay, cursor, .. } = state else {
+        return String::new();
+    };
+    if k == 0 {
+        return String::new();
+    }
+    let zero_idx = *cursor + k - 1;
+    let Some(m) = replay.moves.get(zero_idx) else {
+        return String::new();
+    };
+    let display_idx = *cursor + k;
     format!("{} \u{2502} {}", display_idx, format_move_body(m))
 }
 
@@ -2970,6 +3059,134 @@ mod tests {
         assert_eq!(
             move_log_prev_row_text_at_offset(&mut app, 2),
             "3 \u{2502} stock cycle",
+        );
+    }
+
+    fn move_log_next_row_count(app: &mut App) -> usize {
+        app.world_mut()
+            .query::<&ReplayOverlayMoveLogNextRow>()
+            .iter(app.world())
+            .count()
+    }
+
+    fn move_log_next_row_text_at_offset(app: &mut App, offset: u8) -> String {
+        let world = app.world_mut();
+        let mut q = world.query::<(&ReplayOverlayMoveLogNextRow, &Text)>();
+        for (row, text) in q.iter(world) {
+            if row.offset == offset {
+                return text.0.clone();
+            }
+        }
+        String::new()
+    }
+
+    /// `format_kth_next_row` covers the about-to-apply preview
+    /// for `k=1` (the very next move) and beyond. Pins the
+    /// "k=0 returns empty" + "out-of-range returns empty" cases
+    /// alongside in-range correctness.
+    #[test]
+    fn format_kth_next_row_handles_in_range_and_out_of_range() {
+        let state_at_three = ReplayPlaybackState::Playing {
+            replay: synthetic_replay(10),
+            cursor: 3,
+            secs_to_next: 0.5,
+            paused: false,
+        };
+        // k=1 → moves[3], display=4
+        assert_eq!(
+            format_kth_next_row(&state_at_three, 1),
+            "4 \u{2502} stock cycle",
+        );
+        // k=2 → moves[4], display=5
+        assert_eq!(
+            format_kth_next_row(&state_at_three, 2),
+            "5 \u{2502} stock cycle",
+        );
+        // k=8 — moves[10], out of range for a 10-move replay.
+        assert_eq!(
+            format_kth_next_row(&state_at_three, 8),
+            "",
+            "k beyond moves.len() must return empty (panel under-fills late in replay)",
+        );
+        // k=0 — degenerate.
+        assert_eq!(format_kth_next_row(&state_at_three, 0), "");
+    }
+
+    /// `MOVE_LOG_NEXT_ROWS` next rows spawn with the panel —
+    /// one per offset 1..=N. Cardinality matches the constant.
+    #[test]
+    fn move_log_next_rows_spawn_with_panel() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 3,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_next_row_count(&mut app),
+            MOVE_LOG_NEXT_ROWS,
+            "exactly MOVE_LOG_NEXT_ROWS next rows must spawn with the panel",
+        );
+    }
+
+    /// Each next row's text at spawn time matches the helper
+    /// output for its offset.
+    #[test]
+    fn move_log_next_rows_paint_helper_strings_at_spawn() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 5,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+
+        // offset 1 → moves[5], display=6
+        assert_eq!(
+            move_log_next_row_text_at_offset(&mut app, 1),
+            "6 \u{2502} stock cycle",
+        );
+        // offset 2 → moves[6], display=7
+        assert_eq!(
+            move_log_next_row_text_at_offset(&mut app, 2),
+            "7 \u{2502} stock cycle",
+        );
+    }
+
+    /// Next rows under-fill late in the replay. With a 10-move
+    /// replay at cursor=9: offset 1 → moves[9] (display 10),
+    /// offset 2 → moves[10] (out of range, empty).
+    #[test]
+    fn move_log_next_rows_underfill_at_replay_end() {
+        let mut app = headless_app();
+        set_state(
+            &mut app,
+            ReplayPlaybackState::Playing {
+                replay: synthetic_replay(10),
+                cursor: 9,
+                secs_to_next: 0.5,
+                paused: false,
+            },
+        );
+        app.update();
+        assert_eq!(
+            move_log_next_row_text_at_offset(&mut app, 1),
+            "10 \u{2502} stock cycle",
+            "offset 1 (k=1) must populate when cursor < moves.len()",
+        );
+        assert_eq!(
+            move_log_next_row_text_at_offset(&mut app, 2),
+            "",
+            "offset 2 (k=2) must be empty when cursor + k - 1 >= moves.len()",
         );
     }
 
