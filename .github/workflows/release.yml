@@ -126,7 +126,13 @@ jobs:
           } >> solitaire_app/Cargo.toml
 
       - name: Build and sign APK (release profile)
-        run: cargo apk build -p solitaire_app --release
+        # `--lib` scopes cargo-apk to the cdylib target only.
+        # Without it, cargo-apk panics post-sign with
+        # "Bin is not compatible with Cdylib" (cargo-subcommand
+        # artifact iteration walks the bin target after the
+        # cdylib APK is already produced). See SESSION_HANDOFF.md
+        # "Cosmetic cargo apk build --lib workaround."
+        run: cargo apk build -p solitaire_app --lib --release
 
       - name: Stage APK for upload
         run: |
