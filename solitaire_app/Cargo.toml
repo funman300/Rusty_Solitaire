@@ -82,3 +82,9 @@ label = "Solitaire Quest"
 # `debuggable` defaults to false on release builds; cargo-apk flips it
 # automatically for debug profiles. Leaving the field unset keeps the
 # default behaviour.
+
+[package.metadata.android.application.activity]
+# Lock to portrait — the current layout has only been designed and tested
+# in portrait orientation. Remove (or add a landscape layout) before
+# enabling auto-rotate.
+orientation = "portrait"

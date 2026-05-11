@@ -7,6 +7,7 @@
 //! without a separate tick system.
 
 use bevy::prelude::*;
+use bevy::window::WindowResized;
 use solitaire_core::card::Suit;
 use solitaire_core::game_state::{DrawMode, GameMode};
 use solitaire_core::pile::PileType;
@@ -324,11 +325,15 @@ impl Plugin for HudPlugin {
             .add_message::<WinStreakMilestoneEvent>()
             .init_resource::<PreviousScore>()
             .init_resource::<HudActionFade>()
+            // WindowResized is registered by table_plugin; re-register
+            // defensively so the HUD plugin works standalone in tests.
+            .add_message::<WindowResized>()
             .add_systems(Startup, (spawn_hud_band, spawn_hud, spawn_action_buttons))
             .add_systems(Update, update_hud.after(GameMutation))
             .add_systems(Update, update_won_previously.after(GameMutation))
             .add_systems(Update, announce_auto_complete.after(GameMutation))
             .add_systems(Update, update_selection_hud)
+            .add_systems(Update, update_hud_typography)
             .add_systems(
                 Update,
                 (
@@ -2000,6 +2005,48 @@ pub fn challenge_time_color(remaining: u64) -> Color {
         STATE_WARNING
     } else {
         STATE_INFO
+    }
+}
+
+/// Scales HUD Tier-1 font sizes to fit a narrow viewport.
+///
+/// Fires on every `WindowResized` event. Below 480 logical pixels wide the
+/// score drops from `TYPE_HEADLINE` (26 px) to `TYPE_BODY_LG` (18 px) and the
+/// Moves/Timer labels drop from `TYPE_BODY_LG` to `TYPE_CAPTION` (11 px), so
+/// all three items remain on one row inside the 50 %-wide HUD column
+/// (≈ 180 dp on a 360 dp phone).  At ≥ 480 px the original sizes are
+/// restored so desktop/tablet layouts are unaffected.
+fn update_hud_typography(
+    mut events: MessageReader<WindowResized>,
+    mut score_q: Query<
+        &mut TextFont,
+        (With<HudScore>, Without<HudMoves>, Without<HudTime>),
+    >,
+    mut moves_q: Query<
+        &mut TextFont,
+        (With<HudMoves>, Without<HudScore>, Without<HudTime>),
+    >,
+    mut time_q: Query<
+        &mut TextFont,
+        (With<HudTime>, Without<HudScore>, Without<HudMoves>),
+    >,
+) {
+    let Some(ev) = events.read().last() else {
+        return;
+    };
+    let (score_size, secondary_size) = if ev.width < 480.0 {
+        (TYPE_BODY_LG, TYPE_CAPTION)
+    } else {
+        (TYPE_HEADLINE, TYPE_BODY_LG)
+    };
+    for mut font in &mut score_q {
+        font.font_size = score_size;
+    }
+    for mut font in &mut moves_q {
+        font.font_size = secondary_size;
+    }
+    for mut font in &mut time_q {
+        font.font_size = secondary_size;
     }
 }
 

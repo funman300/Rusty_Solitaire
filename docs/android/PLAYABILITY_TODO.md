@@ -135,10 +135,21 @@ rewrites required.
     the 0.5 s threshold fires).
   Hardware verification needed: confirm the 0.5 s hold feel, verify
   sliding to a destination and lifting confirms the move.
-- [ ] **HUD typography.** Reduce text sizes for `Score:`, `Moves:`,
-  timer so they fit cleanly in one row.
-- [ ] **Orientation lock.** Set `android:screenOrientation="portrait"`
-  in cargo-apk manifest (or design a landscape layout).
+- [x] **HUD typography.** *Closed 2026-05-11.* New system
+  `update_hud_typography` fires on `WindowResized` and adjusts Tier-1
+  font sizes based on viewport width. Below 480 logical px: Score
+  `TYPE_HEADLINE` (26) → `TYPE_BODY_LG` (18), Moves/Timer
+  `TYPE_BODY_LG` (18) → `TYPE_CAPTION` (11), so all three items fit
+  in the 180 dp HUD column on a 360 dp phone. At ≥ 480 px the
+  original sizes are restored — desktop/tablet layout unchanged.
+  `add_message::<WindowResized>()` added defensively to `HudPlugin`
+  so the system works under `MinimalPlugins` in tests.
+- [x] **Orientation lock.** *Closed 2026-05-11.* Added
+  `[package.metadata.android.application.activity]` section to
+  `solitaire_app/Cargo.toml` with `orientation = "portrait"`.
+  cargo-apk/ndk-build maps this to `android:screenOrientation="portrait"`
+  in the generated `AndroidManifest.xml`. Remove (or add a landscape
+  layout) before enabling auto-rotate.
 
 ## P3 — Asset density
 
