@@ -95,9 +95,15 @@ rewrites required.
   the `Layout` struct; `card_plugin::card_positions` and
   `input_plugin::card_position` / `pile_drop_rect` read from the struct
   so rendering and hit-testing stay in sync across viewport sizes.
-- [ ] **Double-tap auto-move visible feedback.** `handle_double_tap`
-  exists since `395a322` — verify it triggers on hardware and add a
-  brief source-card flash / highlight to confirm to the user.
+- [x] **Double-tap auto-move visible feedback.** *Closed 2026-05-11.*
+  On a recognised double-tap (priority 1 single-card or priority 2
+  stack move), the moved card(s) receive a 0.35 s lime flash
+  (`STATE_SUCCESS` tint + `HintHighlight { remaining: 0.35 }`) before
+  the move request is written. The flash persists through the card
+  animation and is cleaned up by the existing `tick_hint_highlight`
+  system. Hardware trigger-verification remains a manual step — connect
+  AVD or device and confirm two rapid `TouchPhase::Ended` events within
+  0.5 s produce the lime flash.
 
 ## P2 — Polish
 

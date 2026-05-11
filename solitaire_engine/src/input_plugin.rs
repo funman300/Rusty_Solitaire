@@ -34,7 +34,7 @@ use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 use crate::card_animation::tuning::AnimationTuning;
 use crate::card_animation::{CardAnimation, MotionCurve};
 use crate::card_plugin::{CardEntity, HintHighlight, HintHighlightTimer, STACK_FAN_FRAC};
-use crate::ui_theme::{MOTION_DRAG_REJECT_SECS, STATE_WARNING};
+use crate::ui_theme::{MOTION_DRAG_REJECT_SECS, STATE_SUCCESS, STATE_WARNING};
 use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
 use crate::events::{
@@ -1218,6 +1218,11 @@ const DOUBLE_CLICK_WINDOW: f32 = 0.35;
 /// Slightly wider than the mouse window — touch screens have higher latency.
 const DOUBLE_TAP_WINDOW: f32 = 0.5;
 
+/// Duration of the lime flash applied to moved cards when a double-tap
+/// auto-move succeeds. Short enough not to linger, long enough to register
+/// during the card animation (~0.3 s).
+const DOUBLE_TAP_FLASH_SECS: f32 = 0.35;
+
 /// Find the best legal destination for `card` — Foundation first, then Tableau.
 ///
 /// Returns `None` if no legal move exists from the card's current location.
@@ -1403,6 +1408,8 @@ fn handle_double_tap(
     mut last_tap: Local<HashMap<u32, f32>>,
     mut moves: MessageWriter<MoveRequestEvent>,
     mut rejected: MessageWriter<MoveRejectedEvent>,
+    mut commands: Commands,
+    mut card_sprites: Query<(Entity, &CardEntity, &mut Sprite)>,
 ) {
     if paused.is_some_and(|p| p.0) {
         return;
@@ -1450,6 +1457,14 @@ fn handle_double_tap(
 
             // Priority 1: move single top card.
             if let Some(dest) = best_destination(top_card, &game.0) {
+                // Flash the card lime to confirm the double-tap registered.
+                for (entity, ce, mut sprite) in card_sprites.iter_mut() {
+                    if ce.card_id == top_card_id {
+                        sprite.color = STATE_SUCCESS;
+                        commands.entity(entity).insert(HintHighlight { remaining: DOUBLE_TAP_FLASH_SECS });
+                        break;
+                    }
+                }
                 moves.write(MoveRequestEvent {
                     from: pile.clone(),
                     to: dest,
@@ -1469,6 +1484,13 @@ fn handle_double_tap(
                         drag.cards.len(),
                     )
                 {
+                    // Flash all cards in the moving run.
+                    for (entity, ce, mut sprite) in card_sprites.iter_mut() {
+                        if drag.cards.contains(&ce.card_id) {
+                            sprite.color = STATE_SUCCESS;
+                            commands.entity(entity).insert(HintHighlight { remaining: DOUBLE_TAP_FLASH_SECS });
+                        }
+                    }
                     moves.write(MoveRequestEvent {
                         from: pile.clone(),
                         to: dest,
