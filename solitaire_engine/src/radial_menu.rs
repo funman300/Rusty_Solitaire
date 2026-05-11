@@ -42,6 +42,7 @@
 //! real `PrimaryWindow` / camera, since `MinimalPlugins` provides
 //! neither.
 
+use bevy::input::touch::Touches;
 use bevy::input::ButtonInput;
 use bevy::math::Vec2;
 use bevy::prelude::*;
@@ -58,6 +59,11 @@ use crate::pause_plugin::PausedResource;
 use crate::resources::{DragState, GameStateResource};
 use crate::settings_plugin::SettingsResource;
 use crate::ui_theme::{ACCENT_PRIMARY, BORDER_STRONG, BORDER_SUBTLE, BORDER_SUBTLE_HC, STATE_SUCCESS};
+
+/// Seconds a finger must be held on a face-up card (without crossing the
+/// drag threshold) before the radial menu opens. Matches Android's long-press
+/// gesture recogniser default.
+const LONG_PRESS_SECS: f32 = 0.5;
 
 /// Sprite-space `Transform.z` for radial-menu overlay sprites.
 ///
@@ -181,6 +187,7 @@ impl Plugin for RadialMenuPlugin {
                 Update,
                 (
                     radial_open_on_right_click,
+                    radial_open_on_long_press,
                     radial_track_cursor,
                     radial_handle_release_or_cancel,
                     radial_redraw_overlay,
@@ -446,6 +453,68 @@ fn radial_open_on_right_click(
     };
 }
 
+/// Opens the radial menu after a sustained touch hold on a face-up card.
+///
+/// Counts up while the touch is down, the drag threshold has not been
+/// crossed, and the radial is not yet active. Fires after
+/// [`LONG_PRESS_SECS`] (0.5 s). The timer resets whenever these
+/// conditions are not met, so lifting, committing a drag, or the radial
+/// already being open all clear it cleanly.
+#[allow(clippy::too_many_arguments)]
+fn radial_open_on_long_press(
+    time: Res<Time>,
+    mut hold_timer: Local<f32>,
+    drag: Res<DragState>,
+    paused: Option<Res<PausedResource>>,
+    touches: Option<Res<Touches>>,
+    cameras: Query<(&Camera, &GlobalTransform)>,
+    layout: Option<Res<LayoutResource>>,
+    game: Option<Res<GameStateResource>>,
+    mut state: ResMut<RightClickRadialState>,
+) {
+    // Guard: only count while a touch is down, uncommitted, and radial is idle.
+    let active_id = drag.active_touch_id;
+    if active_id.is_none() || drag.committed || state.is_active() || paused.is_some_and(|p| p.0) {
+        *hold_timer = 0.0;
+        return;
+    }
+
+    *hold_timer += time.delta_secs();
+    if *hold_timer < LONG_PRESS_SECS {
+        return;
+    }
+    *hold_timer = 0.0;
+
+    // Resolve current touch world position.
+    let Some(touches) = touches else { return };
+    let Some(touch) = touches.iter().find(|t| t.id() == active_id.unwrap()) else {
+        return;
+    };
+    let Some((camera, cam_xf)) = cameras.single().ok() else { return };
+    let Some(world) = camera.viewport_to_world_2d(cam_xf, touch.position()).ok() else {
+        return;
+    };
+    let Some(layout) = layout else { return };
+    let Some(game) = game else { return };
+
+    let Some((source_pile, card)) = find_top_face_up_card_at(world, &game.0, &layout.0) else {
+        return;
+    };
+    let dests = legal_destinations_for_card(&card, &source_pile, &game.0);
+    if dests.is_empty() {
+        return;
+    }
+    let legal_destinations = build_radial_destinations(world, dests);
+    *state = RightClickRadialState::Active {
+        source_pile,
+        count: 1,
+        cards: vec![card.id],
+        legal_destinations,
+        centre: world,
+        hovered_index: None,
+    };
+}
+
 /// Each frame while `Active`, updates `hovered_index` based on the
 /// current cursor position. Cheap — just re-runs hit-testing against
 /// the precomputed anchors. The overlay redraw system reads this index
@@ -454,6 +523,7 @@ fn radial_track_cursor(
     cursor_override: Option<Res<RadialCursorOverride>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform)>,
+    touches: Option<Res<Touches>>,
     mut state: ResMut<RightClickRadialState>,
 ) {
     let RightClickRadialState::Active {
@@ -464,21 +534,28 @@ fn radial_track_cursor(
     else {
         return;
     };
-    let Some(world) = cursor_world(cursor_override.as_ref(), &windows, &cameras) else {
-        return;
-    };
+    // Cursor first (mouse / test override); fall back to first active touch
+    // so the player can slide their held finger over radial icons on Android.
+    let world = cursor_world(cursor_override.as_ref(), &windows, &cameras).or_else(|| {
+        let (camera, cam_xf) = cameras.single().ok()?;
+        let touch_pos = touches.as_ref()?.iter().next()?.position();
+        camera.viewport_to_world_2d(cam_xf, touch_pos).ok()
+    });
+    let Some(world) = world else { return };
     let anchors: Vec<Vec2> = legal_destinations.iter().map(|(_, a)| *a).collect();
     *hovered_index = radial_hovered_index(world, &anchors);
 }
 
-/// Handles three exit conditions while `Active`:
+/// Handles exit conditions while `Active`:
 /// 1. Right-mouse release → confirm if hovering, otherwise cancel.
-/// 2. `Escape` → cancel.
-/// 3. Left-mouse press → cancel (keeps the existing drag pipeline clean).
+/// 2. Touch lift (`Touches::iter_just_released`) → confirm if hovering, cancel otherwise.
+/// 3. `Escape` → cancel.
+/// 4. Left-mouse press → cancel (keeps the existing drag pipeline clean).
 #[allow(clippy::too_many_arguments)]
 fn radial_handle_release_or_cancel(
     buttons: Option<Res<ButtonInput<MouseButton>>>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
+    touches: Option<Res<Touches>>,
     mut state: ResMut<RightClickRadialState>,
     mut moves: MessageWriter<MoveRequestEvent>,
 ) {
@@ -495,13 +572,18 @@ fn radial_handle_release_or_cancel(
     let left_pressed = buttons
         .as_ref()
         .is_some_and(|b| b.just_pressed(MouseButton::Left));
+    // Finger lift: any touch that ended or was cancelled this frame.
+    let touch_ended = touches.as_ref().is_some_and(|t| {
+        t.iter_just_released().next().is_some() || t.iter_just_canceled().next().is_some()
+    });
 
-    if !escape_pressed && !right_released && !left_pressed {
+    if !escape_pressed && !right_released && !left_pressed && !touch_ended {
         return;
     }
 
-    // On confirm, fire a MoveRequestEvent. On any other exit, just clear.
-    if right_released
+    // On confirm (right-release or touch-lift while hovering), fire a move.
+    let confirm = right_released || touch_ended;
+    if confirm
         && let RightClickRadialState::Active {
             source_pile,
             count,

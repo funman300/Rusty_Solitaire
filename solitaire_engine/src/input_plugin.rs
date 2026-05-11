@@ -34,6 +34,7 @@ use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 use crate::card_animation::tuning::AnimationTuning;
 use crate::card_animation::{CardAnimation, MotionCurve};
 use crate::card_plugin::{CardEntity, HintHighlight, HintHighlightTimer, STACK_FAN_FRAC};
+use crate::radial_menu::RightClickRadialState;
 use crate::ui_theme::{MOTION_DRAG_REJECT_SECS, STATE_SUCCESS, STATE_WARNING};
 use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
@@ -1413,6 +1414,7 @@ fn handle_double_click(
 fn handle_double_tap(
     mut touch_events: MessageReader<TouchInput>,
     paused: Option<Res<PausedResource>>,
+    radial: Option<Res<RightClickRadialState>>,
     time: Res<Time>,
     drag: Res<DragState>,
     game: Res<GameStateResource>,
@@ -1423,6 +1425,11 @@ fn handle_double_tap(
     mut card_sprites: Query<(Entity, &CardEntity, &mut Sprite)>,
 ) {
     if paused.is_some_and(|p| p.0) {
+        return;
+    }
+    // Long-press opened the radial in this frame — let radial_handle_release_or_cancel
+    // own the finger-lift event instead.
+    if radial.is_some_and(|r| r.is_active()) {
         return;
     }
 

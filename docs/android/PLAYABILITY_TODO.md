@@ -119,8 +119,22 @@ rewrites required.
      smaller snap-on-commit and faster perceived response.
   **Remaining:** connect AVD or device and verify drag feels responsive
   with no stutter; tune threshold further if needed.
-- [ ] **Long-press menu.** Alternative to right-click (which doesn't
-  exist on touch). Wire to the existing right-click-highlight system.
+- [x] **Long-press menu.** *Closed 2026-05-11.* New system
+  `radial_open_on_long_press` in `radial_menu.rs` counts up while a
+  touch is held (`drag.active_touch_id.is_some() && !drag.committed`)
+  and opens `RightClickRadialState::Active` after 0.5 s — the same
+  state the right-click path uses. Existing radial infrastructure
+  then handles everything:
+  - `radial_track_cursor` extended to fall back to the first active
+    touch when no cursor position is available, so sliding the held
+    finger moves the hover ring.
+  - `radial_handle_release_or_cancel` extended to confirm/cancel on
+    `Touches::iter_just_released()` in addition to right-mouse release.
+  - `handle_double_tap` skips when the radial is active (guards a
+    narrow edge case where the finger lifts at exactly the same frame
+    the 0.5 s threshold fires).
+  Hardware verification needed: confirm the 0.5 s hold feel, verify
+  sliding to a destination and lifting confirms the move.
 - [ ] **HUD typography.** Reduce text sizes for `Score:`, `Moves:`,
   timer so they fit cleanly in one row.
 - [ ] **Orientation lock.** Set `android:screenOrientation="portrait"`
