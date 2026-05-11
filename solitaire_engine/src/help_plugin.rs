@@ -250,9 +250,8 @@ fn spawn_help_screen(commands: &mut Commands, font_res: Option<&FontResource>) {
                         ..default()
                     })
                     .with_children(|line| {
-                        // The hotkey rendered as a small chip with a border —
-                        // visual cue that it's a key reference, not part of
-                        // the description text.
+                        // Keyboard chip — suppressed on Android (no keyboard).
+                        #[cfg(not(target_os = "android"))]
                         line.spawn((
                             Node {
                                 padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),

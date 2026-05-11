@@ -944,6 +944,7 @@ fn spawn_overlay(
                         },
                         TextColor(TEXT_SECONDARY),
                     ));
+                    #[cfg(not(target_os = "android"))]
                     footer.spawn((
                         Text::new(keybind_footer_hint_text()),
                         TextFont {

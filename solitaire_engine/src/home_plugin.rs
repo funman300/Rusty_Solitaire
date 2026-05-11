@@ -1385,8 +1385,8 @@ fn spawn_mode_card(
                 ));
 
                 if unlocked {
-                    // Hotkey chip — same look as the kbd-chip rows used
-                    // elsewhere so accelerators read consistently.
+                    // Hotkey chip — suppressed on Android (touch builds have no keyboard).
+                    #[cfg(not(target_os = "android"))]
                     row.spawn((
                         Node {
                             padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_1),

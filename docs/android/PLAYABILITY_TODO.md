@@ -70,12 +70,8 @@ rewrites required.
   2026-05-10.* `spawn_action_button` now nulls the `hotkey`
   argument on Android via a `#[cfg(target_os = "android")]` rebind,
   so the U / Esc / F1 / N chips next to the action row labels
-  disappear on touch builds. Other hint sites (onboarding panel,
-  pause-modal `Esc` hint, mode-card hotkey chips on the home
-  screen, replay overlay footer, modal toggle hints in
-  profile/stats/leaderboard/settings, help screen) survive — they
-  live behind navigation and a touch user reaches them less often.
-  Track as a P3 sweep when more screens are audited on hardware.
+  disappear on touch builds. Remaining hint sites swept in P3 —
+  see full-keyboard-hint-sweep entry below.
 - [x] **Thumb-sized hit targets.** *Closed 2026-05-10.* Action
   button Node carries `min_width: Val::Px(48.0), min_height:
   Val::Px(48.0)` — meets Material's 48 dp baseline on touch and is
@@ -170,6 +166,19 @@ rewrites required.
   `[package.metadata.android]` so `aapt` packages the mipmap tree into the
   APK, and `icon = "@mipmap/ic_launcher"` to
   `[package.metadata.android.application]` so the launcher references it.
+- [x] **Full keyboard-hint sweep.** *Closed 2026-05-11.* Extended the
+  P1 suppression to cover all remaining hint sites:
+  - `ui_modal.rs::spawn_modal_button` — single `#[cfg(target_os = "android")] let hotkey = None;`
+    line covers every modal button across onboarding, pause, confirm-new-game,
+    game-over, restore-prompt, play-by-seed, home, help, profile, stats,
+    leaderboard, settings, and achievement modals simultaneously.
+  - `home_plugin.rs` — mode-card hotkey chips (N/C/Z/X/T) gated with
+    `#[cfg(not(target_os = "android"))]` on the chip container.
+  - `replay_overlay.rs` — `[SPACE]/[ESC]/[←→]` footer hint text gated
+    with `#[cfg(not(target_os = "android"))]`; mode-indicator text kept.
+  - `help_plugin.rs` — keyboard chip containers in the controls reference
+    table gated with `#[cfg(not(target_os = "android"))]`; description
+    text kept (still useful on touch).
 
 ## P4 — Stability / runtime
 
@@ -186,9 +195,9 @@ rewrites required.
   `card_plugin.rs` is explicit child-only teardown (parent kept alive)
   and is correct. No gameplay bugs attributed to these warnings over 2+
   min AVD runtime.
-- [x] **AVD functional tests for JNI bridges.** *Partially closed
-  2026-05-11.* Pixel 7 AVD (Android 14, x86_64) confirmed running;
-  APK installs and runs stable. Key findings:
+- [x] **AVD functional tests for JNI bridges.** *Closed 2026-05-11.*
+  Pixel 7 AVD (Android 14, x86_64) confirmed running; APK installs
+  and runs stable. Key findings:
 
   **Keystore JNI — verified working.** Forced `SolitaireServerClient`
   by writing a `solitaire_server` settings file, triggering
@@ -198,12 +207,14 @@ rewrites required.
   completed, correctly returned `NotFound`, and the sync system
   handled the error gracefully. No panic, no crash from the JNI layer.
 
-  **Clipboard JNI — not yet exercised at runtime.** The
-  `android_clipboard::set_text()` path is gated behind
-  `Interaction::Pressed` on the share button AND requires a non-null
-  `share_url` (only present after a won game is uploaded to a sync
-  server). Both conditions are unreachable in a headless AVD session.
-  The code compiled and linked correctly on `x86_64-linux-android`.
+  **Clipboard JNI — verified working.** Added a temporary
+  `KEYCODE_C` test hook (`avd_clipboard_test` system) to
+  `stats_plugin.rs`, rebuilt the APK, pressed C on the AVD.
+  Logcat confirmed: `[avd_clipboard_test] clipboard JNI OK` —
+  `ClipboardManager.setPrimaryClip()` succeeded on Android 14.
+  Test hook reverted; production clipboard path still requires
+  `Interaction::Pressed` on the share button with a non-null
+  `share_url` (won game + sync server).
 
   **Side-finding fixed:** `reqwest`/`hyper-util`'s `GaiResolver`
   calls `tokio::runtime::Handle::current()` which panics with "no
@@ -216,8 +227,6 @@ rewrites required.
   **Touch input limitation:** `adb shell input tap` does not deliver
   touch events to Bevy/winit on Android 14 + android-activity 0.6.1
   in headless AVD mode. Keyboard events (`KEYCODE_*`) work normally.
-  Full clipboard test requires a real device or a GUI-accessible AVD
-  session with a won game and active sync server.
 
 ---
 
