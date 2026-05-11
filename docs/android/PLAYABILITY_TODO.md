@@ -36,9 +36,14 @@ rewrites required.
   change-detection fix-up system re-applies `base_top + insets.top`
   whenever the resource updates. Bottom inset is captured but not
   yet consumed (waits for bottom-anchored UI).
-- [ ] **Mobile HUD layout.** Wrap to two rows, drop redundant text, or
-  move secondary actions (Help, Modes) into a hamburger / drawer.
-  Current single-row layout requires desktop width.
+- [x] **Mobile HUD layout.** *Closed 2026-05-10.* Both the left HUD
+  column and the right action button row are now capped at
+  `max_width: 50 %` and the button row + tier-row child Nodes carry
+  `flex_wrap: Wrap`. On a 360 dp viewport the 6-button row breaks
+  to multiple lines (right-justified) and the tier rows wrap
+  individually instead of overflowing into the action column. On
+  desktop (≥ 1280 px) the 50 % cap is wider than any natural row
+  width so the existing single-line layout is unchanged.
 - [x] **Card-back asset not rendering.** *Closed 2026-05-10 by
   `fcc7337`.* `AssetPlugin::file_path = "../assets"` was set
   unconditionally to fix the desktop `cargo run -p solitaire_app`

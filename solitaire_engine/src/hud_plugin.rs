@@ -444,6 +444,16 @@ fn spawn_hud(
     let row_node = || Node {
         flex_direction: FlexDirection::Row,
         column_gap: VAL_SPACE_3,
+        // On a narrow viewport the four tier rows (Score/Moves/Timer,
+        // Mode/Challenge/Draw-cycle/Won-previously, Undos/Recycles/
+        // Auto-complete, selection chip) can collectively be wider than
+        // the available space and overflow into the action-button column
+        // on the right. `flex_wrap: Wrap` lets each tier soft-wrap onto
+        // a second line; on a desktop window the rows stay single-line
+        // because the parent column has no width cap and the row never
+        // exceeds the natural line width.
+        flex_wrap: FlexWrap::Wrap,
+        row_gap: VAL_SPACE_1,
         align_items: AlignItems::Baseline,
         ..default()
     };
@@ -455,6 +465,14 @@ fn spawn_hud(
                 left: VAL_SPACE_3,
                 top: Val::Px(SPACE_2 + top_inset),
                 flex_direction: FlexDirection::Column,
+                // Cap the column at 50% of viewport so on narrow
+                // (mobile) widths the inner tier rows have a bounded
+                // width to wrap against, and the column can't bleed
+                // into the right-anchored action button row (also
+                // capped at 50%). On desktop 50% of 1920 = 960 px,
+                // wider than any tier row's natural width, so the
+                // visible layout is unaffected.
+                max_width: Val::Percent(50.0),
                 row_gap: VAL_SPACE_1,
                 ..default()
             },
@@ -603,7 +621,21 @@ fn spawn_action_buttons(
                 right: VAL_SPACE_3,
                 top: Val::Px(SPACE_2 + top_inset),
                 flex_direction: FlexDirection::Row,
+                // 6 buttons total ~510 px wide; on a desktop window
+                // (typically >= 1280 px) `max_width: 50%` is >= 640 px
+                // and the row stays a single line. On a 360 dp phone
+                // 50% is 180 px and the row wraps to two-three lines —
+                // which keeps the buttons out of the left HUD column's
+                // horizontal range and prevents the off-screen-left
+                // clipping seen in the v0.22.3 hardware screenshot.
+                max_width: Val::Percent(50.0),
+                flex_wrap: FlexWrap::Wrap,
+                // When the row wraps, buttons pack to the *end* of each
+                // line so the row stays visually right-aligned (matches
+                // the `right: VAL_SPACE_3` anchor).
+                justify_content: JustifyContent::FlexEnd,
                 column_gap: VAL_SPACE_2,
+                row_gap: VAL_SPACE_2,
                 align_items: AlignItems::Center,
                 ..default()
             },
