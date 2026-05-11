@@ -21,9 +21,25 @@ pub enum LayoutSystem {
     UpdateOnResize,
 }
 
-/// Minimum supported window dimensions. Layout is still computed below this
-/// size but cards will be small.
-pub const MIN_WINDOW: Vec2 = Vec2::new(800.0, 600.0);
+/// Minimum window dimensions used as a layout floor.
+///
+/// `compute_layout` runs `window.max(MIN_WINDOW)` so a window smaller than this
+/// on either axis is laid out as if it were at least this size. The floor
+/// exists to guard against degenerate / divide-by-zero layouts on very small
+/// surfaces (Bevy can briefly report 0-size windows during startup or after
+/// minimisation on some compositors); it is not a "minimum supported playable
+/// size" — desktop builds enforce that via `WindowResizeConstraints` set in
+/// `solitaire_app::lib`.
+///
+/// The previous floor of 800×600 was set with desktop in mind and produced
+/// the wrong behaviour on Android: a 360 dp phone got laid out as if it were
+/// 800-wide, pushing the leftmost foundation past `-180` and the rightmost
+/// tableau pile past `+180`, which clipped both at the visible viewport
+/// edges (visible in the v0.22.3 hardware screenshot). 320×400 is below the
+/// smallest reasonable phone (≈ 360×640) so every real device flows through
+/// without clamping, while still being large enough that the layout math
+/// produces non-degenerate card sizes.
+pub const MIN_WINDOW: Vec2 = Vec2::new(320.0, 400.0);
 
 /// Aspect ratio (height / width) of a standard playing card.
 ///
@@ -205,9 +221,37 @@ mod tests {
 
     #[test]
     fn layout_below_minimum_clamps_to_minimum() {
-        let below = compute_layout(Vec2::new(400.0, 300.0));
+        // 200×200 sits below the floor on both axes, so the clamp pulls each
+        // axis up to MIN_WINDOW and the layout matches compute_layout(MIN_WINDOW).
+        let below = compute_layout(Vec2::new(200.0, 200.0));
         let at_min = compute_layout(MIN_WINDOW);
         assert_eq!(below.card_size, at_min.card_size);
+    }
+
+    /// Regression for the v0.22.3 Android viewport-overflow bug. A typical
+    /// portrait-phone viewport (360 dp × 800 dp) must produce a layout
+    /// where every pile fits horizontally — i.e. card_width is derived
+    /// from the actual window, not a clamped-up desktop floor.
+    #[test]
+    fn phone_portrait_layout_fits_horizontally() {
+        let window = Vec2::new(360.0, 800.0);
+        let layout = compute_layout(window);
+        let half_w = window.x / 2.0;
+        let half_card = layout.card_size.x / 2.0;
+        for (pile, pos) in &layout.pile_positions {
+            assert!(
+                pos.x - half_card >= -half_w - 1e-3,
+                "{:?} overflows left at portrait phone window {:?}",
+                pile,
+                window
+            );
+            assert!(
+                pos.x + half_card <= half_w + 1e-3,
+                "{:?} overflows right at portrait phone window {:?}",
+                pile,
+                window
+            );
+        }
     }
 
     #[test]

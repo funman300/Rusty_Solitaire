@@ -54,10 +54,15 @@ rewrites required.
   failed silently. The face-down branch then fell through to the
   `card_back_colour(0)` solid-red brick fallback. Gated the
   override behind `#[cfg(not(target_os = "android"))]`.
-- [ ] **Viewport overflow.** Leftmost foundation and rightmost tableau
-  pile clipped. `LayoutResource` must recompute on Android using
-  actual surface size (post-inset) instead of any desktop default
-  width assumption.
+- [x] **Viewport overflow.** *Closed 2026-05-10.* `compute_layout`
+  was clamping the input window up to `MIN_WINDOW = 800 × 600`,
+  so a 360 dp phone got laid out as if it were 800-wide and the
+  outer piles fell outside the actual viewport. Lowered the floor
+  to 320 × 400 (below the smallest reasonable phone) so real
+  Android resolutions flow through without clamping, while keeping
+  a sentinel to guard against degenerate / startup-zero windows.
+  New regression test `phone_portrait_layout_fits_horizontally`
+  asserts all 13 piles fit a 360 × 800 viewport.
 
 ## P1 — Touch UX
 
