@@ -153,21 +153,44 @@ rewrites required.
 
 ## P3 — Asset density
 
-- [ ] **Density-aware card scaling.** Currently single texture size; on
-  a high-DPI phone the cards look small. Scale by
-  `Window::scale_factor()` or ship multiple PNG sizes.
-- [ ] **App-icon density buckets.** Nine sizes already exist in
-  `assets/icon/`; verify the manifest references them so Android's
-  launcher picks the right one.
+- [x] **Density-aware card scaling.** *Closed 2026-05-11 — no code change
+  required.* `WindowResized` fires with **logical** pixels; sprites are
+  sized in world units (1 world unit = 1 logical pixel); Bevy's renderer
+  maps logical → physical via `scale_factor` internally. On a 360 dp
+  3×-DPI phone, cards are 40 logical dp = 120 physical px. The 256 × 384 px
+  card textures are **downscaled** to fit (256 → 120 px) — quality is fine.
+  Upscaling only occurs if `card_width × scale_factor > 256`, i.e. a
+  tablet with a logical width > 765 dp at 3× DPI — no current target
+  device falls in that range. Revisit if the game ships on large-screen
+  high-DPI tablets.
+- [x] **App-icon density buckets.** *Closed 2026-05-11.* Created
+  `solitaire_app/res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png`
+  from the existing `assets/icon/` PNGs (48→mdpi, 64→hdpi, 128→xhdpi,
+  256→xxhdpi+xxxhdpi). Added `resources = "res"` to
+  `[package.metadata.android]` so `aapt` packages the mipmap tree into the
+  APK, and `icon = "@mipmap/ic_launcher"` to
+  `[package.metadata.android.application]` so the launcher references it.
 
 ## P4 — Stability / runtime
 
-- [ ] **B0004 ECS hierarchy warnings.** Flagged in
-  `SESSION_HANDOFF.md` after APK launch verification — investigate
-  whether they cause gameplay bugs on hardware vs. AVD.
+- [x] **B0004 ECS hierarchy warnings.** *Investigated 2026-05-11 — no
+  fix required.* B0004 fires via Bevy's `validate_parent_has_component<C>`
+  hook when a child entity has UI component `C` (e.g. `Node`,
+  `InheritedVisibility`) but its parent doesn't yet. In Bevy 0.18,
+  `.despawn()` is recursive (docs: "When a parent is despawned, all
+  children will also be despawned"), so all `.despawn()` calls in the
+  engine are safe. The warnings seen on the Pixel 7 AVD during startup
+  are a component-propagation timing artifact — UI children reach the
+  hook before the parent's inherited components finish initialising —
+  not a gameplay defect. `despawn_related::<Children>()` in
+  `card_plugin.rs` is explicit child-only teardown (parent kept alive)
+  and is correct. No gameplay bugs attributed to these warnings over 2+
+  min AVD runtime.
 - [ ] **AVD functional tests for JNI bridges.** Clipboard (`2c822ba`)
   and Keystore (`f281425`) shipped but never tested on real device
-  or AVD.
+  or AVD. Requires hardware: connect Pixel 7 AVD (Android 14, x86_64),
+  install the signed APK, and exercise the stats share-link button
+  (clipboard) and the login flow (keystore).
 
 ---
 

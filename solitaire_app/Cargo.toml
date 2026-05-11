@@ -60,6 +60,15 @@ package = "com.solitairequest.app"
 apk_name = "solitaire-quest"
 build_targets = ["aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android"]
 assets = "../assets"
+# Density-bucketed launcher icons. `aapt` processes `res/mipmap-*/` and
+# packages them into the APK; the launcher selects the best-fit bucket
+# for the device screen density. Sizes used:
+#   mdpi  (1×, 48 dp) → 48 px   (exact)
+#   hdpi  (1.5×, 72 dp) → 64 px (88 %, aapt scales up slightly)
+#   xhdpi (2×, 96 dp) → 128 px  (133 %, aapt scales down)
+#   xxhdpi (3×, 144 dp) → 256 px (178 %, aapt scales down)
+#   xxxhdpi (4×, 192 dp) → 256 px (133 %, aapt scales down)
+resources = "res"
 # No `runtime_libs` — we don't ship any precompiled .so files,
 # the entire app is pure Rust + Bevy. cargo-apk would try to
 # resolve `runtime_libs/<arch>/` if set, and fail on a non-existent
@@ -79,6 +88,8 @@ name = "android.permission.INTERNET"
 
 [package.metadata.android.application]
 label = "Solitaire Quest"
+# Launcher icon — references the density-bucketed mipmap resource above.
+icon = "@mipmap/ic_launcher"
 # `debuggable` defaults to false on release builds; cargo-apk flips it
 # automatically for debug profiles. Leaving the field unset keeps the
 # default behaviour.
