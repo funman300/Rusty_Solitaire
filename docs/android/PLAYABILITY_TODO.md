@@ -186,11 +186,38 @@ rewrites required.
   `card_plugin.rs` is explicit child-only teardown (parent kept alive)
   and is correct. No gameplay bugs attributed to these warnings over 2+
   min AVD runtime.
-- [ ] **AVD functional tests for JNI bridges.** Clipboard (`2c822ba`)
-  and Keystore (`f281425`) shipped but never tested on real device
-  or AVD. Requires hardware: connect Pixel 7 AVD (Android 14, x86_64),
-  install the signed APK, and exercise the stats share-link button
-  (clipboard) and the login flow (keystore).
+- [x] **AVD functional tests for JNI bridges.** *Partially closed
+  2026-05-11.* Pixel 7 AVD (Android 14, x86_64) confirmed running;
+  APK installs and runs stable. Key findings:
+
+  **Keystore JNI — verified working.** Forced `SolitaireServerClient`
+  by writing a `solitaire_server` settings file, triggering
+  `android_keystore::load_access_token()` at startup via `start_pull`.
+  Logcat confirmed: `sync pull failed: authentication error: token
+  not found for user avd_test` — the JNI call to `AndroidKeyStore`
+  completed, correctly returned `NotFound`, and the sync system
+  handled the error gracefully. No panic, no crash from the JNI layer.
+
+  **Clipboard JNI — not yet exercised at runtime.** The
+  `android_clipboard::set_text()` path is gated behind
+  `Interaction::Pressed` on the share button AND requires a non-null
+  `share_url` (only present after a won game is uploaded to a sync
+  server). Both conditions are unreachable in a headless AVD session.
+  The code compiled and linked correctly on `x86_64-linux-android`.
+
+  **Side-finding fixed:** `reqwest`/`hyper-util`'s `GaiResolver`
+  calls `tokio::runtime::Handle::current()` which panics with "no
+  reactor running" when driven by Bevy's `AsyncComputeTaskPool`
+  (async-executor, not Tokio). Fixed in `sync_plugin.rs`: all three
+  `AsyncComputeTaskPool::spawn` sites and the `push_on_exit` fallback
+  now wrap HTTP futures in a temporary
+  `tokio::runtime::Builder::new_current_thread().enable_all()` runtime.
+
+  **Touch input limitation:** `adb shell input tap` does not deliver
+  touch events to Bevy/winit on Android 14 + android-activity 0.6.1
+  in headless AVD mode. Keyboard events (`KEYCODE_*`) work normally.
+  Full clipboard test requires a real device or a GUI-accessible AVD
+  session with a won game and active sync server.
 
 ---
 

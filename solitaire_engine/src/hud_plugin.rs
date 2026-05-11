@@ -2016,20 +2016,18 @@ pub fn challenge_time_color(remaining: u64) -> Color {
 /// all three items remain on one row inside the 50 %-wide HUD column
 /// (≈ 180 dp on a 360 dp phone).  At ≥ 480 px the original sizes are
 /// restored so desktop/tablet layouts are unaffected.
+type HudScoreFont<'w, 's> =
+    Query<'w, 's, &'static mut TextFont, (With<HudScore>, Without<HudMoves>, Without<HudTime>)>;
+type HudMovesFont<'w, 's> =
+    Query<'w, 's, &'static mut TextFont, (With<HudMoves>, Without<HudScore>, Without<HudTime>)>;
+type HudTimeFont<'w, 's> =
+    Query<'w, 's, &'static mut TextFont, (With<HudTime>, Without<HudScore>, Without<HudMoves>)>;
+
 fn update_hud_typography(
     mut events: MessageReader<WindowResized>,
-    mut score_q: Query<
-        &mut TextFont,
-        (With<HudScore>, Without<HudMoves>, Without<HudTime>),
-    >,
-    mut moves_q: Query<
-        &mut TextFont,
-        (With<HudMoves>, Without<HudScore>, Without<HudTime>),
-    >,
-    mut time_q: Query<
-        &mut TextFont,
-        (With<HudTime>, Without<HudScore>, Without<HudMoves>),
-    >,
+    mut score_q: HudScoreFont,
+    mut moves_q: HudMovesFont,
+    mut time_q: HudTimeFont,
 ) {
     let Some(ev) = events.read().last() else {
         return;

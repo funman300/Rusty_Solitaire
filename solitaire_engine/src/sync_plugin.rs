@@ -130,7 +130,14 @@ fn start_pull(
 ) {
     let provider = provider.0.clone();
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        provider.pull().await
+        // Bevy's AsyncComputeTaskPool uses async-executor (not Tokio), but
+        // reqwest/hyper require a Tokio reactor for DNS and HTTP I/O. Provide
+        // a short-lived single-threaded runtime for this network round-trip.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| SyncError::Network(format!("tokio rt: {e}")))?
+            .block_on(provider.pull())
     });
     task_res.0 = Some(task);
     status.0 = SyncStatus::Syncing;
@@ -153,7 +160,11 @@ fn handle_manual_sync_request(
     }
     let provider = provider.0.clone();
     let task = AsyncComputeTaskPool::get().spawn(async move {
-        provider.pull().await
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| SyncError::Network(format!("tokio rt: {e}")))?
+            .block_on(provider.pull())
     });
     task_res.0 = Some(task);
     status.0 = SyncStatus::Syncing;
@@ -259,11 +270,18 @@ fn push_on_exit(
     let payload = build_payload(&stats.0, &achievements.0, &progress.0);
     let provider = provider.0.clone();
 
-    // Prefer an existing tokio runtime; fall back to futures_lite block_on
-    // for environments (e.g. tests) that don't have one.
+    // Prefer an existing tokio runtime; fall back to a temporary one for
+    // environments (e.g. tests, Android's non-Tokio async executor) where
+    // reqwest/hyper would otherwise panic with "no reactor running".
     let result = match tokio::runtime::Handle::try_current() {
         Ok(handle) => handle.block_on(provider.push(&payload)),
-        Err(_) => future::block_on(provider.push(&payload)),
+        Err(_) => match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt.block_on(provider.push(&payload)),
+            Err(e) => Err(SyncError::Network(format!("tokio rt on exit: {e}"))),
+        },
     };
     match result {
         Ok(_) => {}
@@ -314,8 +332,13 @@ fn push_replay_on_win(
             recording.moves.clone(),
         );
         let provider = provider.0.clone();
-        let task = AsyncComputeTaskPool::get()
-            .spawn(async move { provider.push_replay(&replay).await });
+        let task = AsyncComputeTaskPool::get().spawn(async move {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| SyncError::Network(format!("tokio rt: {e}")))?
+                .block_on(provider.push_replay(&replay))
+        });
         // If a previous upload is still in flight, drop it — the most
         // recent win is the one whose share link the player will care
         // about. Bevy's `Task` Drop cancels cooperatively.
