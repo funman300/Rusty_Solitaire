@@ -764,6 +764,14 @@ fn spawn_action_button<M: Component>(
             // companion commit). Vertical padding stays at VAL_SPACE_2
             // so button height tracks the rest of the chrome band.
             padding: UiRect::axes(VAL_SPACE_2, VAL_SPACE_2),
+            // 48 px floors meet Material's recommended thumb-target
+            // size on touch and are a no-op on desktop for buttons
+            // whose content already exceeds 48 px in either axis
+            // (Menu, Modes, New Game, etc.). Without these, "Undo"
+            // ends up ~46 × 33 px — comfortably tappable with a mouse
+            // but right at the threshold for a finger.
+            min_width: Val::Px(48.0),
+            min_height: Val::Px(48.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border_radius: BorderRadius::all(Val::Px(RADIUS_MD)),

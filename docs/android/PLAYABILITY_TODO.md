@@ -76,9 +76,14 @@ rewrites required.
   profile/stats/leaderboard/settings, help screen) survive — they
   live behind navigation and a touch user reaches them less often.
   Track as a P3 sweep when more screens are audited on hardware.
-- [ ] **Thumb-sized hit targets.** HUD buttons sized for mouse;
-  Material guideline minimum is 44–48 dp. Increase button paddings
-  on touch builds.
+- [x] **Thumb-sized hit targets.** *Closed 2026-05-10.* Action
+  button Node carries `min_width: Val::Px(48.0), min_height:
+  Val::Px(48.0)` — meets Material's 48 dp baseline on touch and is
+  a no-op for buttons whose content already exceeds 48 px in
+  either axis. Applied universally rather than cfg-gated since
+  Material's guideline applies to all input modes. Cards, pile
+  markers, modal close buttons not yet audited — track as P3 if
+  they fall below threshold on hardware.
 - [ ] **Portrait-first card spacing.** Stretch tableau piles vertically
   to fill height; reduce inter-pile gaps so 7 columns fit in 360 dp.
 - [ ] **Double-tap auto-move visible feedback.** `handle_double_tap`
