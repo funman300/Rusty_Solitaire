@@ -29,19 +29,26 @@ rewrites required.
 
 ## P0 — Blocking playability
 
-- [ ] **Safe-area insets (top + bottom).** Query `WindowInsets` via JNI
-  (or `winit::window::Window::safe_area()` if exposed in our pinned
-  winit) and push HUD down by status-bar height + bottom UI up by
-  nav-bar height. Likely lives in `solitaire_engine` layout system,
-  gated `#[cfg(target_os = "android")]`.
+- [x] **Safe-area insets (top + bottom).** *Closed 2026-05-10 by
+  `b9aa262`.* `SafeAreaInsets` resource + `SafeAreaInsetsPlugin`
+  query `WindowInsets.getInsets(systemBars())` via JNI on Android;
+  HUD anchors carry `SafeAreaAnchoredTop { base_top }` and the
+  change-detection fix-up system re-applies `base_top + insets.top`
+  whenever the resource updates. Bottom inset is captured but not
+  yet consumed (waits for bottom-anchored UI).
 - [ ] **Mobile HUD layout.** Wrap to two rows, drop redundant text, or
   move secondary actions (Help, Modes) into a hamburger / drawer.
   Current single-row layout requires desktop width.
-- [ ] **Card-back asset not rendering.** Face-down cards show as red
-  rectangles. Investigate: is `CardImageSet::back` resolving on
-  Android? Is the texture being uploaded? Is the sampler wrong? Check
-  AssetServer load path under Android — does it find the embedded /
-  packaged texture?
+- [x] **Card-back asset not rendering.** *Closed 2026-05-10 by
+  `fcc7337`.* `AssetPlugin::file_path = "../assets"` was set
+  unconditionally to fix the desktop `cargo run -p solitaire_app`
+  CWD relativity, but on Android cargo-apk packages the same
+  directory into the APK at `assets/` and Bevy's
+  AndroidAssetReader is already rooted there — prepending `../`
+  walked the reader out of the APK assets root and every load
+  failed silently. The face-down branch then fell through to the
+  `card_back_colour(0)` solid-red brick fallback. Gated the
+  override behind `#[cfg(not(target_os = "android"))]`.
 - [ ] **Viewport overflow.** Leftmost foundation and rightmost tableau
   pile clipped. `LayoutResource` must recompute on Android using
   actual surface size (post-inset) instead of any desktop default
