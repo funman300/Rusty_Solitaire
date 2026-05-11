@@ -6986,6 +6986,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "bevy",
  "chrono",
  "dirs",
  "jni 0.21.1",

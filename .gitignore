@@ -10,3 +10,8 @@ data/
 
 # IDE project files
 .idea/
+
+# Android signing keystores — never commit
+*.jks
+*.jks.bak
+*.keystore
