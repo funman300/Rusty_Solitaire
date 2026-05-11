@@ -52,10 +52,16 @@ const CARD_ASPECT: f32 = 1.4523;
 /// the tableau row.
 const VERTICAL_GAP_FRAC: f32 = 0.2;
 
-/// Fraction of card height contributed by each additional face-up tableau card
-/// when fanned. Mirrors `card_plugin::TABLEAU_FAN_FRAC` so layout sizing can
-/// solve for a worst-case column without depending on `card_plugin`.
+/// Minimum fraction of card height used as vertical offset between face-up
+/// tableau cards. Used for the height-based sizing candidate (worst-case
+/// column must fit at this fraction). On desktop (height-limited) windows the
+/// adaptive computation returns this value exactly; on portrait phones it
+/// expands to fill available vertical space.
 const TABLEAU_FAN_FRAC: f32 = 0.25;
+
+/// Minimum fraction for face-down tableau cards. Scales proportionally with
+/// the adaptive face-up fraction so hit-testing and rendering stay in sync.
+const TABLEAU_FACEDOWN_FAN_FRAC: f32 = 0.12;
 
 /// Largest possible face-up tableau column in Klondike: a King down to an Ace
 /// after every face-down card has flipped on column 7. Layout sizing must keep
@@ -88,6 +94,18 @@ pub struct Layout {
     /// Every `PileType` (Stock, Waste, four Foundations, seven Tableaux) has an
     /// entry. The map always contains exactly 13 entries after `compute_layout`.
     pub pile_positions: HashMap<PileType, Vec2>,
+    /// Per-step vertical offset fraction for face-up tableau cards, as a
+    /// fraction of `card_size.y`. On height-limited (desktop) windows this
+    /// equals `TABLEAU_FAN_FRAC` (0.25); on width-limited (portrait phone)
+    /// windows it expands to fill the available vertical space so the tableau
+    /// stretches to the bottom of the screen. Card rendering (`card_plugin`)
+    /// and hit testing (`input_plugin`) both read from this field so they
+    /// stay in sync.
+    pub tableau_fan_frac: f32,
+    /// Per-step vertical offset fraction for face-down tableau cards, as a
+    /// fraction of `card_size.y`. Scales proportionally with `tableau_fan_frac`
+    /// (ratio preserved from `TABLEAU_FACEDOWN_FAN_FRAC / TABLEAU_FAN_FRAC`).
+    pub tableau_facedown_fan_frac: f32,
 }
 
 /// Compute the board layout from a window size.
@@ -169,9 +187,35 @@ pub fn compute_layout(window: Vec2) -> Layout {
         pile_positions.insert(PileType::Tableau(i), Vec2::new(col_x(i), tableau_y));
     }
 
+    // Adaptive tableau fan fraction. On height-limited (desktop) windows the
+    // height-based sizing already ensures a worst-case 13-card column fits at
+    // TABLEAU_FAN_FRAC (0.25), so the formula returns ≈0.25 and the clamp
+    // keeps it there — no change from prior behaviour. On width-limited
+    // (portrait phone) windows card_size is small and lots of vertical space
+    // is unused; we solve for the fraction that exactly fills the available
+    // space to the bottom margin.
+    //
+    // avail = distance from the top of the first tableau card to the bottom
+    //         margin — i.e. the space available for 12 fan steps.
+    let avail = (tableau_y - (-window.y / 2.0 + h_gap) - card_height / 2.0).max(0.0);
+    let ideal_fan_frac = if card_height > 0.0 {
+        avail / ((MAX_TABLEAU_CARDS - 1.0) * card_height)
+    } else {
+        TABLEAU_FAN_FRAC
+    };
+    // Never go below the desktop minimum — avoids shrinking the fan on
+    // degenerate near-square windows where the formula might undershoot.
+    let tableau_fan_frac = ideal_fan_frac.max(TABLEAU_FAN_FRAC);
+    // Scale the face-down fraction proportionally so rendering and hit-testing
+    // stay in sync (TABLEAU_FACEDOWN_FAN_FRAC / TABLEAU_FAN_FRAC = 0.48 ratio).
+    let facedown_scale = TABLEAU_FACEDOWN_FAN_FRAC / TABLEAU_FAN_FRAC;
+    let tableau_facedown_fan_frac = tableau_fan_frac * facedown_scale;
+
     Layout {
         card_size,
         pile_positions,
+        tableau_fan_frac,
+        tableau_facedown_fan_frac,
     }
 }
 
@@ -379,6 +423,50 @@ mod tests {
         assert!(
             bottom_edge >= window_bottom_with_margin - 1e-3,
             "worst-case tableau bottom {bottom_edge} overflows window margin {window_bottom_with_margin}"
+        );
+    }
+
+    /// Portrait phone (width-limited) should expand the fan fraction beyond
+    /// the desktop minimum so the tableau fills the available vertical space.
+    #[test]
+    fn portrait_phone_expands_tableau_fan_frac() {
+        let desktop = compute_layout(Vec2::new(1280.0, 800.0));
+        let phone = compute_layout(Vec2::new(360.0, 800.0));
+        assert!(
+            phone.tableau_fan_frac > desktop.tableau_fan_frac,
+            "portrait phone fan_frac ({:.3}) should exceed desktop ({:.3})",
+            phone.tableau_fan_frac,
+            desktop.tableau_fan_frac,
+        );
+    }
+
+    /// The expanded fan on a portrait phone must not overflow the visible
+    /// window — the worst-case 13-card column must stay above the bottom margin.
+    #[test]
+    fn expanded_fan_fits_phone_viewport() {
+        let window = Vec2::new(360.0, 800.0);
+        let layout = compute_layout(window);
+        let tableau_y = layout.pile_positions[&PileType::Tableau(0)].y;
+        let card_h = layout.card_size.y;
+        let h_gap = layout.card_size.x / 4.0;
+        // Bottom of the 13th (worst-case) fanned face-up card.
+        let bottom = tableau_y - 12.0 * layout.tableau_fan_frac * card_h - card_h / 2.0;
+        let margin = -window.y / 2.0 + h_gap;
+        assert!(
+            bottom >= margin - 1e-3,
+            "worst-case fan overflows phone viewport: bottom={bottom:.1} < margin={margin:.1}",
+        );
+    }
+
+    /// Desktop (height-limited) must keep the minimum fan fraction so the
+    /// existing worst-case-fits-vertically invariant is preserved.
+    #[test]
+    fn desktop_tableau_fan_frac_is_minimum() {
+        let layout = compute_layout(Vec2::new(1280.0, 800.0));
+        assert!(
+            (layout.tableau_fan_frac - TABLEAU_FAN_FRAC).abs() < 1e-3,
+            "desktop fan_frac should stay at minimum {TABLEAU_FAN_FRAC}, got {:.4}",
+            layout.tableau_fan_frac,
         );
     }
 

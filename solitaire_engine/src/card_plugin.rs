@@ -667,9 +667,9 @@ fn card_positions<'a>(game: &'a GameState, layout: &Layout) -> Vec<(&'a Card, Ve
             out.push((card, pos, z));
             if is_tableau {
                 let step = if card.face_up {
-                    TABLEAU_FAN_FRAC
+                    layout.tableau_fan_frac
                 } else {
-                    TABLEAU_FACEDOWN_FAN_FRAC
+                    layout.tableau_facedown_fan_frac
                 };
                 y_offset -= layout.card_size.y * step;
             }

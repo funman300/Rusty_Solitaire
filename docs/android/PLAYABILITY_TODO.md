@@ -84,8 +84,17 @@ rewrites required.
   Material's guideline applies to all input modes. Cards, pile
   markers, modal close buttons not yet audited — track as P3 if
   they fall below threshold on hardware.
-- [ ] **Portrait-first card spacing.** Stretch tableau piles vertically
-  to fill height; reduce inter-pile gaps so 7 columns fit in 360 dp.
+- [x] **Portrait-first card spacing.** *Closed 2026-05-11.*
+  `compute_layout` now derives an adaptive `tableau_fan_frac` from the
+  available vertical space below the tableau row. On height-limited
+  (desktop) windows the formula returns ≈ 0.25 and the clamp keeps the
+  existing behaviour. On width-limited (portrait phone) windows — where
+  card size is constrained by the 9-column horizontal packing — the fan
+  fraction expands to fill the viewport (≈ 0.84 at 360 × 800 dp).
+  `tableau_facedown_fan_frac` scales proportionally. Both values live in
+  the `Layout` struct; `card_plugin::card_positions` and
+  `input_plugin::card_position` / `pile_drop_rect` read from the struct
+  so rendering and hit-testing stay in sync across viewport sizes.
 - [ ] **Double-tap auto-move visible feedback.** `handle_double_tap`
   exists since `395a322` — verify it triggers on hardware and add a
   brief source-card flash / highlight to confirm to the user.

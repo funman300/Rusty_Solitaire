@@ -33,10 +33,7 @@ use solitaire_core::rules::{can_place_on_foundation, can_place_on_tableau};
 
 use crate::card_animation::tuning::AnimationTuning;
 use crate::card_animation::{CardAnimation, MotionCurve};
-use crate::card_plugin::{
-    CardEntity, HintHighlight, HintHighlightTimer, STACK_FAN_FRAC, TABLEAU_FACEDOWN_FAN_FRAC,
-    TABLEAU_FAN_FRAC,
-};
+use crate::card_plugin::{CardEntity, HintHighlight, HintHighlightTimer, STACK_FAN_FRAC};
 use crate::ui_theme::{MOTION_DRAG_REJECT_SECS, STATE_WARNING};
 use solitaire_core::game_state::DrawMode;
 use crate::challenge_plugin::CHALLENGE_UNLOCK_LEVEL;
@@ -614,7 +611,7 @@ fn follow_drag(
 
     // Move cards to the cursor.
     let bottom_pos = world + drag.cursor_offset;
-    let fan = -layout.0.card_size.y * TABLEAU_FAN_FRAC;
+    let fan = -layout.0.card_size.y * layout.0.tableau_fan_frac;
 
     for (i, &id) in drag.cards.iter().enumerate() {
         if let Some((_, mut transform, _)) =
@@ -875,7 +872,7 @@ fn touch_follow_drag(
     }
 
     let bottom_pos = world + drag.cursor_offset;
-    let fan = -layout.0.card_size.y * TABLEAU_FAN_FRAC;
+    let fan = -layout.0.card_size.y * layout.0.tableau_fan_frac;
 
     for (i, &id) in drag.cards.iter().enumerate() {
         if let Some((_, mut transform, _)) =
@@ -1047,8 +1044,8 @@ fn point_in_rect(point: Vec2, center: Vec2, size: Vec2) -> bool {
 /// Where a card at `stack_index` in pile `pile` would be rendered.
 ///
 /// For tableau columns the per-card fan step depends on the face-up state of
-/// every preceding card — face-down cards step by `TABLEAU_FACEDOWN_FAN_FRAC`,
-/// face-up cards by `TABLEAU_FAN_FRAC`. Mirrors `card_plugin::card_positions`
+/// every preceding card — face-down cards step by `layout.tableau_facedown_fan_frac`,
+/// face-up cards by `layout.tableau_fan_frac`. Mirrors `card_plugin::card_positions`
 /// exactly; any drift creates an offset between the visible card face and
 /// where clicks land.
 fn card_position(game: &GameState, layout: &Layout, pile: &PileType, stack_index: usize) -> Vec2 {
@@ -1058,9 +1055,9 @@ fn card_position(game: &GameState, layout: &Layout, pile: &PileType, stack_index
         if let Some(pile_cards) = game.piles.get(pile) {
             for card in pile_cards.cards.iter().take(stack_index) {
                 let step = if card.face_up {
-                    TABLEAU_FAN_FRAC
+                    layout.tableau_fan_frac
                 } else {
-                    TABLEAU_FACEDOWN_FAN_FRAC
+                    layout.tableau_facedown_fan_frac
                 };
                 y_offset -= layout.card_size.y * step;
             }
@@ -1195,7 +1192,7 @@ fn pile_drop_rect(pile: &PileType, layout: &Layout, game: &GameState) -> (Vec2, 
     if matches!(pile, PileType::Tableau(_)) {
         let card_count = game.piles.get(pile).map_or(0, |p| p.cards.len());
         if card_count > 1 {
-            let fan = -layout.card_size.y * TABLEAU_FAN_FRAC;
+            let fan = -layout.card_size.y * layout.tableau_fan_frac;
             let bottom_card_center_y = center.y + fan * (card_count - 1) as f32;
             let top_edge = center.y + layout.card_size.y / 2.0;
             let bottom_edge = bottom_card_center_y - layout.card_size.y / 2.0;
