@@ -66,9 +66,16 @@ rewrites required.
 
 ## P1 — Touch UX
 
-- [ ] **Suppress keyboard-hint labels on Android.** Gate the `Esc / A /
-  N / []` accelerator chips behind `#[cfg(not(target_os = "android"))]`
-  in the HUD spawn site(s).
+- [x] **Suppress keyboard-hint labels on Android.** *Closed
+  2026-05-10.* `spawn_action_button` now nulls the `hotkey`
+  argument on Android via a `#[cfg(target_os = "android")]` rebind,
+  so the U / Esc / F1 / N chips next to the action row labels
+  disappear on touch builds. Other hint sites (onboarding panel,
+  pause-modal `Esc` hint, mode-card hotkey chips on the home
+  screen, replay overlay footer, modal toggle hints in
+  profile/stats/leaderboard/settings, help screen) survive — they
+  live behind navigation and a touch user reaches them less often.
+  Track as a P3 sweep when more screens are audited on hardware.
 - [ ] **Thumb-sized hit targets.** HUD buttons sized for mouse;
   Material guideline minimum is 44–48 dp. Increase button paddings
   on touch builds.

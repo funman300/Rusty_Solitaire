@@ -730,6 +730,14 @@ fn spawn_action_button<M: Component>(
     font: &TextFont,
     order: i32,
 ) {
+    // Hotkey hint chips ("U", "Esc", "F1", "N") are meaningless on a
+    // touch device — the button itself is the affordance — and they
+    // visibly clutter the narrow-viewport action row. Force the hint
+    // off on Android; the chevrons on Menu/Modes remain because they
+    // indicate dropdown behaviour and still apply on touch.
+    #[cfg(target_os = "android")]
+    let hotkey: Option<&'static str> = None;
+
     let hotkey_font = TextFont {
         font: font.font.clone(),
         font_size: TYPE_CAPTION,
