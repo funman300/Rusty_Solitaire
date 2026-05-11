@@ -519,8 +519,10 @@ fn handle_touch_stock_tap(
 /// Begins a mouse drag: records the press position and the cards that would be
 /// dragged. Cards are **not** elevated yet — that happens in [`follow_drag`]
 /// once the drag threshold is crossed.
+#[allow(clippy::too_many_arguments)]
 fn start_drag(
     buttons: Res<ButtonInput<MouseButton>>,
+    touches: Option<Res<Touches>>,
     paused: Option<Res<PausedResource>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform)>,
@@ -533,6 +535,15 @@ fn start_drag(
     }
     // Only start a new drag when idle (no touch drag running either).
     if !buttons.just_pressed(MouseButton::Left) || !drag.is_idle() {
+        return;
+    }
+    // On platforms where Winit simulates a MouseButton::Left press from the
+    // first touch, this guard ensures touch_start_drag (which runs after this
+    // system) claims the drag state instead of the mouse path. Without it the
+    // card is tracked via cursor_world (updated from the simulated mouse
+    // position) rather than the Touches resource, which can be one frame
+    // behind the actual finger position on Android.
+    if touches.as_ref().is_some_and(|t| t.iter_just_pressed().next().is_some()) {
         return;
     }
     let Some(layout) = layout else { return };

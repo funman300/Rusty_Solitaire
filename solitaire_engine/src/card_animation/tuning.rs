@@ -114,7 +114,7 @@ impl AnimationTuning {
             platform: InputPlatform::Touch,
             duration_scale: 0.75,
             overshoot_scale: 0.5,
-            drag_threshold_px: 10.0,
+            drag_threshold_px: 8.0,  // Android ViewConfiguration.getScaledTouchSlop()
             drag_scale: 1.12,
             hover_scale: 1.0, // no hover affordance on touch
             hover_lerp_speed: 20.0,

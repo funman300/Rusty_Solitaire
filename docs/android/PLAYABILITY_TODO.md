@@ -107,9 +107,18 @@ rewrites required.
 
 ## P2 — Polish
 
-- [ ] **Drag responsiveness on touch.** Bevy default touch-to-mouse
-  mapping can lag; confirm drag start threshold isn't too high for a
-  finger.
+- [x] **Drag responsiveness on touch.** *Closed 2026-05-11.*
+  Two code-side improvements shipped; final feel confirmation still needs
+  hardware:
+  1. `start_drag` (mouse path) now bails out when a touch is just-pressed
+     (`Touches::iter_just_pressed()`), ensuring `touch_start_drag` always
+     owns the drag state on touch-screen devices — including Bevy/Winit
+     versions that simulate `MouseButton::Left` from the primary touch.
+  2. Mobile drag commit threshold lowered 10 px → 8 px, matching Android's
+     `ViewConfiguration.getScaledTouchSlop()` spec. Smaller threshold →
+     smaller snap-on-commit and faster perceived response.
+  **Remaining:** connect AVD or device and verify drag feels responsive
+  with no stutter; tune threshold further if needed.
 - [ ] **Long-press menu.** Alternative to right-click (which doesn't
   exist on touch). Wire to the existing right-click-highlight system.
 - [ ] **HUD typography.** Reduce text sizes for `Score:`, `Moves:`,
