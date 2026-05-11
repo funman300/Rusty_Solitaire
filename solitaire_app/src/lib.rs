@@ -30,7 +30,8 @@ use solitaire_engine::{
     CursorPlugin, DailyChallengePlugin, DiagnosticsHudPlugin, DifficultyPlugin, FeedbackAnimPlugin,
     FontPlugin, GamePlugin, HelpPlugin, HomePlugin, HudPlugin, InputPlugin, LeaderboardPlugin,
     OnboardingPlugin, PausePlugin, PlayBySeedPlugin, ProfilePlugin, ProgressPlugin,
-    RadialMenuPlugin, ReplayOverlayPlugin, ReplayPlaybackPlugin, SelectionPlugin, SettingsPlugin,
+    RadialMenuPlugin, ReplayOverlayPlugin, ReplayPlaybackPlugin, SafeAreaInsetsPlugin,
+    SelectionPlugin, SettingsPlugin,
     SplashPlugin, StatsPlugin, SyncPlugin, TablePlugin, ThemePlugin, ThemeRegistryPlugin,
     TimeAttackPlugin, UiFocusPlugin, UiModalPlugin, UiTooltipPlugin, WeeklyGoalsPlugin,
     WinSummaryPlugin,
@@ -173,6 +174,7 @@ pub fn run() {
         .add_plugins(PlayBySeedPlugin)
         .add_plugins(DifficultyPlugin)
         .add_plugins(TimeAttackPlugin)
+        .add_plugins(SafeAreaInsetsPlugin)
         .add_plugins(HudPlugin)
         .add_plugins(HelpPlugin)
         .add_plugins(HomePlugin::default())

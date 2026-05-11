@@ -35,6 +35,7 @@ pub mod replay_playback;
 pub mod settings_plugin;
 pub mod progress_plugin;
 pub mod resources;
+pub mod safe_area;
 pub mod selection_plugin;
 pub mod splash_plugin;
 pub mod stats_plugin;
@@ -138,6 +139,7 @@ pub use settings_plugin::{
 };
 pub use layout::{compute_layout, Layout, LayoutResource};
 pub use resources::{DragState, GameStateResource, HintCycleIndex, SettingsScrollPos, SyncStatus, SyncStatusResource};
+pub use safe_area::{SafeAreaAnchoredTop, SafeAreaInsets, SafeAreaInsetsPlugin};
 pub use selection_plugin::{
     KeyboardDragState, SelectionHighlight, SelectionPlugin, SelectionState,
 };

@@ -17,6 +17,8 @@ use crate::daily_challenge_plugin::DailyChallengeResource;
 use crate::progress_plugin::ProgressResource;
 use crate::settings_plugin::SettingsResource;
 use crate::layout::HUD_BAND_HEIGHT;
+use crate::safe_area::{SafeAreaAnchoredTop, SafeAreaInsets};
+use crate::ui_theme::SPACE_2;
 use crate::ui_theme::{
     scaled_duration, ACCENT_PRIMARY, ACCENT_SECONDARY, BG_ELEVATED, BG_ELEVATED_HI,
     BG_ELEVATED_PRESSED, BG_HUD_BAND, BORDER_SUBTLE, HighContrastBorder, MOTION_SCORE_PULSE_SECS,
@@ -376,11 +378,13 @@ impl Plugin for HudPlugin {
 /// bottom edge lines up exactly with the top edge of the highest
 /// playable card. The fill is `BG_HUD_BAND` — midnight purple at 0.70
 /// alpha, so the green felt reads through subtly.
-fn spawn_hud_band(mut commands: Commands) {
+fn spawn_hud_band(insets: Option<Res<SafeAreaInsets>>, mut commands: Commands) {
+    const BASE_TOP: f32 = 0.0;
+    let top_inset = insets.as_deref().copied().unwrap_or_default().top;
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(0.0),
+            top: Val::Px(BASE_TOP + top_inset),
             left: Val::Px(0.0),
             width: Val::Percent(100.0),
             height: Val::Px(HUD_BAND_HEIGHT),
@@ -391,6 +395,7 @@ fn spawn_hud_band(mut commands: Commands) {
         // paint on top, but above the card sprites (which are 2D-world
         // entities and rendered behind UI regardless).
         ZIndex(Z_HUD - 1),
+        SafeAreaAnchoredTop { base_top: BASE_TOP },
     ));
 }
 
@@ -413,7 +418,12 @@ fn spawn_hud_band(mut commands: Commands) {
 /// player's #1 complaint. This restructure groups by purpose, lets
 /// transient items disappear cleanly, and uses the typography scale to
 /// make Score the visual protagonist.
-fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
+fn spawn_hud(
+    font_res: Option<Res<FontResource>>,
+    insets: Option<Res<SafeAreaInsets>>,
+    mut commands: Commands,
+) {
+    let top_inset = insets.as_deref().copied().unwrap_or_default().top;
     let font_handle = font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default();
     let font_score = TextFont {
         font: font_handle.clone(),
@@ -443,12 +453,13 @@ fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
             Node {
                 position_type: PositionType::Absolute,
                 left: VAL_SPACE_3,
-                top: VAL_SPACE_2,
+                top: Val::Px(SPACE_2 + top_inset),
                 flex_direction: FlexDirection::Column,
                 row_gap: VAL_SPACE_1,
                 ..default()
             },
             ZIndex(Z_HUD),
+            SafeAreaAnchoredTop { base_top: SPACE_2 },
         ))
         .with_children(|hud| {
             // Tier 1 — primary readouts. Score is the protagonist (HEADLINE);
@@ -568,7 +579,12 @@ fn spawn_hud(font_res: Option<Res<FontResource>>, mut commands: Commands) {
 /// Order (left → right): Undo, Pause, Help, New Game. New Game is rightmost
 /// because it's the most consequential action; the destructive button sits
 /// on its own visual edge.
-fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Commands) {
+fn spawn_action_buttons(
+    font_res: Option<Res<FontResource>>,
+    insets: Option<Res<SafeAreaInsets>>,
+    mut commands: Commands,
+) {
+    let top_inset = insets.as_deref().copied().unwrap_or_default().top;
     let font = TextFont {
         font: font_res.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
         // TYPE_BODY (14.0) — was a hardcoded `16.0` until the
@@ -585,13 +601,14 @@ fn spawn_action_buttons(font_res: Option<Res<FontResource>>, mut commands: Comma
             Node {
                 position_type: PositionType::Absolute,
                 right: VAL_SPACE_3,
-                top: VAL_SPACE_2,
+                top: Val::Px(SPACE_2 + top_inset),
                 flex_direction: FlexDirection::Row,
                 column_gap: VAL_SPACE_2,
                 align_items: AlignItems::Center,
                 ..default()
             },
             ZIndex(Z_HUD),
+            SafeAreaAnchoredTop { base_top: SPACE_2 },
         ))
         .with_children(|row| {
             // Menu and Modes don't have a single hotkey accelerator
