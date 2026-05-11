@@ -71,13 +71,19 @@ impl Plugin for SafeAreaInsetsPlugin {
 /// a session.
 fn apply_safe_area_anchors(
     insets: Res<SafeAreaInsets>,
+    windows: Query<&Window>,
     mut q: Query<(&SafeAreaAnchoredTop, &mut Node)>,
 ) {
     if !insets.is_changed() {
         return;
     }
+    // Android's WindowInsets API returns physical pixels; Bevy UI's Val::Px
+    // expects logical pixels (≈ dp). Divide by the window scale factor so
+    // the HUD band shifts by the correct number of dp on high-DPI devices.
+    let scale = windows.iter().next().map_or(1.0, |w| w.scale_factor());
+    let top_logical = insets.top / scale;
     for (anchor, mut node) in &mut q {
-        node.top = Val::Px(anchor.base_top + insets.top);
+        node.top = Val::Px(anchor.base_top + top_logical);
     }
 }
 

@@ -11,6 +11,7 @@ use solitaire_core::pile::PileType;
 
 use crate::events::{HintVisualEvent, StateChangedEvent};
 use crate::layout::{compute_layout, Layout, LayoutResource, LayoutSystem};
+use crate::safe_area::SafeAreaInsets;
 use crate::resources::GameStateResource;
 #[cfg(test)]
 use crate::layout::TABLE_COLOUR;
@@ -82,6 +83,7 @@ impl Plugin for TablePlugin {
             .add_systems(
                 Update,
                 (
+                    on_safe_area_changed.before(LayoutSystem::UpdateOnResize),
                     on_window_resized.in_set(LayoutSystem::UpdateOnResize),
                     apply_theme_on_settings_change,
                     apply_hint_pile_highlight,
@@ -146,6 +148,7 @@ fn setup_table(
     existing_camera: Query<(), With<Camera>>,
     settings: Option<Res<SettingsResource>>,
     bg_images: Option<Res<BackgroundImageSet>>,
+    safe_area: Option<Res<SafeAreaInsets>>,
 ) {
     // Only spawn a camera if one does not already exist (e.g. a parent app
     // may have added one in tests).
@@ -153,11 +156,15 @@ fn setup_table(
         commands.spawn(Camera2d);
     }
 
-    let window_size = windows
-        .iter()
-        .next()
-        .map_or(Vec2::new(1280.0, 800.0), default_window_size);
-    let layout = compute_layout(window_size);
+    let (window_size, scale) = windows.iter().next().map_or(
+        (Vec2::new(1280.0, 800.0), 1.0f32),
+        |w| (default_window_size(w), w.scale_factor()),
+    );
+    // Safe-area insets arrive from JNI asynchronously; they are almost always
+    // 0 here (populated ~frame 2-3). on_safe_area_changed fires when they
+    // arrive and issues a synthetic WindowResized to re-snap all game objects.
+    let safe_area_top = safe_area.as_deref().copied().unwrap_or_default().top / scale;
+    let layout = compute_layout(window_size, safe_area_top);
 
     let selected_bg = settings.as_ref().map_or(0, |s| s.0.selected_background);
 
@@ -279,6 +286,8 @@ fn spawn_pile_markers(commands: &mut Commands, layout: &Layout) {
 #[allow(clippy::type_complexity)]
 fn on_window_resized(
     mut events: MessageReader<WindowResized>,
+    safe_area: Option<Res<SafeAreaInsets>>,
+    windows: Query<&Window>,
     mut layout_res: Option<ResMut<LayoutResource>>,
     mut backgrounds: Query<
         (&mut Sprite, &mut Transform),
@@ -290,7 +299,9 @@ fn on_window_resized(
         return;
     };
     let window_size = Vec2::new(ev.width, ev.height);
-    let new_layout = compute_layout(window_size);
+    let scale = windows.iter().next().map_or(1.0, |w| w.scale_factor());
+    let safe_area_top = safe_area.as_deref().copied().unwrap_or_default().top / scale;
+    let new_layout = compute_layout(window_size, safe_area_top);
 
     if let Some(layout_res) = layout_res.as_deref_mut() {
         layout_res.0 = new_layout.clone();
@@ -316,6 +327,33 @@ fn on_window_resized(
     // `StateChangedEvent → sync_cards → CardAnim` which would retarget the
     // slide tween every frame during a corner drag (the visible "snap back
     // and forth" jitter).
+}
+
+/// Bridges the asynchronous safe-area inset update into the synchronous
+/// window-resize pipeline. When Android's JNI delivers the real inset values
+/// (typically frame 2-3 of a fresh launch), this system writes a synthetic
+/// `WindowResized` event carrying the current window size. `on_window_resized`
+/// (which runs in `LayoutSystem::UpdateOnResize`) will then recompute the
+/// layout with the correct `safe_area_top`, update `LayoutResource` and the
+/// pile markers, and `snap_cards_on_window_resize` (running after the set)
+/// will snap card sprites to the corrected positions.
+fn on_safe_area_changed(
+    safe_area: Option<Res<SafeAreaInsets>>,
+    windows: Query<(Entity, &Window)>,
+    mut resize_events: MessageWriter<WindowResized>,
+) {
+    let Some(safe_area) = safe_area else { return; };
+    if !safe_area.is_changed() {
+        return;
+    }
+    let Some((entity, window)) = windows.iter().next() else {
+        return;
+    };
+    resize_events.write(WindowResized {
+        window: entity,
+        width: window.resolution.width(),
+        height: window.resolution.height(),
+    });
 }
 
 // ---------------------------------------------------------------------------
