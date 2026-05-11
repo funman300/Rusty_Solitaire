@@ -132,11 +132,20 @@ pub fn run() {
                     ..default()
                 })
                 // The `assets/` directory lives at the workspace root, but
-                // Bevy resolves `AssetPlugin::file_path` relative to the
-                // binary package's `CARGO_MANIFEST_DIR` (`solitaire_app/`).
-                // Point one level up so `cargo run -p solitaire_app` finds
-                // card faces, backs, backgrounds, and the UI font.
+                // on desktop Bevy resolves `AssetPlugin::file_path` relative
+                // to the binary package's `CARGO_MANIFEST_DIR`
+                // (`solitaire_app/`), so `cargo run -p solitaire_app` would
+                // miss the workspace-root `assets/` without a `../` prefix.
+                //
+                // On Android cargo-apk packages the same directory into the
+                // APK at `assets/` (via `[package.metadata.android].assets`
+                // in solitaire_app/Cargo.toml). Bevy's `AndroidAssetReader`
+                // is already rooted there, so any `file_path` other than the
+                // default makes it walk *out* of the APK's assets root and
+                // all loads fail silently — which is what produced the
+                // solid-red card-back fallback in the v0.22.3 screenshot.
                 .set(bevy::asset::AssetPlugin {
+                    #[cfg(not(target_os = "android"))]
                     file_path: "../assets".to_string(),
                     ..default()
                 }),
