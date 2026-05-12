@@ -329,7 +329,7 @@ pub fn spawn_modal_button<M: Component>(
     font_res: Option<&FontResource>,
 ) {
     #[cfg(target_os = "android")]
-    let hotkey = None;
+    let hotkey: Option<&'static str> = None;
     let font_handle = font_res.map(|f| f.0.clone()).unwrap_or_default();
     let font_label = TextFont {
         font: font_handle.clone(),
