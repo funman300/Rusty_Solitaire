@@ -35,7 +35,7 @@ use crate::ui_theme::{
     CARD_SHADOW_ALPHA_DRAG, CARD_SHADOW_ALPHA_IDLE, CARD_SHADOW_COLOR, CARD_SHADOW_LOCAL_Z,
     CARD_SHADOW_OFFSET_DRAG, CARD_SHADOW_OFFSET_IDLE, CARD_SHADOW_PADDING_DRAG,
     CARD_SHADOW_PADDING_IDLE, STOCK_BADGE_BG, STOCK_BADGE_FG, TEXT_PRIMARY, TEXT_PRIMARY_HC,
-    TYPE_CAPTION, Z_STOCK_BADGE,
+    TYPE_BODY, Z_STOCK_BADGE,
 };
 
 /// Fraction of card height used as vertical offset between face-up tableau cards.
@@ -263,6 +263,23 @@ pub struct ShadowEntity;
 #[derive(Component, Debug)]
 pub struct CardShadow;
 
+/// Marker on the thin contrasting border sprite spawned behind face-down cards.
+///
+/// Face-down cards use `back_0.png` which is near-black (`#1a1a1a`). On the
+/// dark-green felt the edges are nearly invisible. This child sprite — slightly
+/// larger than the card, rendered at local z=-0.01 so it peeks out as a thin
+/// frame — gives every face-down card a visible perimeter.
+#[derive(Component, Debug)]
+pub struct CardBackFrame;
+
+/// Fill colour for the face-down card border frame. Medium gray so it reads as
+/// a neutral "edge" without competing with the suit colours on face-up cards.
+const CARD_BACK_FRAME_COLOR: Color = Color::srgb(0.38, 0.38, 0.38);
+
+/// Extra width/height (in world units) added to each side of the card to form
+/// the visible border. 3 world units ≈ 3 dp on a 1× screen.
+const CARD_BACK_FRAME_PADDING: f32 = 3.0;
+
 /// Returns the `(offset, padding, alpha)` triple used to paint a per-card
 /// shadow given whether its parent card is currently part of the dragged
 /// stack. Pulled out as a pure helper so the shadow tuning can be unit-tested
@@ -314,6 +331,21 @@ fn add_card_shadow_child(parent: &mut ChildSpawnerCommands, card_size: Vec2) {
         CardShadow,
         card_shadow_sprite(card_size),
         card_shadow_transform(),
+        Visibility::default(),
+    ));
+}
+
+/// Spawns a `CardBackFrame` child behind a face-down card entity so the dark
+/// back PNG has a visible perimeter against the dark felt.
+fn add_card_back_frame_child(parent: &mut ChildSpawnerCommands, card_size: Vec2) {
+    parent.spawn((
+        CardBackFrame,
+        Sprite {
+            color: CARD_BACK_FRAME_COLOR,
+            custom_size: Some(card_size + Vec2::splat(CARD_BACK_FRAME_PADDING)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, -0.01),
         Visibility::default(),
     ));
 }
@@ -373,6 +405,9 @@ impl Plugin for CardPlugin {
             .add_systems(
                 Update,
                 (
+                    update_tableau_fan_frac
+                        .after(GameMutation)
+                        .before(sync_cards_on_change),
                     sync_cards_on_change.after(GameMutation),
                     resync_cards_on_settings_change.before(sync_cards_on_change),
                     start_flip_anim.after(GameMutation),
@@ -706,6 +741,13 @@ fn spawn_card_entity(
     entity.with_children(|b| {
         add_card_shadow_child(b, layout.card_size);
     });
+    // Face-down cards get a thin contrasting border frame so the dark back
+    // PNG reads as a distinct rectangle against the dark felt.
+    if !card.face_up {
+        entity.with_children(|b| {
+            add_card_back_frame_child(b, layout.card_size);
+        });
+    }
     // When PNG faces are loaded the rank/suit are baked into the image.
     // Only spawn the Text2d overlay in the solid-colour fallback (tests).
     if card_images.is_none() {
@@ -781,6 +823,11 @@ fn update_card_entity(
     commands.entity(entity).with_children(|b| {
         add_card_shadow_child(b, layout.card_size);
     });
+    if !card.face_up {
+        commands.entity(entity).with_children(|b| {
+            add_card_back_frame_child(b, layout.card_size);
+        });
+    }
     if card_images.is_none() {
         commands.entity(entity).with_children(|b| {
             b.spawn((
@@ -1438,8 +1485,8 @@ fn update_stock_empty_indicator(
 const STOCK_BADGE_INSET: Vec2 = Vec2::new(-12.0, -8.0);
 
 /// Width / height of the badge background sprite, in world pixels. Sized so
-/// a 2-digit count (max "24") fits comfortably with `TYPE_CAPTION` text.
-const STOCK_BADGE_SIZE: Vec2 = Vec2::new(28.0, 16.0);
+/// a 2-digit count (max "24") fits comfortably with `TYPE_BODY` (14 pt) text.
+const STOCK_BADGE_SIZE: Vec2 = Vec2::new(34.0, 20.0);
 
 /// Returns the count of cards currently in the stock pile.
 ///
@@ -1484,7 +1531,7 @@ fn spawn_stock_count_badge(
     };
     let text_font = TextFont {
         font: font.cloned().unwrap_or_default(),
-        font_size: TYPE_CAPTION,
+        font_size: TYPE_BODY,
         ..default()
     };
 
@@ -1629,13 +1676,20 @@ fn snap_cards_on_window_resize(
     card_images: Option<Res<CardImageSet>>,
     entities: Query<
         (Entity, &CardEntity, &mut Sprite, &mut Transform),
-        (Without<CardLabel>, Without<CardShadow>),
+        (Without<CardLabel>, Without<CardShadow>, Without<CardBackFrame>),
     >,
     label_query: Query<&mut TextFont, (With<CardLabel>, Without<StockEmptyLabel>)>,
-    shadow_query: Query<&mut Sprite, (With<CardShadow>, Without<CardEntity>, Without<PileMarker>)>,
+    shadow_query: Query<
+        &mut Sprite,
+        (With<CardShadow>, Without<CardEntity>, Without<PileMarker>, Without<CardBackFrame>),
+    >,
+    frame_query: Query<
+        &mut Sprite,
+        (With<CardBackFrame>, Without<CardEntity>, Without<CardShadow>, Without<PileMarker>),
+    >,
     mut pile_markers: Query<
         (Entity, &PileMarker, &mut Sprite),
-        (Without<CardEntity>, Without<CardShadow>),
+        (Without<CardEntity>, Without<CardShadow>, Without<CardBackFrame>),
     >,
     label_children: Query<(Entity, &ChildOf), With<StockEmptyLabel>>,
 ) {
@@ -1665,6 +1719,7 @@ fn snap_cards_on_window_resize(
         entities,
         label_query,
         shadow_query,
+        frame_query,
     );
 
     apply_stock_empty_indicator(
@@ -1691,7 +1746,7 @@ fn snap_cards_on_window_resize(
 ///
 /// Any in-flight `CardAnim` slide is removed so a mid-tween card is not
 /// retargeted relative to the previous card-size's position.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn resize_cards_in_place(
     commands: &mut Commands,
     game: &GameState,
@@ -1699,12 +1754,16 @@ fn resize_cards_in_place(
     card_images: Option<&CardImageSet>,
     mut entities: Query<
         (Entity, &CardEntity, &mut Sprite, &mut Transform),
-        (Without<CardLabel>, Without<CardShadow>),
+        (Without<CardLabel>, Without<CardShadow>, Without<CardBackFrame>),
     >,
     mut label_query: Query<&mut TextFont, (With<CardLabel>, Without<StockEmptyLabel>)>,
     mut shadow_query: Query<
         &mut Sprite,
-        (With<CardShadow>, Without<CardEntity>, Without<PileMarker>),
+        (With<CardShadow>, Without<CardEntity>, Without<PileMarker>, Without<CardBackFrame>),
+    >,
+    mut frame_query: Query<
+        &mut Sprite,
+        (With<CardBackFrame>, Without<CardEntity>, Without<CardShadow>, Without<PileMarker>),
     >,
 ) {
     let positions = card_positions(game, layout);
@@ -1755,6 +1814,55 @@ fn resize_cards_in_place(
         for mut font in label_query.iter_mut() {
             font.font_size = new_font_size;
         }
+    }
+
+    // Resize every face-down border frame to match the new card size.
+    let frame_size = layout.card_size + Vec2::splat(CARD_BACK_FRAME_PADDING);
+    for mut frame_sprite in frame_query.iter_mut() {
+        frame_sprite.custom_size = Some(frame_size);
+    }
+}
+
+/// Adjusts `LayoutResource.tableau_fan_frac` to match the current maximum
+/// face-up column depth. Runs after every `StateChangedEvent` so the fan
+/// grows as the player reveals cards — preventing over-spread early-game
+/// (fresh deal: max depth = 1, fan_frac = TABLEAU_FAN_FRAC = 0.25) while
+/// allowing the full window-sized fan late-game (up to 13 face-up cards).
+fn update_tableau_fan_frac(
+    mut events: MessageReader<StateChangedEvent>,
+    game: Option<Res<GameStateResource>>,
+    mut layout: Option<ResMut<LayoutResource>>,
+) {
+    if events.read().next().is_none() {
+        return;
+    }
+    let Some(game) = game else { return; };
+    let Some(layout) = layout.as_mut() else { return; };
+
+    let max_depth = (0..7_usize)
+        .filter_map(|i| game.0.piles.get(&solitaire_core::pile::PileType::Tableau(i)))
+        .map(|pile| pile.cards.iter().filter(|c| c.face_up).count())
+        .max()
+        .unwrap_or(0);
+
+    let card_h = layout.0.card_size.y;
+    let avail = layout.0.available_tableau_height;
+
+    let new_frac = if max_depth <= 1 || card_h <= 0.0 {
+        TABLEAU_FAN_FRAC
+    } else {
+        let ideal = avail / ((max_depth - 1) as f32 * card_h);
+        let max_frac = if card_h > 0.0 { avail / (12.0 * card_h) } else { TABLEAU_FAN_FRAC };
+        ideal.clamp(TABLEAU_FAN_FRAC, max_frac.max(TABLEAU_FAN_FRAC))
+    };
+    let new_facedown_frac = new_frac * (TABLEAU_FACEDOWN_FAN_FRAC / TABLEAU_FAN_FRAC);
+
+    // Only update the face-up fan. The face-down fan is left at the
+    // window-size-adaptive value from compute_layout so stacked face-down
+    // cards remain visible regardless of how many face-up cards are out.
+    let _ = new_facedown_frac; // computed but unused — leave facedown alone
+    if (layout.0.tableau_fan_frac - new_frac).abs() > 1e-4 {
+        layout.0.tableau_fan_frac = new_frac;
     }
 }
 
@@ -1862,7 +1970,7 @@ mod tests {
         // At game start waste is empty, so all 52 cards are across stock + tableau.
         let g = GameState::new(42, solitaire_core::game_state::DrawMode::DrawOne);
         let layout =
-            crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+            crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let positions = card_positions(&g, &layout);
         assert_eq!(positions.len(), 52);
     }
@@ -1882,7 +1990,7 @@ mod tests {
             .collect();
         assert_eq!(waste_ids.len(), 3);
 
-        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let positions = card_positions(&g, &layout);
 
         // Filter rendered positions to only waste cards (by card ID).
@@ -1911,7 +2019,7 @@ mod tests {
         let waste_ids: std::collections::HashSet<u32> =
             waste_pile.iter().map(|c| c.id).collect();
 
-        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let positions = card_positions(&g, &layout);
 
         let mut waste_rendered: Vec<_> = positions
@@ -1936,7 +2044,7 @@ mod tests {
     fn card_positions_tableau_cards_are_fanned_downward() {
         let g = GameState::new(42, solitaire_core::game_state::DrawMode::DrawOne);
         let layout =
-            crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+            crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let positions = card_positions(&g, &layout);
 
         // Collect positions for Tableau(6) (should have 7 cards).
@@ -2248,7 +2356,7 @@ mod tests {
     #[test]
     fn facedown_cards_use_tighter_fan_than_uniform_faceup_fan() {
         let g = GameState::new(42, solitaire_core::game_state::DrawMode::DrawOne);
-        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let positions = card_positions(&g, &layout);
 
         // Tableau(6) has 7 cards: 6 face-down + 1 face-up on top.
@@ -2409,7 +2517,7 @@ mod tests {
         // Sanity-check: the new font size matches FONT_SIZE_FRAC × the
         // post-resize card width, so the in-place path is using the
         // refreshed Layout.
-        let expected_layout = crate::layout::compute_layout(Vec2::new(800.0, 600.0), 0.0);
+        let expected_layout = crate::layout::compute_layout(Vec2::new(800.0, 600.0), 0.0, 0.0);
         let expected = expected_layout.card_size.x * FONT_SIZE_FRAC;
         assert!(
             (after - expected).abs() < 1e-3,

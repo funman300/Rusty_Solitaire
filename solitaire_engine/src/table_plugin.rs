@@ -163,8 +163,10 @@ fn setup_table(
     // Safe-area insets arrive from JNI asynchronously; they are almost always
     // 0 here (populated ~frame 2-3). on_safe_area_changed fires when they
     // arrive and issues a synthetic WindowResized to re-snap all game objects.
-    let safe_area_top = safe_area.as_deref().copied().unwrap_or_default().top / scale;
-    let layout = compute_layout(window_size, safe_area_top);
+    let insets = safe_area.as_deref().copied().unwrap_or_default();
+    let safe_area_top = insets.top / scale;
+    let safe_area_bottom = insets.bottom / scale;
+    let layout = compute_layout(window_size, safe_area_top, safe_area_bottom);
 
     let selected_bg = settings.as_ref().map_or(0, |s| s.0.selected_background);
 
@@ -300,8 +302,10 @@ fn on_window_resized(
     };
     let window_size = Vec2::new(ev.width, ev.height);
     let scale = windows.iter().next().map_or(1.0, |w| w.scale_factor());
-    let safe_area_top = safe_area.as_deref().copied().unwrap_or_default().top / scale;
-    let new_layout = compute_layout(window_size, safe_area_top);
+    let insets = safe_area.as_deref().copied().unwrap_or_default();
+    let safe_area_top = insets.top / scale;
+    let safe_area_bottom = insets.bottom / scale;
+    let new_layout = compute_layout(window_size, safe_area_top, safe_area_bottom);
 
     if let Some(layout_res) = layout_res.as_deref_mut() {
         layout_res.0 = new_layout.clone();

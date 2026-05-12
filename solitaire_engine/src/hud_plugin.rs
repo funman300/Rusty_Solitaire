@@ -276,6 +276,16 @@ pub struct MenuButton;
 #[derive(Component, Debug)]
 pub struct MenuPopover;
 
+/// Fullscreen transparent backdrop spawned behind the [`MenuPopover`].
+/// Pressing it (tap anywhere outside the popover) light-dismisses the menu.
+#[derive(Component, Debug)]
+struct MenuPopoverBackdrop;
+
+/// Fullscreen transparent backdrop spawned behind the [`ModesPopover`].
+/// Pressing it (tap anywhere outside the popover) light-dismisses it.
+#[derive(Component, Debug)]
+struct ModesPopoverBackdrop;
+
 /// One row inside the [`MenuPopover`]. The variant selects which
 /// `Toggle*RequestEvent` the click handler fires.
 #[derive(Component, Debug, Clone, Copy)]
@@ -359,8 +369,10 @@ impl Plugin for HudPlugin {
                     handle_help_button,
                     handle_modes_button,
                     handle_mode_option_click,
+                    handle_modes_backdrop_click,
                     handle_menu_button,
                     handle_menu_option_click,
+                    handle_menu_backdrop_click,
                     paint_action_buttons,
                 ),
             )
@@ -627,13 +639,11 @@ fn spawn_action_buttons(
                 top: Val::Px(SPACE_2 + top_inset),
                 flex_direction: FlexDirection::Row,
                 // 6 buttons total ~510 px wide; on a desktop window
-                // (typically >= 1280 px) `max_width: 50%` is >= 640 px
-                // and the row stays a single line. On a 360 dp phone
-                // 50% is 180 px and the row wraps to two-three lines —
-                // which keeps the buttons out of the left HUD column's
-                // horizontal range and prevents the off-screen-left
-                // clipping seen in the v0.22.3 hardware screenshot.
-                max_width: Val::Percent(50.0),
+                // (typically >= 1280 px) `max_width: 65%` is >= 832 px
+                // and the row stays a single line. On a 411 dp phone
+                // 65% is 267 px; the 6 buttons wrap to 2 lines instead
+                // of 3, reclaiming one row of vertical HUD space.
+                max_width: Val::Percent(65.0),
                 flex_wrap: FlexWrap::Wrap,
                 // When the row wraps, buttons pack to the *end* of each
                 // line so the row stays visually right-aligned (matches
@@ -853,6 +863,7 @@ fn handle_help_button(
 fn handle_modes_button(
     interaction_query: Query<&Interaction, (With<ModesButton>, Changed<Interaction>)>,
     popovers: Query<Entity, With<ModesPopover>>,
+    backdrops: Query<Entity, With<ModesPopoverBackdrop>>,
     progress: Option<Res<ProgressResource>>,
     daily: Option<Res<DailyChallengeResource>>,
     font_res: Option<Res<FontResource>>,
@@ -866,6 +877,9 @@ fn handle_modes_button(
     }
     if let Ok(entity) = popovers.single() {
         commands.entity(entity).despawn();
+        for e in &backdrops {
+            commands.entity(e).despawn();
+        }
     } else {
         spawn_modes_popover(
             &mut commands,
@@ -966,6 +980,23 @@ fn spawn_modes_popover(
                     });
             }
         });
+
+    // Fullscreen transparent backdrop at Z_HUD+4 (below the popover at
+    // Z_HUD+5) so tapping outside the panel light-dismisses it.
+    commands.spawn((
+        ModesPopoverBackdrop,
+        Button,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        ZIndex(Z_HUD + 4),
+    ));
 }
 
 /// Dispatches the click on a popover row to the matching request event,
@@ -979,6 +1010,7 @@ fn spawn_modes_popover(
 fn handle_mode_option_click(
     interaction_query: Query<(&Interaction, &ModeOption), Changed<Interaction>>,
     popovers: Query<Entity, With<ModesPopover>>,
+    backdrops: Query<Entity, With<ModesPopoverBackdrop>>,
     mut new_game: MessageWriter<NewGameRequestEvent>,
     mut zen: MessageWriter<StartZenRequestEvent>,
     mut challenge: MessageWriter<StartChallengeRequestEvent>,
@@ -1011,9 +1043,13 @@ fn handle_mode_option_click(
         }
     }
     if clicked_any
-        && let Ok(entity) = popovers.single() {
-            commands.entity(entity).despawn();
+        && let Ok(entity) = popovers.single()
+    {
+        commands.entity(entity).despawn();
+        for e in &backdrops {
+            commands.entity(e).despawn();
         }
+    }
 }
 
 /// Toggles the [`MenuPopover`]: spawns it on first click, despawns it on
@@ -1022,6 +1058,7 @@ fn handle_mode_option_click(
 fn handle_menu_button(
     interaction_query: Query<&Interaction, (With<MenuButton>, Changed<Interaction>)>,
     popovers: Query<Entity, With<MenuPopover>>,
+    backdrops: Query<Entity, With<MenuPopoverBackdrop>>,
     font_res: Option<Res<FontResource>>,
     mut commands: Commands,
 ) {
@@ -1033,6 +1070,9 @@ fn handle_menu_button(
     }
     if let Ok(entity) = popovers.single() {
         commands.entity(entity).despawn();
+        for e in &backdrops {
+            commands.entity(e).despawn();
+        }
     } else {
         spawn_menu_popover(&mut commands, font_res.as_deref());
     }
@@ -1120,6 +1160,23 @@ fn spawn_menu_popover(commands: &mut Commands, font_res: Option<&FontResource>) 
                     });
             }
         });
+
+    // Transparent fullscreen backdrop behind the popover — tapping anywhere
+    // outside the panel light-dismisses it via handle_menu_backdrop_click.
+    commands.spawn((
+        MenuPopoverBackdrop,
+        Button,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        ZIndex(Z_HUD + 4),
+    ));
 }
 
 /// Dispatches the click on a menu row to the matching toggle event,
@@ -1128,6 +1185,7 @@ fn spawn_menu_popover(commands: &mut Commands, font_res: Option<&FontResource>) 
 fn handle_menu_option_click(
     interaction_query: Query<(&Interaction, &MenuOption), Changed<Interaction>>,
     popovers: Query<Entity, With<MenuPopover>>,
+    backdrops: Query<Entity, With<MenuPopoverBackdrop>>,
     mut stats: MessageWriter<ToggleStatsRequestEvent>,
     mut achievements: MessageWriter<ToggleAchievementsRequestEvent>,
     mut profile: MessageWriter<ToggleProfileRequestEvent>,
@@ -1162,7 +1220,44 @@ fn handle_menu_option_click(
     if clicked_any
         && let Ok(entity) = popovers.single() {
             commands.entity(entity).despawn();
+            for e in &backdrops {
+                commands.entity(e).despawn();
+            }
         }
+}
+
+/// Despawns the [`ModesPopover`] and its backdrop when the player taps
+/// anywhere outside the panel.
+fn handle_modes_backdrop_click(
+    interaction_query: Query<&Interaction, (With<ModesPopoverBackdrop>, Changed<Interaction>)>,
+    popovers: Query<Entity, With<ModesPopover>>,
+    backdrops: Query<Entity, With<ModesPopoverBackdrop>>,
+    mut commands: Commands,
+) {
+    let pressed = interaction_query.iter().any(|i| *i == Interaction::Pressed);
+    if !pressed {
+        return;
+    }
+    for e in popovers.iter().chain(backdrops.iter()) {
+        commands.entity(e).despawn();
+    }
+}
+
+/// Despawns the [`MenuPopover`] and its backdrop when the player taps
+/// anywhere outside the panel (i.e. the transparent backdrop is pressed).
+fn handle_menu_backdrop_click(
+    interaction_query: Query<&Interaction, (With<MenuPopoverBackdrop>, Changed<Interaction>)>,
+    popovers: Query<Entity, With<MenuPopover>>,
+    backdrops: Query<Entity, With<MenuPopoverBackdrop>>,
+    mut commands: Commands,
+) {
+    let pressed = interaction_query.iter().any(|i| *i == Interaction::Pressed);
+    if !pressed {
+        return;
+    }
+    for e in popovers.iter().chain(backdrops.iter()) {
+        commands.entity(e).despawn();
+    }
 }
 
 /// Auto-fade state for the action button bar. The bar fades out when

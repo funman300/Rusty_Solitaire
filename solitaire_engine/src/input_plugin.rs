@@ -1226,11 +1226,7 @@ fn pile_drop_rect(pile: &PileType, layout: &Layout, game: &GameState) -> (Vec2, 
 /// Maximum seconds between two clicks to count as a double-click.
 const DOUBLE_CLICK_WINDOW: f32 = 0.35;
 
-/// Maximum seconds between two taps to count as a double-tap.
-/// Slightly wider than the mouse window — touch screens have higher latency.
-const DOUBLE_TAP_WINDOW: f32 = 0.5;
-
-/// Duration of the lime flash applied to moved cards when a double-tap
+/// Duration of the lime flash applied to moved cards when a tap
 /// auto-move succeeds. Short enough not to linger, long enough to register
 /// during the card animation (~0.3 s).
 const DOUBLE_TAP_FLASH_SECS: f32 = 0.35;
@@ -1389,36 +1385,28 @@ fn handle_double_click(
 }
 
 // ---------------------------------------------------------------------------
-// Task #27b — Double-tap to auto-move (touch equivalent of double-click)
+// Tap-to-move (touch equivalent of mouse auto-move)
 // ---------------------------------------------------------------------------
 
-/// System that detects double-taps on face-up cards and fires `MoveRequestEvent`
-/// to the best legal destination — the touch equivalent of [`handle_double_click`].
+/// Fires `MoveRequestEvent` when the player taps a face-up card without
+/// dragging — the touch equivalent of the mouse auto-move flow.
 ///
 /// Must run **before** `touch_end_drag` in the system chain. At
 /// `TouchPhase::Ended` the drag state still holds `active_touch_id`,
 /// `cards`, and `origin_pile`; once `touch_end_drag` fires those fields
 /// are cleared and the tap/drag distinction is permanently lost.
 ///
-/// A pure tap is identified by `drag.active_touch_id.is_some() &&
-/// !drag.committed`: the touch began (so `touch_start_drag` populated
-/// `drag`) but the drag threshold was never crossed.
-///
-/// Move priority matches [`handle_double_click`]:
-/// 1. Move the single top card to its best foundation (or tableau).
-/// 2. If no single-card move exists and the selection spans multiple
-///    face-up cards, move the whole stack to the best tableau column.
-/// 3. If both priorities fail, fire `MoveRejectedEvent` for audio + shake
-///    feedback.
+/// Move priority:
+/// 1. Single top card to its best foundation (or tableau).
+/// 2. Whole face-up run to best tableau column when no single-card move exists.
+/// 3. `MoveRejectedEvent` for audio + shake feedback when no legal move found.
 #[allow(clippy::too_many_arguments)]
 fn handle_double_tap(
     mut touch_events: MessageReader<TouchInput>,
     paused: Option<Res<PausedResource>>,
     radial: Option<Res<RightClickRadialState>>,
-    time: Res<Time>,
     drag: Res<DragState>,
     game: Res<GameStateResource>,
-    mut last_tap: Local<HashMap<u32, f32>>,
     mut moves: MessageWriter<MoveRequestEvent>,
     mut rejected: MessageWriter<MoveRejectedEvent>,
     mut commands: Commands,
@@ -1427,32 +1415,20 @@ fn handle_double_tap(
     if paused.is_some_and(|p| p.0) {
         return;
     }
-    // Long-press opened the radial in this frame — let radial_handle_release_or_cancel
-    // own the finger-lift event instead.
+    // Long-press opened the radial — let radial_handle_release_or_cancel own
+    // the finger-lift event.
     if radial.is_some_and(|r| r.is_active()) {
         return;
     }
 
-    // Only active when a touch is tracked and hasn't crossed the drag threshold.
     let Some(active_id) = drag.active_touch_id else { return };
     if drag.committed {
         return;
     }
 
     for event in touch_events.read() {
-        if event.id != active_id {
+        if event.id != active_id || event.phase != TouchPhase::Ended {
             continue;
-        }
-        match event.phase {
-            TouchPhase::Canceled => {
-                // Cancelled touch — clear any pending tap state for these cards.
-                for &id in &drag.cards {
-                    last_tap.remove(&id);
-                }
-                return;
-            }
-            TouchPhase::Ended => {}
-            _ => continue,
         }
 
         // Uncommitted touch ended = pure tap.
@@ -1467,65 +1443,54 @@ fn handle_double_tap(
             return;
         }
 
-        let now = time.elapsed_secs();
-        let prev = last_tap.get(&top_card_id).copied().unwrap_or(f32::NEG_INFINITY);
+        // Priority 1: move single top card.
+        if let Some(dest) = best_destination(top_card, &game.0) {
+            for (entity, ce, mut sprite) in card_sprites.iter_mut() {
+                if ce.card_id == top_card_id {
+                    sprite.color = STATE_SUCCESS;
+                    commands.entity(entity).insert(HintHighlight { remaining: DOUBLE_TAP_FLASH_SECS });
+                    break;
+                }
+            }
+            moves.write(MoveRequestEvent {
+                from: pile.clone(),
+                to: dest,
+                count: 1,
+            });
+            return;
+        }
 
-        if now - prev <= DOUBLE_TAP_WINDOW {
-            last_tap.remove(&top_card_id);
-
-            // Priority 1: move single top card.
-            if let Some(dest) = best_destination(top_card, &game.0) {
-                // Flash the card lime to confirm the double-tap registered.
+        // Priority 2: move whole face-up stack to best tableau column.
+        if drag.cards.len() > 1 {
+            let stack_index = pile_cards.cards.len() - drag.cards.len();
+            if let Some(bottom_card) = pile_cards.cards.get(stack_index)
+                && let Some((dest, count)) = best_tableau_destination_for_stack(
+                    bottom_card,
+                    pile,
+                    &game.0,
+                    drag.cards.len(),
+                )
+            {
                 for (entity, ce, mut sprite) in card_sprites.iter_mut() {
-                    if ce.card_id == top_card_id {
+                    if drag.cards.contains(&ce.card_id) {
                         sprite.color = STATE_SUCCESS;
                         commands.entity(entity).insert(HintHighlight { remaining: DOUBLE_TAP_FLASH_SECS });
-                        break;
                     }
                 }
                 moves.write(MoveRequestEvent {
                     from: pile.clone(),
                     to: dest,
-                    count: 1,
+                    count,
                 });
                 return;
             }
-
-            // Priority 2: move whole face-up stack to best tableau column.
-            if drag.cards.len() > 1 {
-                let stack_index = pile_cards.cards.len() - drag.cards.len();
-                if let Some(bottom_card) = pile_cards.cards.get(stack_index)
-                    && let Some((dest, count)) = best_tableau_destination_for_stack(
-                        bottom_card,
-                        pile,
-                        &game.0,
-                        drag.cards.len(),
-                    )
-                {
-                    // Flash all cards in the moving run.
-                    for (entity, ce, mut sprite) in card_sprites.iter_mut() {
-                        if drag.cards.contains(&ce.card_id) {
-                            sprite.color = STATE_SUCCESS;
-                            commands.entity(entity).insert(HintHighlight { remaining: DOUBLE_TAP_FLASH_SECS });
-                        }
-                    }
-                    moves.write(MoveRequestEvent {
-                        from: pile.clone(),
-                        to: dest,
-                        count,
-                    });
-                    return;
-                }
-            }
-
-            rejected.write(MoveRejectedEvent {
-                from: pile.clone(),
-                to: pile.clone(),
-                count: drag.cards.len(),
-            });
-        } else {
-            last_tap.insert(top_card_id, now);
         }
+
+        rejected.write(MoveRejectedEvent {
+            from: pile.clone(),
+            to: pile.clone(),
+            count: drag.cards.len(),
+        });
     }
 }
 
@@ -1667,7 +1632,7 @@ mod tests {
     #[test]
     fn find_draggable_picks_top_of_tableau() {
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
 
         // In tableau 6, the visually topmost card is the last (face-up) one.
         // Its position: base.y + fan * 6.
@@ -1681,7 +1646,7 @@ mod tests {
     #[test]
     fn find_draggable_skips_face_down_cards() {
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
 
         // Tableau 6 has 7 cards: 6 face-down (indices 0..5) + 1 face-up at
         // the bottom (index 6). Click at the topmost face-down card's
@@ -1702,7 +1667,7 @@ mod tests {
         // face-up bottom card, clicking the visible card face missed the
         // hit-test box and only the bottom strip of the card responded.
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
 
         // Tableau 6 starts with 6 face-down + 1 face-up. The face-up card
         // sits at base.y - 6 * TABLEAU_FACEDOWN_FAN_FRAC * card_h, NOT at
@@ -1741,7 +1706,7 @@ mod tests {
             face_up: true,
         });
 
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         // The Queen's geometric center (index 1) is inside the Jack's bounding box
         // (Jack fans 0.5h below base; its box spans [base-h, base]).  To hit the
         // Queen we click in her visible strip: the 0.25h band above the Jack's top
@@ -1773,7 +1738,7 @@ mod tests {
             face_up: true,
         });
 
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         // Both cards in waste sit at the same (x, y). Clicking should pick
         // the visually top card (id 201), with count = 1.
         let pos = card_position(&game, &layout, &PileType::Waste, 0);
@@ -1786,7 +1751,7 @@ mod tests {
     #[test]
     fn find_drop_target_hits_empty_tableau_pile_marker() {
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         // Move all cards out of tableau 0 so its marker is the only drop area.
         let mut game = game;
         game.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.clear();
@@ -1798,7 +1763,7 @@ mod tests {
     #[test]
     fn find_drop_target_returns_none_for_origin() {
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let pos = layout.pile_positions[&PileType::Tableau(3)];
         let target = find_drop_target(pos, &game, &layout, &PileType::Tableau(3));
         assert_eq!(target, None);
@@ -1807,7 +1772,7 @@ mod tests {
     #[test]
     fn pile_drop_rect_extends_for_tableau_with_cards() {
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         // Tableau 6 has 7 cards.
         let (_, size) = pile_drop_rect(&PileType::Tableau(6), &layout, &game);
         // Expected: card_height + 6 * fan. fan = 0.25 * card_height, so
@@ -1832,7 +1797,7 @@ mod tests {
         waste.cards.push(Card { id: 201, suit: Suit::Hearts, rank: Rank::Three, face_up: true });
         waste.cards.push(Card { id: 202, suit: Suit::Clubs, rank: Rank::Four, face_up: true });
 
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         let waste_base = layout.pile_positions[&PileType::Waste];
         // Top card (slot=2) is at base.x + 2 * 0.28 * card_width.
         let top_card_x = waste_base.x + 2.0 * 0.28 * layout.card_size.x;
@@ -1848,7 +1813,7 @@ mod tests {
     #[test]
     fn find_draggable_returns_none_for_click_on_empty_pile() {
         let mut game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         // Clear tableau 0 so it's an empty slot.
         game.piles.get_mut(&PileType::Tableau(0)).unwrap().cards.clear();
         let pos = layout.pile_positions[&PileType::Tableau(0)];
@@ -1859,7 +1824,7 @@ mod tests {
     #[test]
     fn pile_drop_rect_is_card_sized_for_non_tableau() {
         let game = GameState::new(42, DrawMode::DrawOne);
-        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0);
+        let layout = compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0);
         for pile in [
             PileType::Waste,
             PileType::Foundation(2),
@@ -2360,7 +2325,7 @@ mod tests {
         app.init_resource::<crate::pending_hint::PendingHintTask>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.insert_resource(crate::layout::LayoutResource(
-            crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0),
+            crate::layout::compute_layout(Vec2::new(1280.0, 800.0), 0.0, 0.0),
         ));
         app.insert_resource(GameStateResource(GameState::new(42, DrawMode::DrawOne)));
         app.add_systems(Update, handle_keyboard_hint);
@@ -2382,13 +2347,5 @@ mod tests {
         );
     }
 
-    // Task #27b — double-tap constants
-    #[test]
-    fn double_tap_window_is_wider_than_double_click_window() {
-        // Compile-time check: touch needs a wider window than mouse due to
-        // higher input latency. `const { assert! }` catches regressions at
-        // build time rather than waiting for a test run.
-        const { assert!(DOUBLE_TAP_WINDOW > DOUBLE_CLICK_WINDOW) }
-    }
 }
 
